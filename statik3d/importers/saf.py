@@ -9,7 +9,15 @@ Gross-/Kleinschreibung egal, fehlende optionale Spalten werden toleriert):
     StructuralLoadGroup, StructuralLoadCase, StructuralLoadCombination,
     StructuralPointAction, StructuralPointMoment, StructuralCurveAction,
     StructuralSurfaceAction, StructuralCurveActionThermal,
-    StructuralSurfaceActionThermal
+    StructuralSurfaceActionThermal;
+    seit 09.11.2026 (Befund B3 der Pruefagenten) dazu RelConnectsStructuralMember
+    (Stabendgelenke), StructuralCurveConnection und StructuralEdgeConnection
+    (Linienlager an Staeben und an Flaechenkanten; die Spalte "Line support",
+    eine Erweiterung von Statik3D, fasst die Abschnitte wieder zu einem
+    Linienlager zusammen) und im Blatt der Querschnitte die Spalten "Ay" und
+    "Az" (Schubflaechen eines Querschnitts mit Kennwerten, ebenfalls eine
+    Erweiterung). StructuralSurfaceConnection (Flaechenlager) wird nicht
+    gelesen, das Protokoll sagt es.
 Einheiten laut der Einheitentabelle der SAF-Beschreibung (gitbook.saf.guide,
 gelesen 07.10.2026): Koordinaten m, Querschnittsparameter mm, A m², I m⁴,
 Iw m⁶, Wpl m³, Dicken mm, E- und G-Modul MPa, Lasten kN / kN/m / kN/m²,
@@ -43,7 +51,7 @@ from typing import Optional
 
 import numpy as np
 
-from ..model import Model, Material, Section
+from ..model import Model, Material, Section, DofBehaviour
 from . import _common as C
 from .xlsx_reader import read_table_file
 
@@ -184,6 +192,52 @@ def _positionen(r: list, sh: Sheet, c_def, c_org, c_p1, c_p2, total: float) -> t
     if "end" in Sheet.text(r, c_org).lower():       # From end: vom Stabende gezaehlt
         p1, p2 = total - p1, total - p2
     return p1, p2, relativ
+
+
+def _fhg_spalten(sh: Sheet) -> tuple:
+    """Die Spalten ux ... fiz und Stiffness X ... Fiz eines Blattes (Gelenke,
+    Linienlager) und die Faktoren der Steifigkeiten nach SI - ohne Einheit in
+    der Kopfzeile die der SAF-Beschreibung (MN/m, MNm/rad, je Laenge MN/m2,
+    MNm/rad/m: immer 1e6)."""
+    c_dof = [sh.col(r"^ux$", r"^u ?x$"), sh.col(r"^uy$", r"^u ?y$"), sh.col(r"^uz$", r"^u ?z$"),
+             sh.col(r"^fix$", r"^fi ?x$", r"^phi ?x$", r"^rx$"),
+             sh.col(r"^fiy$", r"^fi ?y$", r"^phi ?y$", r"^ry$"),
+             sh.col(r"^fiz$", r"^fi ?z$", r"^phi ?z$", r"^rz$")]
+    c_k = [sh.col(r"^stiffness ?x$", r"stiffness x\b"), sh.col(r"^stiffness ?y$", r"stiffness y\b"),
+           sh.col(r"^stiffness ?z$", r"stiffness z\b"),
+           sh.col(r"^stiffness ?fix$", r"stiffness (fix|phi ?x|rx)"),
+           sh.col(r"^stiffness ?fiy$", r"stiffness (fiy|phi ?y|ry)"),
+           sh.col(r"^stiffness ?fiz$", r"stiffness (fiz|phi ?z|rz)")]
+    return c_dof, c_k, [sh.unit(c, 1e6) for c in c_k]
+
+
+def _ketten_fuegen(ketten: list) -> list:
+    """Knotenketten, die an ihren Enden zusammenstossen, zu moeglichst langen
+    Ketten fuegen (die Abschnitte eines Linienlagers stehen je Kante oder Stab
+    in einer eigenen Zeile)."""
+    rest = [list(k) for k in ketten]
+    aus = []
+    while rest:
+        k = rest.pop(0)
+        weiter = True
+        while weiter:
+            weiter = False
+            for j, x in enumerate(rest):
+                if x[0] == k[-1]:
+                    k = k + x[1:]
+                elif x[-1] == k[-1]:
+                    k = k + x[-2::-1]
+                elif x[-1] == k[0]:
+                    k = x[:-1] + k
+                elif x[0] == k[0]:
+                    k = x[:0:-1] + k
+                else:
+                    continue
+                rest.pop(j)
+                weiter = True
+                break
+        aus.append(k)
+    return aus
 
 
 def _direction_vector(text: str, row: list, sh: Sheet) -> Optional[np.ndarray]:
@@ -362,6 +416,11 @@ def import_saf(path: str, model: Model = None, log: list = None,
         c_Wz = sh.col(r"^welz$")
         c_Wpy = sh.col(r"^wply$")
         c_Wpz = sh.col(r"^wplz$")
+        # Schubflaechen: Spalten "Ay" und "Az", die SAF nicht kennt (Statik3D
+        # schreibt sie seit dem 09.11.2026, B3) - ohne sie kam ein Querschnitt
+        # mit Kennwerten schubstarr an
+        c_Ay = sh.col(r"^ay$")
+        c_Az = sh.col(r"^az$")
         c_art = sh.col(r"^cross ?section ?type")
         f_par = sh.unit(c_par, 1e-3)
         # ohne Einheit in der Kopfzeile: die Einheiten der SAF-Beschreibung
@@ -407,7 +466,9 @@ def import_saf(path: str, model: Model = None, log: list = None,
                                   Wel_y=(Sheet.num(r, c_Wy) or 0.0) * f_We,
                                   Wel_z=(Sheet.num(r, c_Wz) or 0.0) * f_We,
                                   Wpl_y=(Sheet.num(r, c_Wpy) or 0.0) * f_Wp,
-                                  Wpl_z=(Sheet.num(r, c_Wpz) or 0.0) * f_Wp)
+                                  Wpl_z=(Sheet.num(r, c_Wpz) or 0.0) * f_Wp,
+                                  Asy=(Sheet.num(r, c_Ay) or 0.0) * sh.unit(c_Ay, 1.0),
+                                  Asz=(Sheet.num(r, c_Az) or 0.0) * sh.unit(c_Az, 1.0))
                     C.say(log, f"Querschnitt '{name}': Kennwerte aus Tabelle (freier Querschnitt)")
             if sec is None:
                 C.warn(log, f"Querschnitt '{name}' (Profil '{profile}', Form '{shape}') nicht "
@@ -446,10 +507,12 @@ def import_saf(path: str, model: Model = None, log: list = None,
 
     # ---- Staebe --------------------------------------------------------------------
     member_elems: dict[str, list[int]] = {}
+    member_chain: dict[str, list[int]] = {}      # Stab -> Knotenkette (fuer Linienlager)
     sh = sheets.get("curvemember")
     if sh is not None:
         c_name = sh.col(r"^name$")
         c_sec = sh.col(r"^cross ?section")
+        c_mat_stab = sh.col(r"^material$")       # eigene Spalte des Statik3D-Exports
         c_nodes = sh.col(r"^nodes$", r"^nodes")
         c_n1 = sh.col(r"^begin ?node", r"^start ?node")
         c_n2 = sh.col(r"^end ?node")
@@ -484,7 +547,11 @@ def import_saf(path: str, model: Model = None, log: list = None,
                 if sec is None:
                     sec = C.ensure_section(model, sec_key, log)
                     sec_names[sec_key] = sec
-                mat = sec_material.get(sec_key) or material("")
+                # Werkstoff des Stabs: die eigene Spalte geht vor (09.11.2026),
+                # sonst der des Querschnitts wie in SAF vorgesehen
+                mat_stab = Sheet.text(r, c_mat_stab)
+                mat = (material(mat_stab) if mat_stab else "") or sec_material.get(sec_key) \
+                    or material("")
                 beh = Sheet.text(r, c_beh).lower()
                 typ = "beam"
                 if "axial" in beh or "truss" in beh:
@@ -505,6 +572,7 @@ def import_saf(path: str, model: Model = None, log: list = None,
                 elems = [model.add_element(typ, [a, b], mat, sec, roll=roll, group=group)
                          for a, b in zip(chain[:-1], chain[1:])]
                 member_elems[name] = elems
+                member_chain[name] = chain
                 model.add_member(C.unique_name(model.members, name), elems)
             except Exception as ex:
                 n_missing += 1
@@ -513,6 +581,7 @@ def import_saf(path: str, model: Model = None, log: list = None,
 
     # ---- Flaechen ---------------------------------------------------------------------
     surface_elems: dict[str, list[int]] = {}
+    surface_nodes: dict[str, list[int]] = {}     # Flaeche -> Knoten des Polygons (fuer Linienlager)
     sh = sheets.get("surfacemember")
     if sh is not None:
         c_name = sh.col(r"^name$")
@@ -539,6 +608,10 @@ def import_saf(path: str, model: Model = None, log: list = None,
                 group = Sheet.text(r, c_layer) or name
                 surface_elems[name] = C.polygon_to_shells(model, ids, mat, prop, group, log,
                                                           f"Flaeche '{name}'")
+                ecken = [n for k, n in enumerate(ids) if k == 0 or ids[k - 1] != n]
+                if len(ecken) > 1 and ecken[0] == ecken[-1]:
+                    ecken.pop()
+                surface_nodes[name] = ecken
             except Exception as ex:
                 C.warn(log, f"Flaeche '{name}' uebersprungen: {ex}")
         C.say(log, f"SAF: {len(surface_elems)} Flaechen")
@@ -593,6 +666,156 @@ def import_saf(path: str, model: Model = None, log: list = None,
                 n_sup += 1
         C.say(log, f"SAF: {n_sup} Knotenlager")
 
+    # ---- Stabendgelenke (B3, 09.11.2026) ---------------------------------------------
+    # RelConnectsStructuralMember: Member, Position (Begin, End, Both), ux ... fiz
+    # mit Free, Rigid, Flexible im Stabsystem. Begin ist das erste Element der
+    # Knotenkette an seinem Anfang, End das letzte an seinem Ende.
+    sh = sheets.get("relconnectsstructuralmember")
+    if sh is not None:
+        c_name = sh.col(r"^name$")
+        c_mem = sh.col(r"^member$", r"^member")
+        c_pos = sh.col(r"^position")
+        c_dof, c_k, f_k = _fhg_spalten(sh)
+        n_gel = 0
+        for r in sh.data():
+            mem = Sheet.text(r, c_mem)
+            if not mem:
+                continue
+            was = f"Stabendgelenk '{Sheet.text(r, c_name)}' am Stab '{mem}'"
+            elems = member_elems.get(mem)
+            if not elems:
+                C.warn(log, f"{was}: der Stab ist unbekannt - übergangen")
+                continue
+            pos = Sheet.text(r, c_pos).lower()
+            enden = []
+            if pos.startswith(("begin", "start", "both")):
+                enden.append((elems[0], 0))
+            if pos.startswith(("end", "both")):
+                enden.append((elems[-1], 1))
+            if not enden:
+                C.warn(log, f"{was}: Position '{Sheet.text(r, c_pos)}' unbekannt (Begin, End, Both) "
+                            "- übergangen")
+                continue
+            frei, feder = [], {}
+            for d in range(6):
+                v = Sheet.text(r, c_dof[d]).lower()
+                if v.startswith("free") or v == "frei":
+                    frei.append(d)
+                elif v.startswith(("flexible", "feder", "spring")):
+                    k = (Sheet.num(r, c_k[d]) or 0.0) * f_k[d]
+                    if k > 0:
+                        feder[d] = k
+                    else:
+                        frei.append(d)       # Feder ohne Steifigkeit ist ein Gelenk
+            if not frei and not feder:
+                continue
+            for e, ende in enden:
+                el = model.elements[e]
+                if el.typ != "beam":
+                    continue                 # ein Fachwerkstab hat kein Gelenk zu loesen
+                el.hinges = sorted(set(el.hinges or []) | {d + 6 * ende for d in frei})
+                federn = dict(el.hinge_springs or [])
+                federn.update({d + 6 * ende: k for d, k in feder.items()})
+                el.hinge_springs = sorted(federn.items())
+                n_gel += 1
+        C.say(log, f"SAF: {n_gel} Stabendgelenke")
+
+    # ---- Linienlager (B3, 09.11.2026) --------------------------------------------------
+    # StructuralCurveConnection: Member und Abschnitt (Start und End point);
+    # StructuralEdgeConnection: 2D Member und Edge (Kante k vom k-ten zum
+    # naechsten Knoten der Flaeche). Die Zeilen eines Linienlagers (Spalte
+    # "Line support" von Statik3D, sonst der Name) werden an gemeinsamen
+    # Endknoten wieder zu einer Knotenkette gefuegt.
+    xyz = np.asarray(model.nodes, float)
+    stuecke: dict[tuple, list] = {}
+    n_zeilen = 0
+    for key in ("curveconnection", "edgeconnection"):
+        sh = sheets.get(key)
+        if sh is None:
+            continue
+        c_name = sh.col(r"^name$")
+        c_gruppe = sh.col(r"^line ?support$")
+        c_mem = sh.col(r"^member$") if key == "curveconnection" else sh.col(r"^2d ?member$")
+        c_edge = sh.col(r"^edge$")
+        c_cs = sh.col(r"^coordinate ?system")
+        c_def = sh.col(r"^coordinate ?definition")
+        c_org = sh.col(r"^origin")
+        c_p1 = sh.col(r"^start ?point")
+        c_p2 = sh.col(r"^end ?point")
+        c_dof, c_k, f_k = _fhg_spalten(sh)
+        for r in sh.data():
+            name, mem = Sheet.text(r, c_name), Sheet.text(r, c_mem)
+            if not mem:
+                continue
+            was = f"Linienlager '{name}'"
+            try:
+                if key == "curveconnection":
+                    kette = member_chain.get(mem)
+                    if kette is None:
+                        raise KeyError(f"Stab '{mem}' unbekannt")
+                else:
+                    ecken = surface_nodes.get(mem)
+                    if ecken is None:
+                        raise KeyError(f"Fläche '{mem}' unbekannt")
+                    kante = Sheet.num(r, c_edge)
+                    if kante is None or not 1 <= int(kante) <= len(ecken):
+                        raise ValueError(f"Kante '{Sheet.text(r, c_edge)}' gibt es an der Fläche "
+                                         f"'{mem}' mit {len(ecken)} Kanten nicht")
+                    kette = [ecken[int(kante) - 1], ecken[int(kante) % len(ecken)]]
+                if Sheet.num(r, c_p1) is not None or Sheet.num(r, c_p2) is not None:
+                    ort = np.concatenate([[0.0], np.cumsum(np.linalg.norm(
+                        np.diff(xyz[kette], axis=0), axis=1))])
+                    gesamt = float(ort[-1])
+                    p1, p2, _rel = _positionen(r, sh, c_def, c_org, c_p1, c_p2, gesamt)
+                    lo, hi = min(p1, p2), max(p1, p2)
+                    tol = 1e-6 * max(gesamt, 1.0)
+                    innen = [k for k, x in enumerate(ort) if lo - tol <= x <= hi + tol]
+                    if len(innen) < 2:
+                        raise ValueError(f"im Abschnitt {lo:g} bis {hi:g} m liegen weniger als zwei "
+                                         "Knoten")
+                    if abs(ort[innen[0]] - lo) > tol or abs(ort[innen[-1]] - hi) > tol:
+                        C.warn(log, f"{was}: der Abschnitt {lo:g} bis {hi:g} m endet zwischen zwei "
+                                    f"Knoten - gelesen von {ort[innen[0]]:g} bis {ort[innen[-1]]:g} m")
+                    kette = [kette[k] for k in innen]
+                if "local" in Sheet.text(r, c_cs).lower():
+                    C.warn(log, f"{was}: lokales Koordinatensystem wird als global gelesen")
+                verhalten = []
+                for d in range(6):
+                    v = Sheet.text(r, c_dof[d]).lower()
+                    if not v or v.startswith("free") or v == "frei":
+                        continue
+                    if v.startswith(("flexible", "feder", "spring")):
+                        k = (Sheet.num(r, c_k[d]) or 0.0) * f_k[d]
+                        if k > 0:
+                            verhalten.append((d, "spring", k))
+                        continue
+                    if "only" in v or "non" in v:
+                        C.warn(log, f"{was}: '{v}' als starres Lager (linear)")
+                    verhalten.append((d, "rigid", 0.0))
+                if not verhalten:
+                    continue
+                n_zeilen += 1
+                stuecke.setdefault((Sheet.text(r, c_gruppe) or name, tuple(verhalten)), []).append(kette)
+            except Exception as ex:
+                C.warn(log, f"{was} übergangen: {ex}")
+    n_ll = 0
+    for (name, verhalten), ketten in stuecke.items():
+        for kette in _ketten_fuegen(ketten):
+            ls = model.add_line_support(
+                kette, name=C.unique_name({x.name for x in model.line_supports}, name or "LL"))
+            for d, typ, k in verhalten:
+                ls.behaviour[d] = DofBehaviour(typ, k)
+            n_ll += 1
+    if n_zeilen:
+        C.say(log, f"SAF: {n_ll} Linienlager aus {n_zeilen} Zeilen")
+
+    # Flaechenlager (StructuralSurfaceConnection) liest der Import nicht
+    sh = sheets.get("surfaceconnection")
+    if sh is not None:
+        n_fl = sum(1 for _r in sh.data())
+        if n_fl:
+            C.warn(log, f"SAF: {n_fl} Flächenlager (Blatt StructuralSurfaceConnection) werden nicht "
+                        "gelesen - im Modell von Hand anlegen")
     # ---- Lastgruppen / Lastfaelle -------------------------------------------------------
     groups: dict[str, dict] = {}
     sh = sheets.get("loadgroup")
@@ -983,7 +1206,9 @@ def import_saf(path: str, model: Model = None, log: list = None,
     known = {"projectinformation", "material", "crosssection", "pointconnection",
              "curvemember", "surfacemember", "pointsupport", "loadgroup", "loadcase",
              "loadcombination", "pointaction", "pointmoment", "curveaction", "surfaceaction",
-             "curveactionthermal", "surfaceactionthermal"}
+             "curveactionthermal", "surfaceactionthermal",
+             "relconnectsstructuralmember", "curveconnection", "edgeconnection",
+             "surfaceconnection"}
     other = [s.name for k, s in sheets.items() if k not in known and any(True for _ in s.data())]
     if other:
         C.say(log, "Nicht ausgewertete Blaetter: " + ", ".join(other))

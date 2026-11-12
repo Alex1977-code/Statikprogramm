@@ -1795,12 +1795,12 @@ def test_zusammenfassung_nennt_gestoerte_pivots():
     r.info = {"loeser_nachweis": nachweis}
     z = r.summary()
     # Die Zeilen selbst pruefen, nicht die ganze Zusammenfassung: "3" oder
-    # "12" stehen dort auch ohne diese Zeilen (etwa in "3.1e-13").
+    # "12" stehen dort auch ohne diese Zeilen (etwa in "0,00000000000031").
     loes = next((x for x in z.splitlines() if x.startswith("Lösungen")), "keine Zeile")
     piv = next((x for x in z.splitlines() if x.startswith("Gestörte Pivots")), "keine Zeile")
     check("die Zusammenfassung nennt Loeser, Loesungen und Faktorisierungen",
           "12× MKL PARDISO (16 Threads, mtype 11)" in loes
-          and "11 Faktorisierungen in 1.250 s" in loes and "höchstens 3.1e-13" in loes,
+          and "11 Faktorisierungen in 1,250 s" in loes and "höchstens 0,00000000000031" in loes,
           loes[:110])
     check("und die gestoerten Pivots: Summe, Faktorisierungen, Hoechstwert",
           "3 in 2 von 11 Faktorisierungen" in piv and "höchstens 2 " in piv, piv[:110])

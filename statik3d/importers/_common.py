@@ -1019,6 +1019,39 @@ def get_or_add_case(model: Model, name: str, category: str = "Q",
     return model.add_load_case(name, category, description, activate=False, **kw)
 
 
+def leerer_vorgabelastfall(model: Model) -> Optional[str]:
+    """Der Name des leeren Vorgabelastfalls, wenn das Modell noch leer ist
+    (keine Knoten, Elemente, Kombinationen, Ermuedungslasten; genau ein
+    Lastfall ohne Lasten - so legt ``Model()`` LF1 an), sonst None.
+
+    Diesen Lastfall ersetzt der gleichnamige Lastfall der Datei
+    (:func:`vorgabelastfall_weicht`). Der SAF-Import tut das seit dem
+    07.10.2026 (Fehlerliste-Nachtrag N29); der Abaqus- und der IFC-Import
+    nannten den Lastfall LF1 der Datei bis zum 09.11.2026 "LF1_2"
+    (unique_name gegen den leeren LF1 des frischen Modells, Befund B6). Beim
+    Anhaengen an ein Modell mit Inhalt bleibt dessen LF1 unberuehrt."""
+    if model.nn or model.elements or model.combinations or getattr(model, "fatigue_loads", None):
+        return None
+    if len(model.load_cases) != 1:
+        return None
+    name, lc = next(iter(model.load_cases.items()))
+    return None if lc.n_loads else name
+
+
+def vorgabelastfall_weicht(model: Model, vorgabe: Optional[str], name: str) -> Optional[str]:
+    """Traegt ein Lastfall der Datei den Namen des leeren Vorgabelastfalls
+    (``vorgabe`` aus :func:`leerer_vorgabelastfall`, vor dem Einlesen
+    bestimmt), so weicht der Vorgabelastfall: der Lastfall der Datei behaelt
+    seinen Namen. Gibt den Vorgabenamen zurueck, solange er noch gilt, sonst
+    None (der Aufrufer merkt sich den Rueckgabewert)."""
+    if vorgabe is not None and name == vorgabe:
+        lc = model.load_cases.get(vorgabe)
+        if lc is not None and not lc.n_loads:
+            model.load_cases.pop(vorgabe)
+        return None
+    return vorgabe
+
+
 def drop_empty_default_case(model: Model, name: str = "LF1") -> bool:
     """Leeren Standardlastfall entfernen, wenn der Import eigene Lastfaelle brachte."""
     lc = model.load_cases.get(name)

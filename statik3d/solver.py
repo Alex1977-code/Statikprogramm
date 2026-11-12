@@ -1546,8 +1546,9 @@ class LinearSolver:
                     # faengt warnings nirgends ab), und die exe hat keine
                     # Konsole (console=False in packaging/Statik3D.spec).
                     raise RuntimeError(
-                        f"Gleichungssystem numerisch singulär (Residuum {r:.1e}, Schranke {grenze:g}"
-                        + (f", nach {schritte} Nachiterationen" if schritte else "") + ")"
+                        f"Gleichungssystem numerisch singulär (Residuum {_zt(r, 2)}, Schranke {_zt(grenze, 2)}"
+                        + (f", nach {schritte} {'Nachiteration' if schritte == 1 else 'Nachiterationen'}"
+                           if schritte else "") + ")"
                         + (f" (Löser ausgewichen - {self.ausweichgrund})" if self.ausweichgrund
                            else "") + " - "
                         "Lagerung, freie Bauteile oder Kontaktdefinition prüfen; die Schranke steht "
@@ -1581,6 +1582,15 @@ class Results:
     reactions: np.ndarray = None            # (nn, 6) Auflagerreaktionen
     beam_end: dict = field(default_factory=dict)    # elem -> lokale Stabendkraefte (12,)
     beam_q: dict = field(default_factory=dict)      # elem -> Abschnittslasten (n,8): a, b, q1, q2
+    #: Theorie II. Ordnung: elem -> lokale Stabend-Verschiebungen (12,), aus
+    #: denen beam_station_forces den Anteil N w im Feld rechnet (A8, 09.11.2026)
+    beam_th2: dict = field(default_factory=dict)
+    #: Interne Stabteilung (Theorie II./III. Ordnung, statik3d.stabteilung,
+    #: seit 12.11.2026): elem -> {"h": Teillaenge, "end": (n,12) Stabend-
+    #: kraefte je Teil, "q": Abschnittslasten je Teil, "th2": (n,12) oder
+    #: None}. Aeltere gespeicherte Ergebnisse haben das Feld nicht - lesen
+    #: nur mit getattr(res, "beam_teile", None).
+    beam_teile: dict = field(default_factory=dict)
     shell_res: dict = field(default_factory=dict)   # elem -> [nx ny nxy mx my mxy]
     solid_res: dict = field(default_factory=dict)   # elem -> Spannungen (6,)
     #: elem -> Elementmittel Integral sigma dV / V (6,) - linear in u, daher in
@@ -1848,7 +1858,7 @@ class Results:
             s.append(f"Situation               : {sit}")
         s += [f"Freiheitsgrade gesamt   : {self.info.get('ndof', '?')}",
               f"davon aktiv             : {self.info.get('nfree', '?')}",
-              f"Rechenzeit              : {self.info.get('time', 0):.3f} s"]
+              f"Rechenzeit              : {_fest(self.info.get('time', 0), 3)} s"]
         if self.info.get("solver"):
             s.append(f"Gleichungslöser         : {self.info['solver']}")
         # "Gleichungsloeser" darueber ist der Loeser der letzten
@@ -1870,7 +1880,9 @@ class Results:
         s += seil_querlast_gebuendelt([(self.name, self)])
         if self.u is not None and self.u.size:
             i = int(np.argmax(self.umag))
-            s.append(f"max. Verschiebung       : {self.umag[i]*1000:.4f} mm (Knoten {i})")
+            s.append(f"max. Verschiebung       : {_fest(self.umag[i] * 1000, 4)} mm (Knoten {i})")
+        # unplausibel grosse Verformung (Einheitenfehler, 09.11.2026)
+        s += verformung_gross_gebuendelt([(self.name, self)])
         try:
             nv = self.node_vm
             if nv is not None and nv.size and np.any(np.isfinite(nv)):
@@ -1879,13 +1891,14 @@ class Results:
                 from . import spitzenanzeige as sa
                 zeilen = sa.zusammenfassung_zeilen(self.model, self)
                 if not any(z.startswith("max. Vergleichsspannung") for z in zeilen):
-                    zeilen.insert(0, f"max. Vergleichsspannung : {np.nanmax(nv)/1e6:.2f} MPa")
+                    zeilen.insert(0, f"max. Vergleichsspannung : {_fest(np.nanmax(nv) / 1e6, 2)} MPa")
                 s.extend(zeilen)
         except Exception:
             pass
         if self.reactions is not None and self.reactions.size:
             R = self.reactions[:, :3].sum(axis=0)
-            s.append(f"Summe Auflagerkräfte    : [{R[0]:.1f}, {R[1]:.1f}, {R[2]:.1f}] N")
+            # Dezimalkomma, die Werte durch Strichpunkt getrennt (Befund C7, 09.11.2026)
+            s.append(f"Summe Auflagerkräfte    : [{_fest(R[0], 1)}; {_fest(R[1], 1)}; {_fest(R[2], 1)}] N")
         # globale Gleichgewichtskontrolle: Kraefte und Momente (seit 14.10.2026)
         if self.info.get("gleichgewicht_global"):
             from . import gleichgewicht as _gg
@@ -1945,9 +1958,9 @@ class Results:
             ea = sa.eps_p_ausserhalb(self.model, self)
             s.append(f"Plastizität             : "
                      + ("1 Element fließt, " if n_fl == 1 else f"{n_fl} Elemente fließen, ")
-                     + (f"ε_p,eq max {ea[0] * 100:.3f} % außerhalb der netzabhängigen Stellen"
+                     + (f"ε_p,eq max {_fest(ea[0] * 100, 3)} % außerhalb der netzabhängigen Stellen"
                         + (f" ({ea[2]})" if ea[2] else "") + ", " if ea is not None else
-                        f"ε_p,eq max {float(pz.get('eps_p_max', 0.0)) * 100:.3f} %, ")
+                        f"ε_p,eq max {_fest(float(pz.get('eps_p_max', 0.0)) * 100, 3)} %, ")
                      + f"{n_it} {'Schritt' if n_it == 1 else 'Schritte'} in "
                      f"{n_ls} {'Laststufe' if n_ls == 1 else 'Laststufen'}"
                      # Was die Zeit traegt, ist nicht die Zahl der Schritte, sondern
@@ -2031,11 +2044,35 @@ def beam_station_forces(model: Model, res: Results, i: int, n: int = 9) -> dict:
     abschnittsweisen Last knickt der Querkraftverlauf an den Abschnittsenden;
     liegt ein Abschnittsende zwischen zwei Stellen, steht es nicht im Feld -
     die Stellen sind gleichmaessig verteilt, n hoch genug waehlen.
+
+    Ein nach Theorie II./III. Ordnung intern geteiltes Element
+    (statik3d.stabteilung, ``res.beam_teile``) rechnet jede Stelle in seinem
+    Teilstueck - aus dessen Anfangskraeften, Lasten und Biegelinie.
     """
-    fl = res.beam_end[i]
     L = model.element_length(i)
-    q = res.beam_q.get(i)
     x = np.linspace(0.0, L, n)
+    teile = (getattr(res, "beam_teile", None) or {}).get(i)
+    if teile is not None:
+        h = float(teile["h"])
+        anz = len(teile["end"])
+        k = np.minimum((x / h + 1e-9).astype(int), anz - 1)
+        aus = {c: np.zeros(n) for c in ("N", "Vy", "Vz", "Mt", "My", "Mz")}
+        for kk in np.unique(k):
+            sel = k == kk
+            th2 = teile["th2"][kk] if teile.get("th2") is not None else None
+            w = _stellen(model, i, teile["end"][kk], teile["q"][kk], h, th2, x[sel] - kk * h)
+            for c in aus:
+                aus[c][sel] = w[c]
+        return {"x": x, "L": L, **aus}
+    th2 = (getattr(res, "beam_th2", None) or {}).get(i)
+    return {"x": x, "L": L, **_stellen(model, i, res.beam_end[i], res.beam_q.get(i), L, th2, x)}
+
+
+def _stellen(model: Model, i: int, fl, q, L: float, th2, x) -> dict:
+    """Schnittgroessen an den Stellen ``x`` eines Elements bzw. Teilstuecks
+    der Laenge L aus seinen Anfangskraeften ``fl``, Abschnittslasten ``q``
+    und - Theorie II. Ordnung - den Stabend-Verschiebungen ``th2``."""
+    n = len(x)
     # Lastresultierende ueber [0,x] und deren Moment um die Stelle x
     Q, Mq = asm.lastresultierende(q, x)                            # (n,3)
     N = -fl[0] - Q[:, 0]
@@ -2044,7 +2081,79 @@ def beam_station_forces(model: Model, res: Results, i: int, n: int = 9) -> dict:
     Mt = np.full(n, -fl[3])
     My = -fl[4] - fl[2] * x - Mq[:, 2]
     Mz = -fl[5] + fl[1] * x + Mq[:, 1]
-    return {"x": x, "L": L, "N": N, "Vy": Vy, "Vz": Vz, "Mt": Mt, "My": My, "Mz": Mz}
+    if th2 is not None and fl[0] != 0.0:
+        dMy, dMz = _th2_feldanteil(model, i, fl, q, L, th2, x)
+        My = My + dMy
+        Mz = Mz + dMz
+    return {"N": N, "Vy": Vy, "Vz": Vz, "Mt": Mt, "My": My, "Mz": Mz}
+
+
+#: Stellen, an denen _th2_feldanteil die Biegelinie im Element rechnet
+TH2_FELDSTELLEN = 81
+
+
+def _th2_feldanteil(model: Model, i: int, fl, q, L: float, ul, x) -> tuple:
+    """Theorie II. Ordnung im Feld (Befund A8 der Pruefagenten, 09.11.2026):
+    der Anteil der Stabkraft am Hebel der Durchbiegung, (dMy, dMz) an den
+    Stellen ``x``.
+
+    Gleichgewicht am verformten Teilstab [0, x]: die Laengskraft fl[0] am
+    Anfang greift um w(x) - w(0) bzw. v(x) - v(0) versetzt an, also
+    My += (w - w0) fl[0], Mz += (v0 - v) fl[0]. Die Biegelinie im Element ist
+    die Sehne zwischen den Stabenden ``ul`` (lokal, hinter Gelenk und
+    Versatz) plus die zweifach integrierte Kruemmung (w'' = -My/EIy,
+    v'' = +Mz/EIz, Null an beiden Enden) - iteriert, weil das Moment von der
+    Biegelinie abhaengt. Bis dahin fehlte der Anteil ganz: Feldmoment eines
+    Einfeldtraegers mit Druck 0,6 N_cr in einem Element -35 %.
+
+    Ein Stab mit Schubflaechen (Timoshenko, wie bm.k_local_beam) biegt sich
+    zusaetzlich um die Schubverformung durch, w_s' = My'/(G A_sz) bzw.
+    v_s' = -Mz'/(G A_sy) (Engesser: die Querkraft ist die Ableitung des
+    Moments), integriert w_s = (My - My(0))/(G A_sz) - seit dem 09.11.2026
+    zaehlt sie mit (Nebenbefund 16 c). Bis dahin fehlte sie: Einfeldtraeger
+    mit N_E/(G A_s) = 0,1 und Druck 0,6 N_cr in einem Element -12 %.
+    Laengslasten entlang des Stabes bleiben aussen vor: die Stabkraft gilt
+    im Element als gleichbleibend."""
+    e = model.elements[i]
+    mat = model.materials[e.mat]
+    sec = model.sections[e.sec]
+    EIy, EIz = mat.E * sec.Iy, mat.E * sec.Iz
+    # Schubsteifigkeiten wie bm.schubparameter: Biegung um y traegt A_sz, um z A_sy
+    GAz = mat.G * float(getattr(sec, "Asz", 0.0) or 0.0)
+    GAy = mat.G * float(getattr(sec, "Asy", 0.0) or 0.0)
+    xs = np.linspace(0.0, L, TH2_FELDSTELLEN)
+    _Qs, Mqs = asm.lastresultierende(q, xs)
+    My0 = -fl[4] - fl[2] * xs - Mqs[:, 2]
+    Mz0 = -fl[5] + fl[1] * xs + Mqs[:, 1]
+    ul = np.asarray(ul, float)
+    w0, wL, v0, vL = ul[2], ul[8], ul[1], ul[7]
+    sehne_w = w0 + (wL - w0) * xs / L
+    sehne_v = v0 + (vL - v0) * xs / L
+    dx = np.diff(xs)
+
+    def doppelt(k):
+        c1 = np.concatenate([[0.0], np.cumsum(0.5 * (k[1:] + k[:-1]) * dx)])
+        c2 = np.concatenate([[0.0], np.cumsum(0.5 * (c1[1:] + c1[:-1]) * dx)])
+        return c2 - c2[-1] * xs / L
+
+    def schub(M, GA):
+        # Schubdurchbiegung aus dem Momentenverlauf, Null an beiden Enden
+        if not GA > 0:
+            return 0.0
+        return ((M - M[0]) - (M[-1] - M[0]) * xs / L) / GA
+
+    P = float(fl[0])
+    w, v = sehne_w.copy(), sehne_v.copy()
+    for _ in range(60):
+        My_ = My0 + (w - w0) * P
+        Mz_ = Mz0 + (v0 - v) * P
+        w_n = sehne_w + (doppelt(-My_ / EIy) if EIy > 0 else 0.0) + schub(My_, GAz)
+        v_n = sehne_v + (doppelt(Mz_ / EIz) if EIz > 0 else 0.0) - schub(Mz_, GAy)
+        d = max(float(np.abs(w_n - w).max()), float(np.abs(v_n - v).max()))
+        w, v = w_n, v_n
+        if d <= 1e-14 + 1e-10 * max(float(np.abs(w).max()), float(np.abs(v).max())):
+            break
+    return np.interp(x, xs, (w - w0) * P), np.interp(x, xs, (v0 - v) * P)
 
 
 def member_forces(model: Model, res: Results, member: Member, n: int = None) -> dict:
@@ -2066,11 +2175,31 @@ def member_forces(model: Model, res: Results, member: Member, n: int = None) -> 
     return out
 
 
+def flaechen_bezugssystem(T3: np.ndarray) -> np.ndarray:
+    """Das Achsensystem, in dem die Schnittgroessen und Spannungen einer
+    Flaeche angegeben werden (Befund A20 der Pruefagenten, 09.11.2026): z die
+    Elementnormale, x die globale X-Achse in die Elementebene projiziert, bei
+    einer Ebene fast quer zu X (|n·X| > 0,99) die globale Y-Achse. Benachbarte
+    Elemente einer ebenen Flaeche haben damit dieselben Achsen. Bis dahin lag
+    x an der ersten Elementkante, und die Knotenmittel mischten Werte aus
+    verschieden gedrehten Systemen (Patchtest Zug 10 N/mm²: σ_x 0,8 bis 9,3)."""
+    ez = np.asarray(T3[2], float)
+    a = np.array([1.0, 0.0, 0.0]) if abs(float(ez[0])) <= 0.99 else np.array([0.0, 1.0, 0.0])
+    ex = a - float(a @ ez) * ez
+    ex /= np.linalg.norm(ex)
+    return np.vstack([ex, np.cross(ez, ex), ez])
+
+
 def shell_derived(model: Model, i: int, r: np.ndarray) -> dict:
     e = model.elements[i]
     t = model.shells[e.sec].t
-    n_forces = r[:3]
-    m_forces = r[3:]
+    X = model.nodes[e.nodes]
+    T3e, _, _ = sh.shell_frame(X[0], X[1], X[2])
+    T3 = flaechen_bezugssystem(T3e)
+    # vom Elementsystem (erste Kante) in das Flaechensystem drehen (A20)
+    phi = sh.frame_winkel(T3e, T3)
+    n_forces = sh.dreh_tensor(np.asarray(r[:3], float), -phi)
+    m_forces = sh.dreh_tensor(np.asarray(r[3:6], float), -phi)
     sig_mem = n_forces / t
     sig_bend = 6.0 * m_forces / t ** 2
     sig_top = sig_mem + sig_bend
@@ -2080,8 +2209,6 @@ def shell_derived(model: Model, i: int, r: np.ndarray) -> dict:
         sx, sy, sxy = s
         return float(np.sqrt(sx ** 2 - sx * sy + sy ** 2 + 3 * sxy ** 2))
 
-    X = model.nodes[e.nodes]
-    T3, _, _ = sh.shell_frame(X[0], X[1], X[2])
     return {"n": n_forces, "m": m_forces, "sig_top": sig_top, "sig_bot": sig_bot,
             "vM_top": vm(sig_top), "vM_bot": vm(sig_bot),
             "vM": max(vm(sig_top), vm(sig_bot)), "T3": T3}
@@ -2457,6 +2584,9 @@ def plastisch_zeilen(pz: dict) -> list:
     if pz.get("summe_R") is not None:
         z.append("ΣR / ΣM (Lager)         : " + summen_text(pz["summe_R"], pz.get("summe_M") or [0.0] * 3,
                                                             pz.get("summe_x0") or [0.0] * 3))
+    if isinstance(pz.get("elastisch"), dict) and pz["elastisch"]:
+        # Befund C5 (09.11.2026): Schalen, Staebe und Scheiben fliessen nicht
+        z.append("Hinweis                 : " + pl.elastisch_text(pz["elastisch"]))
     return z
 
 
@@ -2576,14 +2706,16 @@ def loeser_nachweis_zeilen(nw: dict) -> list:
         text += f" ({wie})" if wie else ""
         n_fak = int(nw.get('faktorisierungen', 0) or 0)
         text += (f"; {n_fak} {'Faktorisierung' if n_fak == 1 else 'Faktorisierungen'} in "
-                 f"{float(nw.get('zeit_faktorisierung_lastfall', 0.0) or 0.0):.3f} s")
+                 f"{float(nw.get('zeit_faktorisierung_lastfall', 0.0) or 0.0):.3f} s".replace(".", ","))
         n_nach = int(nw.get("nachfuehrungen", 0) or 0)
         if n_nach:
             text += (f"; {n_nach} {'Runde' if n_nach == 1 else 'Runden'} mit dem behaltenen Faktor "
                      "nachgeführt statt neu zerlegt")
         r = nw.get("residuum_linear_max")
         if r is not None:
-            text += f"; Residuum höchstens {float(r):.1e}"
+            # Dezimalkomma, nie wissenschaftlich (Befund C7, 09.11.2026: „2.0e-14“)
+            from .zahlen import zahl_text as _zt
+            text += f"; Residuum höchstens {_zt(float(r), stellen=2)}"
         z.append(f"Lösungen                : {text}")
     if nw.get("loesungen_gescheitert"):
         z.append(f"Gescheiterte Lösungen   : {int(nw['loesungen_gescheitert'])}")
@@ -2970,6 +3102,18 @@ class StaticSystem:
         if us is not None:
             u[self.si] += us[self.si]
         rhs = F[self.fi]
+        # Zwangsverformung an einer Feder (09.11.2026, Befund A11): der Fusspunkt
+        # verschiebt sich, die Feder zieht mit k us - als Kraft am freien FHG.
+        # reactions() rechnet die Federkraft dann mit k (u − us).
+        self._us_feder = None
+        if us is not None:
+            idx, k = self._federn()
+            if idx.size:
+                f_f = np.zeros(self.model.ndof)
+                f_f[idx] = k * us[idx]
+                if np.any(f_f):
+                    rhs = rhs + f_f[self.fi]
+                    self._us_feder = us
         if F_extra is not None:
             rhs = rhs + F_extra[self.fi]
         vorgabe = np.any(u[self.si])
@@ -3163,12 +3307,23 @@ class StaticSystem:
         R = np.zeros(self.model.ndof)
         R[self.si] = (K @ u)[self.si] - F[self.si]
         # Federlager (Knoten-, Linien- und Flaechenlager): Federkraft als Reaktion
-        from . import supports as sup
-        lin, _ = sup.split(sup.expand(self.model))
-        for e in lin:
-            if e.typ == "spring" and e.stiffness:
-                R[e.index] += -e.stiffness * u[e.index]
+        idx, k = self._federn()
+        if idx.size:
+            us = getattr(self, "_us_feder", None)
+            R[idx] += -k * (u[idx] - (us[idx] if us is not None else 0.0))
         return R
+
+    def _federn(self):
+        """(FHG, Steifigkeit) der linearen Federlager (Knoten-, Linien- und
+        Flaechenlager), einmal je System bestimmt."""
+        f = getattr(self, "_federn_cache", None)
+        if f is None:
+            from . import supports as sup
+            lin, _ = sup.split(sup.expand(self.model))
+            fed = [(e.index, float(e.stiffness)) for e in lin if e.typ == "spring" and e.stiffness]
+            f = (np.array([i for i, _ in fed], dtype=np.int64), np.array([k for _, k in fed], float))
+            self._federn_cache = f
+        return f
 
 
 # ==========================================================================
@@ -3218,6 +3373,12 @@ def case_loads(model: Model, factors: dict, aktiv=None) -> tuple:
             q[i] = asm.abschnitte_zusammen(q.get(i), asm.skaliere_abschnitte(v, f))
         for tl in lc.temp_loads:
             temp[tl.elem] = temp.get(tl.elem, 0.0) + f * tl.dT
+            if getattr(tl, "dT_z", 0.0):
+                # Temperaturunterschied oben − unten (Schalen, 09.11.2026): fuer
+                # die Momentenrueckrechnung m = D (kappa − kappa_T); eigener
+                # Schluessel, damit die Elementnummern von temp unberuehrt bleiben
+                tz = temp.setdefault("dT_z", {})
+                tz[tl.elem] = tz.get(tl.elem, 0.0) + f * float(tl.dT_z)
         # Anfangsspannungen der Vorspannung in Volumen - fuer die Spannungs-
         # rueckrechnung (sigma = D eps - sigma0); unter dem Schluessel "sigma0",
         # damit die Elementnummern von temp unberuehrt bleiben
@@ -3374,10 +3535,14 @@ def case_prescribed(model: Model, factors: dict, warn=None):
             for d in zv.dofs:
                 us[NDOF * int(zv.node) + int(d)] += f * float(zv.u[d])
         if warn is not None:
-            ohne = model.zwang_ohne_lager(name)
-            if ohne:
-                namen = ("ux", "uy", "uz", "phix", "phiy", "phiz")
-                warn(f"Zwangsverformung im Lastfall {name} ohne Lager - unwirksam: "
+            # unwirksam: ohne Lager, Lager frei, Lager mit Ausfall (seit 09.11.2026
+            # gemeldet statt still; an Linien- und Flaechenlagern keine Fehlmeldung)
+            namen = ("ux", "uy", "uz", "phix", "phiy", "phiz")
+            je_grund: dict = {}
+            for n, d, grund in model.zwang_unwirksam(name):
+                je_grund.setdefault(grund, []).append((n, d))
+            for grund, ohne in je_grund.items():
+                warn(f"Zwangsverformung im Lastfall {name} {grund} - unwirksam: "
                      + ", ".join(f"Knoten {n} {namen[d]}" for n, d in ohne[:8])
                      + (" ..." if len(ohne) > 8 else ""))
     return us if gibt else None
@@ -3479,6 +3644,7 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
             A = asm.beam_versatz(e)
             if A is not None:
                 ul = A @ ul                     # Verschiebung des Stabendes hinter dem Versatz
+            ul_knoten = ul                      # vor der Kondensation (fuer k_G, Befund 31)
             kl_s, f_s, rec = kl, f0, None
             if getattr(e, "hinge_springs", None):
                 kl_s, f_s, rec = asm.hinge_springs(kl, f0, e.hinge_springs)
@@ -3490,6 +3656,31 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
             if rec is not None:
                 ul = asm.hinge_local_disp(rec, ul)      # Stabende hinter der Feder
             fl = kl @ ul - f0
+            n_geo = extra.get("n_geo") or {}
+            if i in n_geo and e.typ not in ("truss", "seil"):
+                # Theorie II. Ordnung (A8, 09.11.2026): die Stabendkraefte wie
+                # das Gleichungssystem mit k + k_G, k_G kondensiert wie dort
+                # (asm.stab_endkinematik) - an einem Gelenk bleibt das Moment 0
+                sec_ = model.sections[e.sec]
+                kg_ = bm.kg_local_beam(float(n_geo[i]), L, sec_.A, sec_.Iy + sec_.Iz)
+                C_ = asm.stab_endkinematik(model, e, kl)
+                if C_ is not None and np.any(f0):
+                    # Gelenk/Federgelenk mit Last im Feld (Befund 31, 11.11.2026):
+                    # das Gleichungssystem hat K_G = C^T k_G C, also wirkt k_G
+                    # auf C u (Knotenverschiebungen) - nicht auf die Stabenden
+                    # ul, in denen die Kondensation den Lastanteil
+                    # Kcc^-1 f_c eingerechnet hat. Bis dahin bekamen die
+                    # Stabendkraefte C^T k_G (ul - C u) dazu, den das System
+                    # nie hatte: Stabendmoment 27,04 statt Lagermoment 22,50
+                    # kNm. Ohne Feldlast ist ul = C u, der Weg darunter
+                    # bleibt (bitgleich).
+                    zu = C_.T @ (kg_ @ (C_ @ ul_knoten))
+                else:
+                    zu = kg_ @ ul
+                    if C_ is not None:
+                        zu = C_.T @ zu
+                fl = fl + zu
+                out.append((i, "beam_th2", np.asarray(ul, float).copy()))
             out.append((i, "beam", fl))
         elif e.typ in asm.SHELL_TYPES:
             prop = model.shells[e.sec]
@@ -3502,6 +3693,18 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
                 if i in temp:
                     A_ = lam.A if lam is not None else sh._material_matrices(mat.E, mat.nu, t)[0]
                     acc[:3] -= A_ @ (mat.alpha * temp[i] * np.array([1.0, 1.0, 0.0]))
+                    if lam is not None:
+                        # Laminat mit Kopplung (B != 0): die Last traegt m0 = B eps0
+                        # (shell_rm.temperatur_schale), die Rueckrechnung zog es bis
+                        # zum 09.11.2026 nicht ab - die frei gedehnte Platte zeigte
+                        # das Moment B alpha dT statt 0 (Nebenbefund 14)
+                        acc[3:6] -= lam.B @ (mat.alpha * temp[i] * np.array([1.0, 1.0, 0.0]))
+                dTz_ = (temp.get("dT_z") or {}).get(i) if isinstance(temp, dict) else None
+                if dTz_:
+                    lam_ = lam if lam is not None else shell_rm.isotrop_laminat(mat.E, mat.nu, t)
+                    kT = shell_rm.temperatur_kruemmung(mat.alpha, dTz_, lam_.t if lam is not None else t)
+                    acc[:3] -= lam_.B @ kT
+                    acc[3:6] -= lam_.D @ kT
                 out.append((i, "shell", acc))
                 continue
             tris = [(0, 1, 2)] if e.typ == "shell3" else [(0, 1, 2), (0, 2, 3)]
@@ -3529,6 +3732,10 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
             if i in temp:
                 Dm = sh._material_matrices(mat.E, mat.nu, t)[0]
                 acc[:3] -= Dm @ (mat.alpha * temp[i] * np.array([1.0, 1.0, 0.0]))
+            dTz_ = (temp.get("dT_z") or {}).get(i) if isinstance(temp, dict) else None
+            if dTz_:
+                from .elements.shell_rm import temperatur_kruemmung
+                acc[3:6] -= sh._material_matrices(mat.E, mat.nu, t)[1] @ temperatur_kruemmung(mat.alpha, dTz_, t)
             out.append((i, "shell", acc))
         elif e.typ in asm.SOLID_TYPES:
             ev = extra.get("ev_dilatation") if isinstance(extra, dict) else None
@@ -4098,9 +4305,15 @@ def rand_projizieren(model: Model, sk: dict, aktiv=None, faelle=None, merker: di
 
 def postprocess(model: Model, u: np.ndarray, res: Results, feq: dict = None,
                 q: dict = None, temp: dict = None, workers: int = None, aktiv=None,
-                system=None):
+                system=None, n_geo: dict = None):
     """Rohgroessen je Element aus dem Verschiebungsvektor u (ndof,).
-    Abgeschaltete Elemente (``aktiv`` False) bekommen Nullen: sie wirken nicht."""
+    Abgeschaltete Elemente (``aktiv`` False) bekommen Nullen: sie wirken nicht.
+
+    ``n_geo`` {Element: Normalkraft} (Theorie II. Ordnung, theorie2.
+    solve_theorie2): die Stabendkraefte der Balken rechnen dann mit
+    k + k_G wie das Gleichungssystem, und die Stabend-Verschiebungen stehen
+    in ``res.beam_th2`` - daraus nehmen die Stellen im Feld den Anteil N w
+    (beam_station_forces). Befund A8 der Pruefagenten, 09.11.2026."""
     feq = feq if feq is not None else {}
     q = q if q is not None else {}
     temp = temp if temp is not None else {}
@@ -4110,7 +4323,7 @@ def postprocess(model: Model, u: np.ndarray, res: Results, feq: dict = None,
     ecken: dict = {}
     items = parallel.map_elements(_post_chunk, model, idx, workers=workers,
                                   extra={"u": u, "feq": feq, "temp": temp,
-                                         "ev_dilatation": ev})
+                                         "ev_dilatation": ev, "n_geo": n_geo or {}})
     if aktiv is not None:
         inaktiv = [i for i in range(len(model.elements)) if not aktiv[i]]
         res.info["inaktiv"] = inaktiv
@@ -4151,6 +4364,8 @@ def postprocess(model: Model, u: np.ndarray, res: Results, feq: dict = None,
                 res.beam_q[i] = qi
         elif kind == "bimoment":
             res.bimomente[i] = val
+        elif kind == "beam_th2":
+            res.beam_th2[i] = val
         elif kind == "shell":
             res.shell_res[i] = val
         elif kind == "feder":
@@ -5162,14 +5377,15 @@ class _KontaktImNewton:
         ok = (gg_ok and in_ok) or not kontakt_konv
         if innen is not None:
             text = (f"Plastizität: Laststufe {k}: Residuum am Ende - inneres Gleichgewicht "
-                    f"{_z(innen[3] / 1e3, stellen=3)} kN = {innen[0]:.1e} der Lasten (Schranke {innen[2]:.0e})"
-                    + (f", in den ausgenommenen Zonen {innen[1]:.1e}" if innen[1] is not None else "")
-                    + f"; Summe der Kräfte {_z(rest / 1e3, stellen=3)} kN = {gg:.1e}"
-                    + (f", Kontakt {kres:.1e} der Kontaktkraft" if kres is not None else ""))
+                    f"{_z(innen[3] / 1e3, stellen=3)} kN = {_zt(innen[0], 2)} der Lasten "
+                    f"(Schranke {_zt(innen[2], 2)})"
+                    + (f", in den ausgenommenen Zonen {_zt(innen[1], 2)}" if innen[1] is not None else "")
+                    + f"; Summe der Kräfte {_z(rest / 1e3, stellen=3)} kN = {_zt(gg, 2)}"
+                    + (f", Kontakt {_zt(kres, 2)} der Kontaktkraft" if kres is not None else ""))
         else:
             text = (f"Plastizität: Laststufe {k}: Residuum am Ende - Gleichgewicht {_z(rest / 1e3, stellen=3)} kN "
-                    f"= {gg:.1e} der Lasten (Schranke {ABSCHLUSS_GLEICHGEWICHT:.0e})"
-                    + (f", Kontakt {kres:.1e} der Kontaktkraft" if kres is not None else ""))
+                    f"= {_zt(gg, 2)} der Lasten (Schranke {_zt(ABSCHLUSS_GLEICHGEWICHT, 2)})"
+                    + (f", Kontakt {_zt(kres, 2)} der Kontaktkraft" if kres is not None else ""))
         text += ("" if (gg_ok and in_ok) else
                  " - die Stufe ist nicht konvergiert" if kontakt_konv else
                  " - der Kontaktlauf ist nicht konvergiert, die Stufe ist vorläufig gekennzeichnet")
@@ -5778,6 +5994,11 @@ def _plastizitaet_rechnen(model, res, F, rechnen, aktiv, temp, progress, start,
     if plast_merken:
         res._plast_ende = (zustand, F_p)
     halter, aufrufe = kn.halter, kn.aufrufe
+    # Schalen, Staebe und Scheiben rechnen elastisch weiter (Befund C5, 09.11.2026):
+    # das steht im Protokoll und in der Zusammenfassung, nie nur „nichts fließt“
+    elastisch = pl.elastisch_gerechnet(model, aktiv)
+    if elastisch:
+        info["elastisch"] = elastisch
     # Traglast, Gueltigkeitsgrenze, ε_p,max mit Ort, ΣR/ΣM und das Residuum der
     # inneren Kraefte (Auftrag vom 16.10.2026)
     _plastisch_bewerten(model, res, info, zustand, halter.get("R"), system, zonen, log,
@@ -5856,6 +6077,8 @@ def _plastisch_bewerten(model, res, info: dict, zustand, R, system, zonen, log: 
         neu.append("Plastizität: " + pl.eps_p_ort_text(ort))
     except Exception as ex:                       # noqa: BLE001 - Ausgabe haelt nichts auf
         neu.append(f"Plastizität: Ort von ε_p,max nicht bestimmt ({type(ex).__name__}: {str(ex)[:120]})")
+    if info.get("elastisch"):
+        neu.append("Plastizität: Hinweis – " + pl.elastisch_text(info["elastisch"]))
     dg = pl.dehnungsgrenze_pruefen(model, zustand, model.plastizitaet)
     info["dehnungsgrenze"] = dg
     # die Zeile „NICHT GÜLTIG“ der Grenze schreibt _grenze_netzabhaengig (erst nach
@@ -6478,6 +6701,8 @@ def _stab_namen(model: Model) -> dict:
 def stab_name(model: Model, i: int, namen: dict = None) -> str:
     """Der Name des Stabs zu Element ``i`` (sonst „Element <i+1>“)."""
     namen = _stab_namen(model) if namen is None else namen
+    # intern geteilte Staebe (statik3d.stabteilung): das Element des Modells
+    i = int((getattr(model, "_stabteilung_eltern", None) or {}).get(int(i), int(i)))
     return namen.get(int(i), f"Element {int(i) + 1}")
 
 
@@ -6571,6 +6796,70 @@ def seil_querlast_gebuendelt(ergebnisse) -> list:
             f"{', '.join(seile[:6])}{' …' if len(seile) > 6 else ''}: nach Theorie I./II. Ordnung "
             "ist das Seil gerade, die Querlast geht nur als Kraft q L/2 an die Seilenden, "
             "ohne Durchhang und ohne Seilkraft aus ihr – die Seilwirkung rechnet Theorie III. Ordnung "
+            f"(bei {anzahl(len(wo), 'Ergebnis', 'Ergebnissen')}: {', '.join(wo[:3])}"
+            f"{' …' if len(wo) > 3 else ''})"]
+
+
+#: Anteil der groessten Modellabmessung, ueber dem die groesste Verformung als
+#: unplausibel gilt (Befund C12, 09.11.2026). Ein Tragwerk im Gebrauchszustand
+#: verformt sich um Hundertstel seiner Abmessung (l/300 = 0,33 %); 10 % sind
+#: das Dreissigfache davon und fast immer ein Einheitenfehler (E in N/mm2
+#: statt N/m2 eingegeben: Faktor 1e6) oder eine fehlende Lagerung.
+VERFORMUNG_GROSS = 0.10
+
+
+def verformung_unplausibel(res):
+    """(groesste Verformung [m], groesste Modellabmessung [m]), wenn die
+    Verformung eines Lastfalls oder einer Kombination ueber
+    :data:`VERFORMUNG_GROSS` der groessten Modellabmessung liegt - sonst None.
+
+    Die Modellabmessung ist die laengste Kante des Rahmens um alle Knoten
+    (Model.bbox); die Verformung der Betrag der Verschiebung (``umag``, die
+    Zahl der Zeile „max. Verschiebung“). Eigenformen und Beulformen sind
+    normiert und zaehlen nicht, ein abgebrochenes Ergebnis auch nicht. Der
+    Werkstoff wird nicht angesehen: aus dem Zahlenwert von E allein folgt
+    nichts (Kunststoff, Elastomer, Baugrund)."""
+    if getattr(res, "kind", "") not in ("case", "combination"):
+        return None
+    inf = res.info if isinstance(getattr(res, "info", None), dict) else {}
+    if inf.get("abbruch"):
+        return None
+    u, model = getattr(res, "u", None), getattr(res, "model", None)
+    if u is None or model is None or not getattr(u, "size", 0) or not int(model.nn):
+        return None
+    try:
+        groesse = float(np.ptp(np.asarray(model.nodes, float)[:, :3], axis=0).max())
+        umax = float(np.max(np.linalg.norm(np.asarray(u, float)[:, :3], axis=1)))
+    except Exception:                       # noqa: BLE001 - ein Hinweis darf nie sperren
+        return None
+    if not (np.isfinite(umax) and np.isfinite(groesse)) or groesse <= 0.0:
+        return None
+    return (umax, groesse) if umax > VERFORMUNG_GROSS * groesse else None
+
+
+def verformung_gross_gebuendelt(ergebnisse) -> list:
+    """Die Warnung zu unplausibel grossen Verformungen
+    (:func:`verformung_unplausibel`): eine Zeile ueber alle Ergebnisse mit dem
+    groessten Wert und den ersten drei Ergebnissen - leer ohne.
+
+    Bis zum 09.11.2026 galt ein Ergebnis mit 4 722 mm Verformung an einem
+    Wuerfel von 1 m als gueltig, ohne ein Wort (E = 210 000 statt 210e9 N/m2
+    eingegeben, Befund C12)."""
+    groesste = None
+    wo: list = []
+    for name, r in ergebnisse:
+        t = verformung_unplausibel(r)
+        if t is None:
+            continue
+        wo.append(str(name))
+        if groesste is None or t[0] > groesste[0]:
+            groesste = t
+    if groesste is None:
+        return []
+    from .begriffe import anzahl
+    from .zahlen import zahl_text
+    return [f"WARNUNG: Verformung {zahl_text(groesste[0] * 1000.0, stellen=6)} mm bei Modellgröße "
+            f"{zahl_text(groesste[1], stellen=4)} m – Einheiten und Lagerung prüfen "
             f"(bei {anzahl(len(wo), 'Ergebnis', 'Ergebnissen')}: {', '.join(wo[:3])}"
             f"{' …' if len(wo) > 3 else ''})"]
 
@@ -7343,6 +7632,12 @@ def _kombination_pruefen(model: Model, combo: Combination) -> str:
     ein Bedienhinweis (KombinationGesperrt), kein Absturz; der einzelne
     Lastfall bleibt rechenbar. Diese Stelle erreichen alle Wege zu einer
     Kombination - auch die Alternativen einer Ergebniskombination."""
+    # Ein Lastfall, den es nicht gibt: bis zum 09.11.2026 endete das als roher
+    # KeyError aus Model.case (Befund C14) - jetzt der Satz der Modellpruefung
+    for k in combo.lastfaelle():
+        if k not in model.load_cases:
+            from .diagnose import lastfall_fehlt_text
+            raise ValueError(lastfall_fehlt_text(combo.name, k))
     offen = [k for k in combo.lastfaelle()
              if k in model.load_cases and model.load_cases[k].kombination_gesperrt]
     if offen:
@@ -9258,6 +9553,12 @@ def _zt(x: float, stellen: int = 3) -> str:
     return zahl_text(x, stellen=stellen)
 
 
+def _fest(x, nk: int) -> str:
+    """Feste Nachkommastellen mit Dezimalkomma fuer die Zusammenfassung („max.
+    Verschiebung : 16,8940 mm“, Befund C7 vom 09.11.2026: bis dahin mit Punkt)."""
+    return f"{float(x):.{int(nk)}f}".replace(".", ",")
+
+
 def _pendel_bauteile(model: Model, cs, ids, merker: dict) -> str:
     """„Bauteil B (Lager Starr): 2, …“ - je Bauteil und Bedingung die Zahl der Knoten."""
     if "karte" not in merker:
@@ -10385,15 +10686,15 @@ class Envelope:
         if self.u_max.size and self.names:
             um = self.umag_max
             i = int(np.argmax(um))
-            s.append(f"max. Verschiebung       : {um[i]*1000:.3f} mm (Knoten {i})")
+            s.append(f"max. Verschiebung       : {_fest(um[i] * 1000, 3)} mm (Knoten {i})")
         if self.beam:
             for k in ("N", "My", "Mz"):
                 mn = min(float(d[k][0].min()) for d in self.beam.values())
                 mx = max(float(d[k][1].max()) for d in self.beam.values())
                 unit = "kN" if k == "N" else "kNm"
-                s.append(f"{k:2s} min/max              : {mn/1e3:.2f} / {mx/1e3:.2f} {unit}")
+                s.append(f"{k:2s} min/max              : {_fest(mn / 1e3, 2)} / {_fest(mx / 1e3, 2)} {unit}")
         if np.any(self.node_vm_max):
-            s.append(f"max. Vergleichsspannung : {np.nanmax(self.node_vm_max)/1e6:.2f} MPa")
+            s.append(f"max. Vergleichsspannung : {_fest(np.nanmax(self.node_vm_max) / 1e6, 2)} MPa")
         return "\n".join(s)
 
 
@@ -10455,7 +10756,7 @@ class Analysis:
 
     def summary(self) -> str:
         s = [f"Lastfälle: {len(self.cases)}   Kombinationen: {len(self.combinations)}   "
-             f"Rechenzeit: {self.info.get('time', 0):.2f} s ({self.info.get('parallel', '')})"]
+             f"Rechenzeit: {_fest(self.info.get('time', 0), 2)} s ({self.info.get('parallel', '')})"]
         # Ausweichen des Gleichungsloesers: eine Zeile je Grund ueber alle
         # Ergebnisse - auch aus Ketten, Pool und Farm, die ohne Fortschritt rechnen
         s += ausweichen_gebuendelt(self.all_results().items())
@@ -10468,6 +10769,8 @@ class Analysis:
         s += zugstab_druck_gebuendelt(self.all_results().items())
         # Querlast auf Seilen nach Theorie I./II. Ordnung (14.10.2026)
         s += seil_querlast_gebuendelt(self.all_results().items())
+        # unplausibel grosse Verformung (Einheitenfehler, 09.11.2026)
+        s += verformung_gross_gebuendelt(self.all_results().items())
         # Ergebnisse mit nicht konvergiertem Kontakt sind vorlaeufig (14.10.2026)
         s += vorlaeufig_gebuendelt(self.all_results().items())
         # Vorspannung je Anker: mit welchem Zeitpunkt gerechnet ist (16.10.2026,
@@ -10774,6 +11077,13 @@ def _solve_all_innen(model: Model, workers: int = None, progress=None, combinati
         _teilanalyse(ex, an, model, systeme, t0)
         raise
     _vorspannung_nachreichen(model, an, progress)
+    # Kombinationen mit Faktoren von vor einer Korrektur des Generators (ξ in 6.10b,
+    # fehlende Einwirkungen der DIN 19704; Befunde 41, 42, 44 vom 11.11.2026): ein
+    # Neurechnen aendert sie nicht - der Status bleibt, bis sie neu erzeugt sind
+    from . import rechenverfahren as _rvf
+    status = _rvf.modell_betroffen(model, an)
+    if status:
+        an.info["verfahren_betroffen"] = status
     return an
 
 

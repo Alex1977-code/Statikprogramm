@@ -220,6 +220,40 @@ def test_einzelne_flaeche_mit_oeffnung():
     check("kein Element liegt im Loch", im_loch == 0, f"{im_loch}")
 
 
+def test_altes_netz_beim_oeffnen_erkannt():
+    """Punkt 10 (Anwender, 09.11.2026: „10 ja“): ein Schalennetz von vor dem
+    09.11.2026 - jede Flaeche fuer sich vernetzt - wird beim Oeffnen erkannt
+    und zum Neuvernetzen aufgefordert; ein neu vernetztes Modell nicht."""
+    ordner = tempfile.mkdtemp(prefix="s3d_netz_alt_")
+    # altes Netz: jede Flaeche einzeln mit mesh_flaeche, wie bis zum 09.11.2026
+    m = zwei_flaechen()
+    from statik3d import netzdichte as nd
+    nd.anwenden(m, m.netz, list(m.flaechen.values()), [], [])
+    with contextlib.redirect_stdout(io.StringIO()):
+        for f in m.flaechen.values():
+            mesher.mesh_flaeche(m, f, [])
+    lose = mesher.unverbundene_schalenlinien(m)
+    check("altes Netz: die gemeinsame Linie L7 ist unverbunden", [x[0] for x in lose] == ["L7"], str(lose))
+    p = os.path.join(ordner, "alt.json")
+    m.save(p)
+    m2 = Model.load(p)
+    zeilen = [z for z in m2._ladehinweise if "Schalennetz nicht verbunden" in z]
+    check("beim Oeffnen: Hinweis „Schalennetz nicht verbunden … neu vernetzen“",
+          len(zeilen) == 1 and "neu vernetzen" in zeilen[0] and "F1/F2" in zeilen[0],
+          zeilen[0][:90] if zeilen else "kein Hinweis")
+    check("der Hinweis steht als offener Importhinweis im Modell",
+          any(h.get("art") == "schalennetz" and not h.get("erledigt") for h in m2.importhinweise))
+    # neu vernetzt: kein Hinweis, der gespeicherte gilt beim naechsten Oeffnen als erledigt
+    vernetzen(m2)
+    check("neu vernetzt: keine unverbundene Linie", not mesher.unverbundene_schalenlinien(m2))
+    p2 = os.path.join(ordner, "neu.json")
+    m2.save(p2)
+    m3 = Model.load(p2)
+    check("neu vernetzt und geoeffnet: kein Hinweis, der alte ist erledigt",
+          not [z for z in m3._ladehinweise if "Schalennetz" in z]
+          and all(h.get("erledigt") for h in m3.importhinweise if h.get("art") == "schalennetz"))
+
+
 def test_oberflaeche_vernetzt_genauso():
     """Die Oberflaeche hat eine eigene Vernetzungsschleife (MainWindow._vernetzen)."""
     from PySide6 import QtWidgets
@@ -248,6 +282,7 @@ def main():
               test_einzelne_flaeche_bleibt_wie_bisher,
               test_dreiecksflaeche_folgt_der_netzgroesse,
               test_einzelne_flaeche_mit_oeffnung,
+              test_altes_netz_beim_oeffnen_erkannt,
               test_oberflaeche_vernetzt_genauso):
         try:
             t()

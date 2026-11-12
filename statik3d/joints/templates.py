@@ -47,6 +47,23 @@ TYPES = {
 BOLT_LADDER = ["M12", "M16", "M20", "M24", "M27", "M30", "M36"]
 
 
+def _festigkeiten(mat: Material, t: float) -> tuple:
+    """(f_y, f_u) [Pa] des Werkstoffs fuer den Vorschlag. Beide kommen aus dem
+    Werkstoff (Wert, Dickentabelle oder Stahlsorte); fehlt eines, gibt es
+    keinen Vorschlag, sondern die Meldung - wie beim Anschlussnachweis
+    (anschluss.vorlage, Befund A23). Bis zum 09.11.2026 bemass der Vorschlag
+    dann still mit 1,3 f_y bzw. mit S355 (355/510 N/mm²) und zeigte dazu
+    Nachweise (Nebenbefund 15)."""
+    fy = mat.yield_strength(t)
+    fu = mat.zugfestigkeit_angegeben(t)
+    fehlt = [n for n, v in (("f_y", fy), ("f_u", fu)) if not v]
+    if fehlt:
+        raise ValueError(f"Werkstoff „{mat.name}“: {' und '.join(fehlt)} {'fehlt' if len(fehlt) == 1 else 'fehlen'} – bitte im "
+                         "Werkstoff angeben (Wert oder Stahlsorte); ohne Angabe kein Anschlussvorschlag, "
+                         "kein Vorgabewert")
+    return fy, fu
+
+
 def _section_of(model: Model, elem: int) -> Section:
     e = model.elements[int(elem)]
     if not e.sec or e.sec not in model.sections:
@@ -174,8 +191,7 @@ class EndPlate(JointTemplate):
         """Vollstaendigen Vorschlag aus Profil und Schnittgroessen bilden."""
         sec = _section_of(model, elem)
         mat = _material_of(model, elem)
-        fy = mat.yield_strength(sec.t_max) or 355e6
-        fu = mat.ultimate_strength(sec.t_max) or FU_S355
+        fy, fu = _festigkeiten(mat, sec.t_max)
         h = sec.h or 0.300
         b = sec.b or 0.150
         tf = sec.tf or 0.012
@@ -661,8 +677,7 @@ class Splice(JointTemplate):
         """
         sec = _section_of(model, elem)
         mat = _material_of(model, elem)
-        fy = mat.yield_strength(sec.t_max) or 355e6
-        fu = mat.ultimate_strength(sec.t_max) or FU_S355
+        fy, fu = _festigkeiten(mat, sec.t_max)
         h = sec.h or 0.300
         b = sec.b or 0.150
         tf = sec.tf or 0.012
@@ -938,8 +953,7 @@ class Gusset(JointTemplate):
         """Knotenblech aus Profil und Stabkraft vorschlagen."""
         sec = _section_of(model, elem)
         mat = _material_of(model, elem)
-        fy = mat.yield_strength(sec.t_max) or 355e6
-        fu = mat.ultimate_strength(sec.t_max) or FU_S355
+        fy, fu = _festigkeiten(mat, sec.t_max)
         a = Gusset(name=name or f"Diagonalanschluss {model.elements[int(elem)].sec}",
                    model=model, elem=int(elem), end=int(end),
                    grade=mat.grade or "S355", fy=fy, fu=fu, sec=sec, welded=welded)

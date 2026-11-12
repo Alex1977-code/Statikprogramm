@@ -51,6 +51,29 @@ Import gibt seitdem dasselbe Modell zurueck (tests.test_nachtrag_q8):
 * **Staebe aus mehreren Elementen** (N30): die Spalte Nodes nennt alle Knoten
   der Elementkette (Segments Line); bis zum 07.10.2026 standen nur Anfangs- und
   Endknoten da, und der Stab kam als ein Element zurueck.
+
+Befund B3 der Pruefagenten (09.11.2026) - bis dahin fielen Gelenke,
+Fachwerkstaebe, Linien- und Flaechenlager ohne ein Wort weg (der
+Doppellenkerwippkran verformte sich nach dem Rundlauf um 22,8 statt 115 mm).
+Spalten und Werte nach der SAF-Beschreibung (saf.guide, gelesen 09.11.2026):
+
+* **Fachwerkstaebe**: Spalte "Behaviour in analysis" im Blatt der Staebe,
+  "Axial force only" fuer Fachwerkstab und Seil, sonst "Standard";
+* **Stabendgelenke**: Blatt RelConnectsStructuralMember (Member, Position
+  Begin oder End, ux ... fiz mit Free, Rigid, Flexible, Federn in MN/m und
+  MNm/rad) - im Stabsystem, wie SAF es fuehrt. Ein Gelenk im Inneren eines
+  Stabes kennt SAF nicht, das nennt der Hinweis;
+* **Linienlager**: je Abschnitt eine Zeile, an einer Schalenkante im Blatt
+  StructuralEdgeConnection (2D Member, Edge = Nummer der Kante ab 1), an einem
+  Stab im Blatt StructuralCurveConnection (Member, Start und End point).
+  Steifigkeiten je Laenge in MN/m2 und MNm/rad/m. SAF fuehrt ein Linienlager
+  je Kante oder Stab; die Spalte "Line support" - eine Spalte, die SAF nicht
+  kennt - haelt die Abschnitte fuer Statik3D zusammen;
+* **Schubflaechen** eines Querschnitts, der als "General" hinausgeht: Spalten
+  "Ay [m2]" und "Az [m2]" (SAF kennt sie nicht; ohne sie kam etwa ein
+  Kastenquerschnitt schubstarr zurueck);
+* was nicht hinausgeht (Flaechenlager, Volumenelemente, Federn, Kopplungen,
+  Kontakt ...), nennt **ein** Hinweis am Ende mit Anzahl.
 """
 from __future__ import annotations
 
@@ -255,6 +278,161 @@ def _querschnitt(name: str, s) -> tuple:
         if nachgebaut is not None and _gleiche_werte(nachgebaut, s):
             return "Parametric", shape, "; ".join(texte), ""
     return "General", "", "", ""
+
+
+# --------------------------------------------------------------------------
+# Stabendgelenke und Linienlager (Befund B3 der Pruefagenten, 09.11.2026)
+# --------------------------------------------------------------------------
+FHG_NAMEN = ["ux", "uy", "uz", "fix", "fiy", "fiz"]
+
+
+def _gelenke(model: Model, staebe: list) -> tuple:
+    """Das Blatt RelConnectsStructuralMember und was nicht hineingeht.
+
+    Das Modell fuehrt ein Gelenk am Ende eines **Elements** (lokale FHG 0..11,
+    Federn in ``hinge_springs``), SAF am Anfang oder Ende eines **Stabes**, im
+    Stabsystem. Geschrieben wird darum ein Gelenk, das am Anfangs- oder
+    Endknoten der Elementkette sitzt. Die Achsen des Elements sind die des
+    Stabes, solange die lokale z-Achse dieselbe ist (ein Element, das entgegen
+    dem Stab gezeichnet ist, kehrt x und y um - fuer ein Gelenk dasselbe).
+    Rueckgabe ``(zeilen, hinweise)``."""
+    zeilen = [["Name", "Member", "Position"] + FHG_NAMEN
+              + ["Stiffness X [MN/m]", "Stiffness Y [MN/m]", "Stiffness Z [MN/m]",
+                 "Stiffness Fix [MNm/rad]", "Stiffness Fiy [MNm/rad]", "Stiffness Fiz [MNm/rad]"]]
+    stab_von = {}
+    for st in staebe:
+        for e in st["elems"]:
+            stab_von.setdefault(int(e), st)
+    n_innen = n_kette = n_achse = 0
+    for i, ende in C.gelenkenden(model):
+        el = model.elements[i]
+        frei = {int(d) % 6 for d in (el.hinges or []) if int(d) // 6 == ende}
+        feder = {int(d) % 6: float(k) for d, k in (el.hinge_springs or []) if int(d) // 6 == ende}
+        st = stab_von.get(i)
+        if st is None or i not in st["lagen"]:
+            n_kette += 1
+            continue
+        pos, L, vor = st["lagen"][i]
+        gesamt = sum(lage[1] for lage in st["lagen"].values())
+        x = pos + (L if (ende == 1) == vor else 0.0)
+        tol = 1e-9 * max(gesamt, 1.0)
+        if abs(x) <= tol:
+            lage = "Begin"
+        elif abs(x - gesamt) <= tol:
+            lage = "End"
+        else:
+            n_innen += 1
+            continue
+        # gleiches Verhalten in y und z ist von der Drehung um die Stabachse
+        # unabhaengig; sonst muss die z-Achse des Elements die des Stabes sein
+        gleich = all((a in frei) == (b in frei) and feder.get(a) == feder.get(b)
+                     for a, b in ((1, 2), (4, 5)))
+        T3s = st["achsen"].get(i)
+        if not gleich and (T3s is None or abs(float(T3s[2] @ _z_achse(model, i))) < 1.0 - 1e-12):
+            n_achse += 1
+            continue
+        zeilen.append([f"H{len(zeilen)}", st["name"], lage]
+                      + ["Free" if d in frei else "Flexible" if d in feder else "Rigid"
+                         for d in range(6)]
+                      + [feder[d] / 1e6 if d in feder and d not in frei else "" for d in range(6)])
+    hinweise = [
+        (n_innen, "Stabendgelenk im Inneren eines Stabes (SAF kennt Gelenke nur an Stabanfang und "
+                  "Stabende)", "Stabendgelenke im Inneren eines Stabes (SAF kennt Gelenke nur an "
+                               "Stabanfang und Stabende)"),
+        (n_kette, "Stabendgelenk an einem Stab, dessen Elemente keine Kette bilden",
+         "Stabendgelenke an Stäben, deren Elemente keine Kette bilden"),
+        (n_achse, "Stabendgelenk an einem Element, dessen lokale z-Achse nicht die des Stabes ist",
+         "Stabendgelenke an Elementen, deren lokale z-Achse nicht die des Stabes ist"),
+    ]
+    return zeilen, hinweise
+
+
+def _linienlager(model: Model, staebe: list) -> tuple:
+    """Die Blaetter StructuralCurveConnection (Linienlager an Staeben) und
+    StructuralEdgeConnection (an Schalenkanten) und was nicht hineingeht.
+
+    Das Linienlager des Modells ist eine Knotenkette. Je Abschnitt zwischen
+    zwei aufeinanderfolgenden Knoten eine Zeile: liegt er auf der Kante einer
+    Schale, nennt die Zeile die Flaeche und die Nummer der Kante (Kante k
+    laeuft vom k-ten zum naechsten Knoten der Spalte Nodes); liegt er auf
+    einem Stabelement, nennt sie den Stab und den Abschnitt in m vom
+    Stabanfang (aufeinanderfolgende Abschnitte desselben Stabes in einer
+    Zeile). Steifigkeiten je Laenge. Rueckgabe ``(an_stab, an_kante,
+    hinweise, n_lager)``."""
+    kopf = FHG_NAMEN + ["Stiffness X [MN/m2]", "Stiffness Y [MN/m2]", "Stiffness Z [MN/m2]",
+                        "Stiffness Fix [MNm/rad/m]", "Stiffness Fiy [MNm/rad/m]",
+                        "Stiffness Fiz [MNm/rad/m]", "Coordinate system", "Coordinate definition",
+                        "Origin", "Start point [m]", "End point [m]", "Line support"]
+    an_stab = [["Name", "Type", "Member"] + kopf]
+    an_kante = [["Name", "Type", "Boundary condition", "2D Member", "Edge"] + kopf]
+    kanten: dict = {}
+    for i in C.shell_elements(model):
+        n = [int(x) for x in model.elements[i].nodes]
+        if len(n) in (3, 4):                 # die Datei fuehrt die Schale als Polygon ihrer Knoten
+            for k in range(len(n)):
+                kanten.setdefault(frozenset((n[k], n[(k + 1) % len(n)])), (i, k + 1))
+    stabteile: dict = {}
+    for st in staebe:
+        for e, (pos, L, _vor) in st["lagen"].items():
+            n0, n1 = (int(x) for x in model.elements[e].nodes[:2])
+            stabteile.setdefault(frozenset((n0, n1)), (st["name"], float(pos), float(pos + L)))
+    n_ohne = n_frei = n_nl = n_lager = 0
+    for j, ls in enumerate(model.line_supports, 1):
+        name = ls.name or f"LL{j}"
+        b = [ls.dof_behaviour(d) for d in range(6)]
+        if all(x.typ == "free" for x in b):
+            continue                         # haelt nichts - es gibt nichts zu schreiben
+        knoten = [int(n) for n in ls.nodes]
+        if len(knoten) < 2:
+            n_ohne += 1
+            continue
+        teile: list = []
+        for a, c in zip(knoten[:-1], knoten[1:]):
+            paar = frozenset((a, c))
+            if paar in kanten:
+                teile.append(("kante",) + kanten[paar])
+            elif paar in stabteile:
+                stab, x1, x2 = stabteile[paar]
+                tol = 1e-9 * max(1.0, x2)
+                letzter = teile[-1] if teile else None
+                if isinstance(letzter, list) and letzter[1] == stab and abs(letzter[3] - x1) <= tol:
+                    letzter[3] = x2
+                elif isinstance(letzter, list) and letzter[1] == stab and abs(letzter[2] - x2) <= tol:
+                    letzter[2] = x1
+                else:
+                    teile.append(["stab", stab, x1, x2])
+            else:
+                n_frei += 1
+        if not teile:
+            continue
+        n_lager += 1
+        n_nl += int(any(x.failure or x.slip or x.mu or x.limit for x in b))
+        if all(x.typ == "rigid" for x in b):
+            art = "Fixed"
+        elif all(x.typ == "rigid" for x in b[:3]) and all(x.typ == "free" for x in b[3:]):
+            art = "Hinged"
+        else:
+            art = "Custom"
+        werte = [_cond(x) for x in b] + [float(x.stiffness) / 1e6 if x.typ == "spring" else ""
+                                         for x in b]
+        for k, t in enumerate(teile, 1):
+            zeile = name if len(teile) == 1 else f"{name} [{k}]"
+            if t[0] == "kante":
+                an_kante.append([zeile, art, "On edge", f"S{t[1] + 1}", int(t[2])] + werte
+                                + ["Global", "Relative", "From start", 0.0, 1.0, name])
+            else:
+                an_stab.append([zeile, art, t[1]] + werte
+                               + ["Global", "Absolute", "From start", float(t[2]), float(t[3]), name])
+    hinweise = [
+        (n_ohne, "Linienlager ohne Knotenkette (erst vernetzen)",
+         "Linienlager ohne Knotenkette (erst vernetzen)"),
+        (n_frei, "Abschnitt eines Linienlagers, der weder auf einer Schalenkante noch auf einem "
+                 "Stab liegt", "Abschnitte von Linienlagern, die weder auf einer Schalenkante noch "
+                               "auf einem Stab liegen"),
+        (n_nl, "Linienlager mit Ausfall, Schlupf, Reibung oder Grenzkraft (linear geschrieben)",
+         "Linienlager mit Ausfall, Schlupf, Reibung oder Grenzkraft (linear geschrieben)"),
+    ]
+    return an_stab, an_kante, hinweise, n_lager
 
 
 # --------------------------------------------------------------------------
@@ -585,36 +763,57 @@ def write_saf(model: Model, path: str, results=None, log: list = None, **_) -> s
 
     secs = [["Name", "Material", "Cross-section type", "Shape", "Parameters [mm]", "Profile",
              "Form code", "A [m2]", "Iy [m4]", "Iz [m4]", "It [m4]", "Iw [m6]", "Wply [m3]",
-             "Wplz [m3]"]]
+             "Wplz [m3]", "Ay [m2]", "Az [m2]"]]
     frei = []
+    # Werkstoff des Querschnitts (B3, 09.11.2026): SAF fuehrt ihn am Querschnitt.
+    # Bis dahin stand dort bei jedem Querschnitt der erste Werkstoff des Modells,
+    # und der eigene Import gab ihn an die Staebe weiter - bei mehr als einem
+    # Werkstoff rechnete die Rundreise still mit dem falschen.
+    sec_mats: dict[str, list[str]] = {}
+    for i in C.beam_elements(model):
+        e = model.elements[i]
+        if e.sec and e.mat not in sec_mats.setdefault(e.sec, []):
+            sec_mats[e.sec].append(e.mat)
+    mehrfach = [f"{name} ({', '.join(l)})" for name, l in sec_mats.items() if len(l) > 1]
+    if mehrfach:
+        C.warn(log, f"SAF: {C.anzahl(len(mehrfach), 'Querschnitt wird', 'Querschnitte werden')} von Stäben aus "
+                    "verschiedenen Werkstoffen benutzt. SAF führt den Werkstoff am Querschnitt, dort steht der "
+                    "des ersten Stabs; den Werkstoff je Stab liest nur Statik3D aus der eigenen Spalte "
+                    "„Material“ der Stäbe zurück: " + _namen(mehrfach))
     for name, s in model.sections.items():
         art, shape, par, profil = _querschnitt(name, s)
-        secs.append([name, next(iter(model.materials), ""), art, shape, par, profil, s.typ,
+        secs.append([name, (sec_mats.get(name) or [next(iter(model.materials), "")])[0],
+                     art, shape, par, profil, s.typ,
                      float(s.A), float(s.Iy), float(s.Iz), float(s.It), float(s.Iw),
-                     float(s.Wpl_y), float(s.Wpl_z)])
+                     float(s.Wpl_y), float(s.Wpl_z), float(s.Asy), float(s.Asz)])
         if art == "General":
-            fehlt = [w for w, ja in (("Schubflächen", s.Asy or s.Asz),
-                                     ("Abmessungen", s.h or s.b or s.tw or s.tf),
+            fehlt = [w for w, ja in (("Abmessungen", s.h or s.b or s.tw or s.tf),
                                      ("elastische Widerstandsmomente und Randabstände",
                                       s.Wel_y or s.Wel_z or s.zmax or s.ymax)) if ja]
             frei.append(f"{name}" + (f" (ohne {', '.join(fehlt)})" if fehlt else ""))
     if frei:
-        C.warn(log, "SAF: Querschnitte nur mit Kennwerten (A, Iy, Iz, It, Iw, Wpl) als „General“ ohne "
+        C.warn(log, "SAF: Querschnitte nur mit Kennwerten (A, Iy, Iz, It, Iw, Wpl, Schubflächen) als „General“ ohne "
                     "Umriss (CompositeShapeDef) geschrieben - Statik3D liest sie zurück, andere "
                     "Programme brauchen den Umriss: " + _namen(frei))
     blaetter["StructuralCrossSection"] = secs
 
     staebe = _staebe(model)
     kurven = [["Name", "Type", "Cross-section", "Material", "Nodes", "Segments", "Begin node",
-               "End node", "Length [m]", "LCS Rotation [deg]"]]
+               "End node", "Length [m]", "LCS Rotation [deg]", "Behaviour in analysis"]]
+    n_fachwerk = 0
     for st in staebe:
         e = model.elements[st["erstes"]]
         punkte = st["punkte"] or [st["na"], st["nb"]]
+        # Fachwerkstab und Seil tragen nur Normalkraft (B3, 09.11.2026: bis
+        # dahin fehlte die Spalte, der Fachwerkstab kam als Balken zurueck)
+        fachwerk = e.typ in ("truss", "seil")
+        n_fachwerk += int(fachwerk)
         kurven.append([st["name"], "Beam", e.sec or "", e.mat,
                        "; ".join(f"N{int(n) + 1}" for n in punkte),
                        "; ".join(["Line"] * (len(punkte) - 1)),
                        f"N{st['na'] + 1}", f"N{st['nb'] + 1}",
-                       C.chain_length(model, st["elems"]), float(np.degrees(st["roll"])) + 0.0])   # ohne -0.0
+                       C.chain_length(model, st["elems"]), float(np.degrees(st["roll"])) + 0.0,   # ohne -0.0
+                       "Axial force only" if fachwerk else "Standard"])
         if st["punkte"] is None and len(st["elems"]) > 1:
             C.warn(log, f"SAF: Stab '{st['name']}': seine {len(st['elems'])} Elemente bilden keine Kette "
                         "vom Anfangs- zum Endknoten (Lücke oder Verzweigung) - die Datei führt ihn als "
@@ -624,6 +823,8 @@ def write_saf(model: Model, path: str, results=None, log: list = None, **_) -> s
                         "einen Werkstoff; seine Elemente unterscheiden sich in "
                         + "; ".join(st["anders"]) + " - alle Elemente kommen wie das erste zurück")
     blaetter["StructuralCurveMember"] = kurven
+    if n_fachwerk:
+        C.say(log, f"SAF: {C.anzahl(n_fachwerk, 'Fachwerkstab', 'Fachwerkstäbe')} als „Axial force only“")
 
     flaechen = [["Name", "Material", "Thickness [mm]", "Nodes", "Type"]]
     for i in C.shell_elements(model):
@@ -645,6 +846,23 @@ def write_saf(model: Model, path: str, results=None, log: list = None, **_) -> s
                      + [float(x.stiffness) if x.typ == "spring" else "" for x in b]
                      + ["Global"])
     blaetter["StructuralPointSupport"] = lager
+
+    # Stabendgelenke und Linienlager (B3, 09.11.2026); die Blaetter gibt es
+    # nur, wenn das Modell welche hat
+    gelenke, hinweise = _gelenke(model, staebe)
+    if len(gelenke) > 1:
+        blaetter["RelConnectsStructuralMember"] = gelenke
+        C.say(log, f"SAF: {C.anzahl(len(gelenke) - 1, 'Stabendgelenk', 'Stabendgelenke')} geschrieben")
+    an_stab, an_kante, hinweise_ll, n_ll = _linienlager(model, staebe)
+    hinweise += hinweise_ll
+    if len(an_stab) > 1:
+        blaetter["StructuralCurveConnection"] = an_stab
+    if len(an_kante) > 1:
+        blaetter["StructuralEdgeConnection"] = an_kante
+    if n_ll:
+        C.say(log, f"SAF: {n_ll} Linienlager geschrieben ({len(an_kante) - 1} Zeilen an Schalenkanten, "
+                   f"{len(an_stab) - 1} an Stäben). SAF führt ein Linienlager je Kante oder Stab; die "
+                   "Spalte „Line support“ hält die Abschnitte für Statik3D zusammen")
 
     # Eigengewicht (N28): ein Lastfall mit g = 9,81 m/s² nach unten fuehrt
     # Load type "Self weight" - so liest ihn der Import wieder als Eigengewicht.
@@ -693,6 +911,27 @@ def write_saf(model: Model, path: str, results=None, log: list = None, **_) -> s
     (blaetter["StructuralCurveActionThermal"],
      blaetter["StructuralSurfaceActionThermal"]) = _temperaturlasten(model, log, staebe, nicht)
     _nicht_geschrieben(model, log, nicht)
+
+    # Was im Modell steht und nicht in der Datei (B3, 09.11.2026). Lasten ohne
+    # SAF-Gegenstueck nennt _nicht_geschrieben je Lastfall, darum hier ohne sie
+    n_seil = sum(1 for st in staebe if model.elements[st["erstes"]].typ == "seil")
+    n_sonst = sum(1 for e in model.elements
+                  if e.typ not in EL.STAB_TYPEN and e.typ not in EL.VOLUMEN_TYPEN
+                  and not e.typ.startswith("shell") and e.typ != "feder"
+                  and not e.typ.startswith("grenzschicht"))
+    C.nicht_uebertragen(log, "SAF", hinweise + [
+        (n_seil, "Seil (geht als Fachwerkstab hinaus)", "Seile (gehen als Fachwerkstäbe hinaus)"),
+        (sum(1 for s in model.supports if s.nonlinear),
+         "Knotenlager mit Ausfall, Schlupf, Reibung oder Grenzkraft (linear geschrieben)",
+         "Knotenlager mit Ausfall, Schlupf, Reibung oder Grenzkraft (linear geschrieben)"),
+        (sum(1 for s in model.supports if any(float(v) for v in (s.values or []))),
+         "Knotenlager mit vorgegebener Verschiebung", "Knotenlager mit vorgegebener Verschiebung"),
+        (len(model.surface_supports), "Flächenlager", "Flächenlager"),
+        (len(C.solid_elements(model)), "Volumenelement", "Volumenelemente"),
+        (n_sonst, "Element anderer Art (Scheibe und andere)",
+         "Elemente anderer Art (Scheiben und andere)"),
+    ] + [t for t in C.weiteres(model)
+         if t[1] not in ("Zwangsverformung", "Vorspannung", "Übermaß")])
 
     write_xlsx(path, blaetter)
     C.say(log, f"SAF geschrieben: {len(blaetter)} Blätter, {model.nn} Knoten, "

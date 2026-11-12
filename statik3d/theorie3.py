@@ -153,20 +153,40 @@ class _Stab:
         sec = model.sections[e.sec]
         self.A, self.Ip = sec.A, sec.Iy + sec.Iz
         kl, T3, T, L = asm.beam_local(model, e)
+        # Gelenke und Federgelenke in der geometrischen Steifigkeit wie in der
+        # elastischen (asm.stab_endkinematik, wie Theorie II. Ordnung seit A7).
+        # Bis zum 09.11.2026 bekam die Tangente die volle Balkenform: mit einer
+        # Pendelstuetze als Balken mit Gelenken neben einem Kragstiel
+        # konvergierte die Rechnung ab 5/6 der Knicklast nicht mehr
+        # (Nebenbefund 16 a, tests/test_theorie_nebenbefund16.py)
+        self.C = None if e.typ == "truss" else asm.stab_endkinematik(model, e, kl)
         fa = None if f_anf is None or not np.any(f_anf) else np.asarray(f_anf, float)
+        # Die Stablasten des Elements (Strecken-, Eigengewicht, Temperatur)
+        # kondensiert wie die Steifigkeit und wie im Lastvektor
+        # (asm.stablasten_einbauen). Bis zum 12.11.2026 stand hier die
+        # unkondensierte Festeinspannkraft: am Stabendgelenk mit Streckenlast
+        # gab das Ergebnis q L²/12 statt 0 aus (eingespannter Einfeldtraeger
+        # in einem Element: 15,0 statt 0 kNm am Gelenk, 15,0 statt 22,5 kNm
+        # am Stabanfang; Nachstellung vom 11.11.2026). Das Gleichgewicht der
+        # Knoten stimmte, nur die Stabendkraefte nicht.
+        f0 = np.asarray(feq.get(i, np.zeros(12)), float)
         # die Anfangsdehnung wie in asm.stablasten_einbauen: Federgelenke, dann
         # Gelenke kondensiert
         if getattr(e, "hinge_springs", None):
-            kl, fa_, _rec = asm.hinge_springs(kl, np.zeros(12) if fa is None else fa, e.hinge_springs)
+            kl0 = kl
+            kl, fa_, _rec = asm.hinge_springs(kl0, np.zeros(12) if fa is None else fa, e.hinge_springs)
             fa = None if fa is None else fa_
+            _k, f0, _r = asm.hinge_springs(kl0, f0, e.hinge_springs)
         if e.hinges:
-            kl, fa_, _c = asm.condense(kl, np.zeros(12) if fa is None else fa, e.hinges)
+            kl0 = kl
+            kl, fa_, _c = asm.condense(kl0, np.zeros(12) if fa is None else fa, e.hinges)
             fa = None if fa is None else fa_
+            _k, f0, _c = asm.condense(kl0, f0, e.hinges)
         self.kl = kl
         self.f_anf = fa
         self.E0T = T3.T                   # Spalten: Ausgangsachsen ex, ey, ez
         self.L0 = L
-        self.f0 = np.asarray(feq.get(i, np.zeros(12)), float)
+        self.f0 = f0
         self.dofs = asm.element_dofs(e)
 
     def zustand(self, X: np.ndarray, R: np.ndarray):
@@ -201,6 +221,8 @@ class _Stab:
             kg = bm.kg_local_saite(N, L)
         else:
             kg = bm.kg_local_beam(N, L, self.A, self.Ip)
+            if self.C is not None:
+                kg = self.C.T @ kg @ self.C
         T = bm.transform_matrix(E.T)
         return fl, T, kg, N, L
 
@@ -363,11 +385,33 @@ def seil_streckenlasten(model: Model, factors: dict, aktiv=None) -> tuple:
 def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
                    max_iter: int = 30, tol: float = 1e-6, imperfektionen: bool = None,
                    elastisch: bool = True, richtung=None, alle_vorkruemmungen: bool = False,
-                   aktiv=None, progress=None):
+                   aktiv=None, progress=None, stabteilung: bool = True):
     """Einen Lastfall oder eine Kombination (``factors``) nach Theorie III.
-    Ordnung rechnen. Rueckgabe (Results, Th3Info)."""
+    Ordnung rechnen. Rueckgabe (Results, Th3Info).
+
+    ``stabteilung``: Balken intern teilen (statik3d.stabteilung, seit
+    12.11.2026) - gerechnet wird am geteilten Modell, das Ergebnis gilt fuer
+    die Knoten und Elemente von ``model``."""
     from .solver import case_loads, case_prescribed, Results
     from . import supports as sup
+    if stabteilung:
+        from .stabteilung import teilen, zurueck, teilzahlen, kraefte_theorie1, FAKTOR_THEORIE3
+        fein = None
+        if teilzahlen(model, aktiv):
+            try:
+                from .solver import StaticSystem
+                kraefte = kraefte_theorie1(model, StaticSystem(model, aktiv=aktiv), factors)
+            except Exception:              # noqa: BLE001 - ohne Bezug keine Teilung
+                kraefte = None
+            if kraefte is not None:
+                fein = teilen(model, aktiv, teilzahlen(model, aktiv, FAKTOR_THEORIE3, kraefte))
+        if fein is not None:
+            m2, abb, aktiv2 = fein
+            res2, info = solve_theorie3(m2, factors, name, schritte=schritte, max_iter=max_iter,
+                                        tol=tol, imperfektionen=imperfektionen, elastisch=elastisch,
+                                        richtung=richtung, alle_vorkruemmungen=alle_vorkruemmungen,
+                                        aktiv=aktiv2, progress=progress, stabteilung=False)
+            return zurueck(model, res2, abb), info
     t0 = time.time()
     info = Th3Info(name=name)
     ds = model.design

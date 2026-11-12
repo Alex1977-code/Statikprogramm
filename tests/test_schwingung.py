@@ -251,7 +251,8 @@ def test_oberflaeche_prueft_das_modell():
 
     m = modell()
     m.combinations["K9"] = Combination("K9", {"LF-X": 1.0}, "ULS")
-    meldung = "Kombination 'K9': Lastfall 'LF-X' unbekannt"
+    # Wortlaut seit 09.11.2026 (Befund C14, diagnose.lastfall_fehlt_text)
+    meldung = "Kombination „K9“ nennt den Lastfall „LF-X“ – den gibt es nicht"
     s, erg, spion = fuehren(m)
     check("FEHLER in der Modellprüfung: die Meldung kommt",
           any(meldung in t for t in texte(s.error)), str(texte(s.error))[:120])

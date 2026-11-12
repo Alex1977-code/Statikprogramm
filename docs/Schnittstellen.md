@@ -15,7 +15,8 @@ doppelte Knoten zusammengeführt, Stäbe automatisch erkannt (für die
 Nachweise) und die Herkunft in `model.meta["quelle"]` vermerkt.
 
 Einheiten im Modell sind m, N, Pa. `unit_scale` skaliert Längen der Datei
-(DXF-Standard mm → 0,001; alle anderen Formate m → 1).
+(DXF-Standard mm → 0,001; alle anderen Formate m → 1). Einen unbekannten
+`$INSUNITS`-Wert einer DXF-Datei meldet der Import mit dem Wert.
 
 ## Übersicht
 
@@ -364,6 +365,8 @@ Umlauten („nicht auflösbar – nicht übernommen“, „Umhüllende“,
   `IfcCircleProfileDef`, sonst Datenbank über den Profilnamen.
 * Fällt kein Statikmodell vor, werden `IfcBeam`/`IfcColumn`/`IfcMember`
   über ihre Achse bzw. Extrusion als Stäbe übernommen (Warnung im Protokoll).
+* Beim Export wird eine Stablast je Projektion in die gleichwertige Last je
+  wahrer Länge umgerechnet (q · L_proj / L) und im Exportprotokoll genannt.
 
 ## Abaqus / CalculiX (.inp)
 
@@ -375,12 +378,23 @@ EXPANSION), `*BOUNDARY` (auch ENCASTRE/PINNED), `*CLOAD`, `*DLOAD` (P/Pn,
 GRAV, PX/PY/PZ), `*NSET`/`*ELSET` (GENERATE), `*INCLUDE`; jeder `*STEP`
 wird ein Lastfall. Einheiten: SI angenommen (`unit_scale`).
 
+Beim Export ist n1 die lokale y-Achse jedes Stabs (I11 = Iy, K23 = G·Asz,
+K13 = G·Asy, M1 = Gelenk um y); die Stabverdrehung geht damit hinaus. Stäbe
+verschiedener Richtung stehen in eigenen Elementsätzen …_R2, …_R3. Der Import
+liest `*BEAM GENERAL SECTION` mit n1-Zeile und nimmt die Verdrehung aus n1;
+`*TRANSVERSE SHEAR STIFFNESS` und `*RELEASE` werden gelesen. Bei
+`*BEAM SECTION` ist M1 das Gelenk um die lokale z-Achse; n1 bleibt dort
+unbeachtet, mit Meldung.
+
 ## Nastran (.bdf/.nas/.dat)
 
 Small-, Large- und Free-Field-Format, Fortsetzungszeilen, Zahlen wie
 `1.2-3`, `THRU`, `INCLUDE`. Lastkarten mit SID werden Lastfälle „SID n“;
 `LOAD`-Karten werden Kombinationen. Nastran-Ebene 1 entspricht der lokalen
 y-Achse (I1 → Iz, I2 → Iy); die Stabverdrehung folgt dem Orientierungsvektor.
+`PLOAD1` mit LEPR oder FRPR bleibt je Richtung eine eigene Last je Projektion.
+Eine Feder `CELAS` oder `CBUSH`, deren einer Knoten G = 0 oder leer ist, liegt
+gegen den Grund und wird Lagerfeder.
 
 CHEXA mit 20 und CPENTA mit 15 Knoten zählen nach den Kantenmitten unten die
 **senkrechten** Kanten und dann die oberen; Statik3D (wie VTK und Abaqus) umgekehrt.
@@ -1665,7 +1679,7 @@ Browser unter **Mehr → Export** (Format wählen, „Herunterladen“).
 | `.ifc` | IFC 4 (Structural Analysis View) | Knoten, Stäbe, Flächen, Lagerbedingungen, Lastfälle mit Knotenlasten |
 | `.xlsx` | SAF | Knoten, Stäbe (mit allen Zwischenknoten), Flächen, Querschnitte, Materialien, Lager, Lastfälle (Eigengewicht als „Self weight“), Kombinationen (auch Ergebniskombinationen), Lasten (Knotenkräfte und -momente; Stablasten gleichmäßig, trapezförmig, abschnittsweise; Flächenlasten auf Schalen; Temperatur auf Stäben und Schalen) |
 | `.csv` | Tabellen im RFEM-Aufbau | zehn Blätter in einem Ordner, vom eigenen Tabellenimport wieder lesbar |
-| `.dxf` | AutoCAD DXF | Stäbe als LINE, Schalen und Volumenaußenflächen als 3DFACE, Lager und Beschriftung auf eigenen Layern |
+| `.dxf` | AutoCAD DXF | Stäbe als LINE, Schalen und die Außenflächen von tet4-, tet10- und hex8-Volumen als 3DFACE; andere Volumenarten fehlen und stehen im Hinweis; Lager und Beschriftung auf eigenen Layern |
 | `.inp` | Abaqus / CalculiX | Knoten, Elemente, Materialien, Querschnitte, Randbedingungen, ein Step je Lastfall |
 | `.bdf` | Nastran Bulk Data | GRID, CBAR/CTRIA3/CQUAD4/CTETRA/CHEXA, PBAR/PSHELL/PSOLID, MAT1, SPC1, FORCE/MOMENT/GRAV |
 | `.stl` | STL (binär oder ASCII) | Schalen und Volumenaußenflächen als Dreiecke |

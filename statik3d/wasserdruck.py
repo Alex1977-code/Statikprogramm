@@ -602,54 +602,32 @@ def lasten_erzeugen(model, wd: Wasserdruck, fortschritt=None) -> dict:
 
 
 def kontrollsumme(model, wd: Wasserdruck) -> dict:
-    """Summe der erzeugten Elementlasten (Kraftvektor) - zur Probe gegen F."""
-    from .elements import shell as sh
-    from .assemble import SOLID_FACES
+    """Summe der erzeugten Elementlasten (Kraftvektor) - zur Probe gegen F.
+
+    Die Summe ist die des **Lastvektors**: die Elementlasten des Generierers
+    gehen durch denselben Aufbau wie in der Rechnung (assemble.load_vector), ihre
+    Knotenkraefte werden addiert. Bis zum 09.11.2026 rechnete die Kontrollsumme
+    p·A je Element selbst nach und kannte dabei nur shell3/shell4 und
+    Volumenseiten - an quadratischen Schalen (shell6/shell8) und ebenen Elementen
+    stand „Kontrollsumme 0,0 kN“ neben einer richtigen Last (Befund C2 der
+    Pruefagenten). ``M`` ist das Moment der Knotenkraefte um den Ursprung."""
+    from .assemble import load_vector
+    from .model import LoadCase
     F = np.zeros(3)
-    M = np.zeros(3)
-    n = 0
     lc = model.load_cases.get(wd.lastfall)
     if lc is None:
         return {"F": F.tolist(), "n": 0}
-    for fl in lc.face_loads:
-        if not getattr(fl, "_geo", False):
-            continue
-        e = model.elements[int(fl.elem)]
-        X = model.nodes[[int(k) for k in e.nodes]]
-        if e.typ in ("shell3", "shell4"):
-            tris = [(0, 1, 2)] if e.typ == "shell3" else [(0, 1, 2), (0, 2, 3)]
-            A = 0.0
-            nrm = None
-            for t in tris:
-                T3, _xy, At = sh.shell_frame(X[t[0]], X[t[1]], X[t[2]])
-                A += At
-                nrm = T3[2]
-            mitte = X.mean(axis=0)
-        else:
-            seiten = SOLID_FACES.get(e.typ)
-            if not seiten:
-                continue
-            nd = seiten[int(fl.face) % len(seiten)]
-            P = X[list(nd)]
-            v = np.zeros(3)
-            for i in range(1, len(P) - 1):
-                v += np.cross(P[i] - P[0], P[i + 1] - P[0])
-            A = 0.5 * float(np.linalg.norm(v))
-            nrm = model._seitennormale(int(fl.elem), int(fl.face))
-            if nrm is None:
-                continue
-            nrm = -nrm            # p positiv drueckt in den Koerper
-            mitte = P.mean(axis=0)
-        if fl.direction is not None:
-            d = np.asarray(fl.direction, float)
-            d = d / (np.linalg.norm(d) or 1.0)
-            f = fl.p * A * d
-        else:
-            f = fl.p * A * nrm
-        F += f
-        M += np.cross(mitte, f)
-        n += 1
-    return {"F": F.tolist(), "M": M.tolist(), "n": n, "betrag": float(np.linalg.norm(F))}
+    lasten = [fl for fl in lc.face_loads
+              if getattr(fl, "_geo", False) and 0 <= int(fl.elem) < len(model.elements)]
+    if not lasten:
+        return {"F": F.tolist(), "M": [0.0, 0.0, 0.0], "n": 0, "betrag": 0.0}
+    nur = LoadCase(lc.name)
+    nur.face_loads = lasten
+    nn = int(model.nn)
+    f = np.asarray(load_vector(model, nur), float)[:6 * nn].reshape(nn, 6)
+    F = f[:, :3].sum(axis=0)
+    M = np.cross(np.asarray(model.nodes, float)[:nn, :3], f[:, :3]).sum(axis=0) + f[:, 3:].sum(axis=0)
+    return {"F": F.tolist(), "M": M.tolist(), "n": len(lasten), "betrag": float(np.linalg.norm(F))}
 
 
 # ==========================================================================

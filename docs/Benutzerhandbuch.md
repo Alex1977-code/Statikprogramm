@@ -112,7 +112,7 @@ Fünfzehn Register nach Arbeitsschritt:
 
 | Register | Inhalt |
 |---|---|
-| **Datei** | Neu, Öffnen, Speichern, Projektangaben, **Modell leeren (Eigenschaften behalten)…**, Übernehmen aus fremden Formaten, Exportieren, **Beispiel öffnen ▾** (die acht Beispiele in einem Knopf) |
+| **Datei** | Neu, Öffnen, Speichern, Projektangaben, **Modell leeren (Eigenschaften behalten)…**, Übernehmen aus fremden Formaten, Exportieren, **Beispielbibliothek…** (14 Beispiele mit einstellbaren Werten, dazu eigene Beispiele) |
 | **Start** | der Arbeitsablauf in einer Reihe: Knoten, Stab, Knotenlager, Linienlast, Lastfälle, Vernetzen, Prüfen (mit den Prüfwerkzeugen *Doppelte Knoten zusammenführen*, *Freie Stabenden anschließen…*, *Freie Bewegungen suchen*), Berechnen, Ergebnisse, Nachweise EC3, Bericht; am Ende das Menü *Bearbeiten ▾* (Rückgängig, Wiederholen, Auswahl) |
 | **Unterlagen** | **Dateien** (Datei hinzufügen: PDF, Bild, Word, Excel …; Unterlage öffnen; Entfernen), **Ansichten** (Ansicht aufnehmen, Skizze aus Ansicht), **Skizze** (Neue Skizze, Bearbeiten), **Bericht** (In den Bericht, Unterlagen zeigen) — seit 16.09.2026, siehe *Unterlagen* |
 | **Geometrie** | **Knoten / Linien** (Knoten, Linie, Knoten löschen, Linie aus Knoten), **Ändern** (Verschieben, Kopieren, Drehen, Spiegeln der Auswahl), **Konstruktion** (Lot / Projektion), Auswahlart in der Ansicht, Koordinatensysteme, Arbeitsebene, **Fang** (Hauptschalter F3 und *Fangarten ▾*, auch „Lot“) |
@@ -1206,7 +1206,10 @@ Datei stehen noch die alten Kontaktflächen. Vor dem Vernetzen steht am Eintrag 
 getrennt“ - ohne Warnzeichen, denn ohne Netz gibt es nichts, was zu steif sein
 könnte. Ein ⚠ mit „nicht ausgeführt - hier zu steif“ erscheint nur, wenn das
 Netz da ist und die Fuge trotzdem nicht getrennt werden konnte; das Protokoll
-nennt dann den Grund. Statik3D liest sie
+nennt dann den Grund. Daneben gibt es „nicht ausgeführt - hier ohne Verbindung
+(zu weich)“, wenn die beiden Seiten keine Knoten teilen, und „nicht
+ausgeführt - hier nur an einzelnen Knoten verbunden (zu weich)“, wenn sie nur
+einzelne Knoten teilen. Statik3D liest sie
 aus der RFEM-Datei vollständig ein und **führt sie beim Vernetzen auch aus**:
 die Netze werden an der Fuge getrennt, und je nachdem, ob sie Knoten für Knoten
 zusammenpassen, hält sie ein Spaltelement je Knotenpaar oder ein Kontaktpaar
@@ -1699,6 +1702,21 @@ drei Fälle nur das ○.
 | Volumen: 4 Dreiecke, 4 Knoten | ein Tetraeder |
 | alles andere | **freier Vernetzer**: Randflächen in Dreiecke, Hülle prüfen, mit Tetraedern füllen |
 
+**Teilung des abgebildeten Quaders in x, y, z** (seit 09.11.2026). Die
+Teilung eines Körpers [nx, ny, nz] gilt in den globalen Achsen: jede Kante
+des Quaders bekommt die Zahl der Achse, der sie am nächsten liegt. Bis dahin
+folgte sie der Reihenfolge seiner Randflächen. Ein Kragarm 2 × 0,1 × 0,2 m
+mit [2, 3, 5] bekam je nach Reihenfolge 5 × 2 × 3 Elemente, und die
+Durchbiegung lag bei 74 statt 97 % der Balkenlösung. Liegen zwei Kanten
+derselben Achse am nächsten (schiefer Quader), bleibt es bei der Reihenfolge.
+
+**Flächenlast auf gekrümmten Volumenseiten** (seit 09.11.2026). Eine
+Flächenlast senkrecht auf eine Seite eines quadratischen Volumenelements
+(tet10, hex20) wirkt an jedem Integrationspunkt längs der örtlichen Normale
+der gekrümmten Seite. Bis dahin wirkte sie längs der Normale der Ecken, auf
+gekrümmten Seiten 0,56 % (grob) bis 0,06 % (fein) zu viel Kraft. Ein
+Innendruck auf einen Viertelzylinder gibt jetzt genau p · r · H.
+
 **Flächen mit gemeinsamer Randlinie sind verbunden** (seit 09.11.2026,
 Entscheidung des Anwenders). Bis dahin legte jede Fläche auf ihren Randlinien
 eigene Zwischenknoten an: zwei Flächen hingen nur an den Linienenden
@@ -1714,6 +1732,18 @@ sagt je Fläche „Randknoten gemeinsam mit den Nachbarflächen“ und am Ende
 Teilung an gemeinsamen Linien durch das ganze Tragwerk weitergereicht wird,
 kann ein Modell aus vielen Flächen feiner werden als die Netzgröße einzelner
 Flächen verlangt (Stemmtor: rund 56 000 Elemente bei Netzdichte mittel).
+
+**Altes Schalennetz beim Öffnen erkannt** (seit 09.11.2026). Ein Netz, das
+vor diesem Tag erzeugt wurde, steht in der Modelldatei und rechnet mit den
+unverbundenen Flächen weiter, bis neu vernetzt wird. Beim Öffnen prüft das
+Programm deshalb jede gemeinsame Randlinie vernetzter Schalenflächen: tragen
+die Flächen dort verschiedene Netzknoten, steht im Protokoll und unter den
+Importhinweisen „Schalennetz nicht verbunden: … Flächenpaar(e) an …
+gemeinsamen Linie(n) … Bitte neu vernetzen (Netz › Vernetzen)“. Nach dem
+Neuvernetzen und Speichern gilt der Hinweis beim nächsten Öffnen als
+erledigt. Umgestellt wird nichts. Die Prüfung dauert am Stemmtor (591
+Linien, 53 000 Knoten) 0,3 s; ein Modell ohne vernetzte Schalenflächen
+(Volumenmodell) prüft sie nicht.
 
 Ist eine Randlinie ein **Bogen, Kreis, Spline, Parabel oder eine Ellipse**,
 folgen die neuen Netzknoten der wahren Kurve — nicht den Sehnen zwischen den
@@ -3125,6 +3155,16 @@ Drahtnetz — sonst verschwanden die Spannungen hinter Linien („im
 Transparentmodus sehe ich keine Spannungen“). Geprüft in
 `tests/test_gui_smoke.py`.
 
+Seit 10.11.2026 **decken die Elementkanten in Voll und Transparent nur noch
+zu 45 %**: die Kante mischt sich mit der Fläche darunter. Mit voll deckenden
+Kanten war ein fein vernetztes Modell in der Gesamtansicht schwarz — am
+Drehlager (854 000 Oberflächenzellen) liegen die Kanten dichter als die
+Bildpunkte, und von Bauteil und Ergebnisfarben blieb nichts. Aus der Nähe
+bleibt das Netz lesbar, von weitem die Farbe. Die Kantenfarbe ist
+unverändert, **Hidden-Line** und **Drahtmodell** zeichnen ihre Linien weiter
+deckend. Der Wert steht in `viewport.NETZ_DECKUNG`; geprüft in
+`tests/test_ansicht_schneller.py`.
+
 #### Nummern: je Objektart ein Schalter
 
 Im Register *Ansicht* steht der Menüknopf **Nummern ▾** — ein Schalter je
@@ -3655,7 +3695,32 @@ in Richtung der Flächennormale (bei Volumen nach außen) — nicht mehr nur an
 den Knoten. Ein aus RFEM übernommenes Flächenlager wirkt in den Achsen seiner
 Fläche: die Bettung „uz" in der Flächennormalen, „ux/uy" und die Reibung in
 der Fläche. Eine senkrechte Lagerfläche (Knagge) sperrt damit waagerecht; das
-Protokoll des Imports nennt je Lager die Zahl der senkrechten Flächen. Ein aus RFEM übernommenes Lager kennt seine Linien bzw. Flächen
+Protokoll des Imports nennt je Lager die Zahl der senkrechten Flächen.
+**Ein Flächenlager in Flächenachsen wirkt je Fläche entlang einer globalen
+Achse** (x, y oder z, die der Normalen am nächsten liegt). Seit dem 09.11.2026
+meldet die Modellprüfung darum einen **Fehler und die Rechnung startet nicht**,
+wenn eine Fläche des Lagers um mehr als 1° schräg zu dieser Achse steht, wenn
+sie gekrümmt ist (Zylindermantel) oder wenn sie zwischen zwei Körpern liegt
+und ihre Normale damit nicht eindeutig ist. Die Meldung nennt Lager, Fläche
+und Winkel. Abhilfe: die Fläche aus dem Lager nehmen oder das Lager auf
+globale Achsen umstellen. Bis dahin stand nur eine Zeile im Protokoll der
+Vernetzung und es wurde mit der falschen Richtung gerechnet (ein um 10°
+geneigter Quader auf Bettung verschob sich in eine um 49° falsche Richtung,
+ein radial gebetteter Zylinder war in einer Querrichtung ungehalten).
+Ausgenommen ist ein Lager, das in allen drei Richtungen gleich wirkt (gleiche
+Feder oder starr, ohne Ausfall und Reibung): dort spielt die Achse keine
+Rolle. Bei Schalen ist die Normale die lokale z-Achse aus der Knotenreihenfolge
+der Elemente; eine ebene Schalenplatte gilt darum in jeder Höhe als einseitig.
+Zeigen einzelne Elemente einer Schalenfläche ohne Körper zur Gegenseite
+(etwa von Hand umgedreht), richtet die Prüfung sie seit dem 12.11.2026 nach
+der ersten Facette aus: Die Lage der Schalenelemente wählt der Anwender frei,
+und das Lager einer Schalenfläche liegt ohnehin unten. Es gibt keinen Fehler
+mehr, und die Auflagerkräfte sind dieselben wie ohne das umgedrehte Element.
+Bis dahin meldete die Prüfung „hat Facetten nach beiden Seiten“ und die
+Rechnung startete nicht. An anderen Stellen hängt die Rechnung noch an der
+Lage des einzelnen Elements, etwa bei Flächenlasten in lokal z und beim
+Temperaturunterschied oben − unten (offen, siehe Release-Notes vom
+12.11.2026). Ein aus RFEM übernommenes Lager kennt seine Linien bzw. Flächen
 der Geometrie; die Symbole belegen darum die ganze Fläche, auch wenn noch
 kein Netz vorliegt. Wie dicht die Symbole stehen, sagt die **Lagerdichte**:
 Schieber „Lagerdichte" in der rechten **Maske „Darstellung“** (*Ansicht →
@@ -3683,6 +3748,17 @@ wirkt nach dem Vernetzen auf **alle Netzknoten** seiner Linien bzw. Flächen
 — mit den Einflusslängen und Einflussflächen aus dem Netz, nicht nur an den
 Eckknoten der Geometrie. Das geschieht beim Vernetzen, beim Löschen des
 Netzes (zurück auf die Eckknoten) und vor jeder Rechnung von selbst.
+
+**Bettung auf die Elementecken verteilt** (Festlegung des Anwenders vom
+09.11.2026: bleibt so). Ein Flächenlager mit Feder (Bettung) gibt jedem
+Netzknoten die Bettung seiner Einflussfläche; die Fläche eines Elements geht
+zu gleichen Teilen auf seine Ecken (konzentrierte Bettung), nicht über eine
+konsistente Bettungsmatrix. Kraftsumme und Moment stimmen damit exakt; die
+Verschiebung einzelner Knoten weicht im groben Netz ab und geht mit h² gegen
+null. Gemessen an einer starren, gekippten Platte (Ecksetzung): 8,3 % bei
+4 × 4 Vierecken, 2,3 % bei 8 × 8, 0,58 % bei 16 × 16 (Dreiecke 11,8 / 3,4 /
+0,87 %, tet10 5,6 % bei h = 0,25 und 1,6 % bei h = 0,125). Wo die Ecksetzung
+zählt, das Netz an der Bettung fein genug wählen.
 
 **Lager auswählen**: mit der Auswahlart **Lager** (Glasleiste) trifft ein
 Klick ein Knotenlager an seinem Symbol, ein Linien- oder Flächenlager an
@@ -5433,8 +5509,10 @@ hätten die echten Rückgängig-Schritte verdrängt (seit 25.09.2026). Eigengewi
 und Temperaturlast im Register Lager/Lasten gelten nicht mehr als solche
 Ausnahme: Seit dem 06.10.2026 sind sie Rückgängig-Schritte wie jede andere Last.
 
-**Beispiele** stehen in einem Knopf *Beispiel öffnen ▾* statt in acht
-Knöpfen, von denen jeder das Modell ersetzte.
+**Beispiele** öffnet der Knopf *Beispielbibliothek…* (seit 09.11.2026; davor
+ein Knopf *Beispiel öffnen ▾* mit acht festen Beispielen). Der Knopf ersetzt
+das Modell nicht, erst *Übernehmen* im Dialog; siehe „Beispielbibliothek“ in
+Abschnitt 3.
 
 **Ein Beispiel räumt auf wie *Neu*** (seit 02.10.2026), ebenso das *Öffnen*
 einer Datei und der *Import* ohne Anhängen. Alle vergessen, was dem vorigen
@@ -6078,12 +6156,71 @@ Rechnung prüft („Zuerst berechnen“, wenn es noch keine gibt); die Parameter
 Stäbe aus Schritt 5 stellt man vor der Rechnung in der Maske *Nachweise* ein.
 Es sind dieselben Befehle wie in den Fachregistern, keine neuen.
 
-Beispiele unter **Datei → Beispiel öffnen ▾** zeigen jeden dieser Schritte fertig
-aufgebaut, u. a. der Hallenrahmen (Kombinationen, EC3, Ermüdung), die
+Beispiele unter **Datei → Beispielbibliothek…** zeigen jeden dieser Schritte
+fertig aufgebaut, u. a. der Hallenrahmen (Kombinationen, EC3, Ermüdung), die
 Stauwand (Stahlwasserbau, Schalen + Riegel, Wasserdruck) und zwei
 Kontaktbeispiele. Seit dem 06.10.2026 heißen ihre Lastfälle LF1, LF2 …, ihre
 Kombinationen LK1, LK2 …, und der frühere Name steht als Bezeichnung daneben
 (am Hallenrahmen „LF3 W_links“).
+
+### Beispielbibliothek (seit 09.11.2026)
+
+Der Knopf **Datei → Beispielbibliothek…** öffnet einen Dialog. Links stehen
+die Beispiele nach Stabwerk, Flächentragwerk und Volumen, rechts die
+Beschreibung und eine Tabelle der Parameter mit Wert, Einheit und Grenzen.
+Werte trägt man in der Spalte *Wert* ein. Liegt ein Wert außerhalb der
+Grenzen oder ist er keine Zahl, wird die Zeile rot. Passt er nicht zu einem
+anderen Wert (etwa Unterwasser über dem Oberwasser), steht das unter der
+Tabelle. In beiden Fällen nennt die Zeile unter der Tabelle den Grund und
+*Übernehmen* ist gesperrt; das Programm begrenzt nie still.
+*Vorgabewerte* setzt die Tabelle zurück. *Übernehmen* baut das Modell und
+ersetzt das offene; ist etwas ungespeichert, fragt das Programm vorher wie
+bei *Neu*. Im Modell stehen danach das Beispiel und seine Werte
+(Projektangaben, `meta["beispiel"]`), bei den Stahlwasserbau- und
+Kranbeispielen auch die Annahmen.
+
+Eingebaut sind 14 Beispiele. Unter Stabwerk stehen Rahmen, Fachwerk,
+Hallenrahmen, Abhebendes Lager, Doppellenkerwippkran und Förderbandbrücke.
+Unter Flächentragwerk stehen Platte, Stauwand, Stemmtor, Hubtor und
+Fischbauchklappe, unter Volumen Konsole, Reibung und Spurlager. Mit den
+Vorgabewerten entsteht jeweils dasselbe Modell wie bis zum 09.11.2026 mit
+*Beispiel öffnen* bzw. mit den Testmodellen vom 09.11.2026. Stemmtor und
+Hubtor verlangen eine Höhe von mindestens 2,19 m bzw. 1,54 m, sonst überdecken
+sich die Gurte benachbarter Riegel; der Dialog meldet das und sperrt
+*Übernehmen*. Alle Maße,
+Querschnitte, Werkstoffe und Lasten der Beispiele sind Annahmen; Werkstoff
+und Teilsicherheitsbeiwerte legt der Anwender fest.
+
+**Eigene Beispiele** sind Python-Dateien im Ordner
+`Dokumente\Statik3D\Beispiele` (*Ordner öffnen* im Dialog legt ihn an). Eine
+Datei nennt `TITEL`, `GRUPPE` (Stabwerk, Flächentragwerk, Volumen oder ein
+eigener Name), `BESCHREIBUNG`, `PARAMETER` als Liste von
+`(name, titel, wert, einheit, min, max)` und eine Funktion `bauen(werte)`, die
+das Modell zurückgibt; `werte` enthält die Werte in der Einheit der Tabelle.
+Eine Funktion `pruefen(werte)` kann zusätzlich eine Liste von Meldungen
+zurückgeben, die *Übernehmen* sperren. Beispiel:
+
+```python
+TITEL = "Kragarm"
+GRUPPE = "Stabwerk"
+BESCHREIBUNG = "Kragarm IPE 200 mit Endlast"
+PARAMETER = [("L", "Länge", 3.0, "m", 0.5, 10.0), ("F", "Endlast", 10.0, "kN", 0.0, 500.0)]
+
+def bauen(werte):
+    from statik3d.model import Model, Material, Section
+    from statik3d import mesher
+    m = Model("Kragarm")
+    m.add_material(Material.steel("S235"))
+    m.add_section(Section.from_profile("IPE 200"))
+    ids = mesher.line_of_beams(m, "S235", "IPE 200", (0, 0, 0), (werte["L"], 0, 0), 6)
+    m.fix(int(ids[0]), "all")
+    m.load_node(int(ids[-1]), Fz=-werte["F"] * 1e3)
+    return m
+```
+
+Das Programm führt diese Dateien aus, sobald die Bibliothek geöffnet wird.
+Legen Sie dort darum nur eigene Dateien ab. Eine fehlerhafte Datei verhindert
+die anderen nicht; sie steht rot mit Grund und Zeile unter der Liste.
 
 ## 4 Lastfälle und Kombinationen
 
@@ -6116,7 +6253,7 @@ Auswahl in der Ansicht* oder im Modellbaum) und schreibt in den gewählten Lastf
 | Knotenlast | gewählte Knoten | Kräfte F_x…F_z [kN], Momente M_x…M_z [kNm] | — |
 | Linienlast | gewählte **Stäbe** oder **Linien** | q [kN/m] am Anfang, q2 am Ende, Bezug global, lokal oder ein **eigenes Koordinatensystem**, **von/bis** [m] | gleichmäßig, trapezförmig, abschnittsweise |
 | Flächenlast | gewählte **Flächen** oder **Volumen** | p [kN/m²], **Bezug** (global, lokal, eigenes Koordinatensystem; Vorgabe global Z) und Achse, auf die Projektion, Verlauf | gleichmäßig oder **linear** von Punkt A (p) nach Punkt B (p bei B) |
-| Temperatur | gewählte Stäbe, Flächen, Volumen oder alle Elemente | ΔT [K], ΔT_z oben−unten (Stäbe) | — |
+| Temperatur | gewählte Stäbe, Flächen, Volumen oder alle Elemente | ΔT [K], ΔT_z oben−unten (Stäbe und Schalen) | — |
 | Zwangsverformung | gewählte **gelagerte** Knoten | u_x…u_z [mm], φ_x…φ_z [mrad] | Lagersetzung; fehlende Lager werden auf Wunsch gesetzt |
 | Vorspannung | gewählte **Stäbe** oder **Volumen** | Lastart, F_v, F_soll bzw. P₀ [kN], Verankerungsschlupf Δs [mm], Gruppe beim Spannen, Achse (Volumen) | als eingeprägte Dehnung: das Bauteil trägt F_v als Zug und klemmt die Umgebung; als **Endvorspannung (bleibend nach dem Verankern)** (nur Stäbe, seit 13.10.2026, bis 14.10.2026 „Sollkraft nach Verankerung“): der Stab trägt nach dem Verankern F_soll, gleichzeitig oder gruppenweise gespannt; als **Anfangsvorspannung (Pressenkraft P₀)** (nur Stäbe, seit 14.10.2026): die Presse spannt mit P₀, nach dem Verankern fehlen der Schlupf Δs und die elastischen Verluste; **Umwandeln** einer RFEM-Vorspannung (eingeprägte Dehnung, ΔT) in die Endvorspannung |
 | **Übermaß** | eine **Kontaktfuge** (Fläche anklicken) | Gesamtüberdeckung [µm] oder die vier Abmaße der Passung | Presspassung: Pressspannung und Schub über den Reibbeiwert |
@@ -6130,6 +6267,48 @@ Umlaufsinn des Randes. Eine Schale parallel zur Lastrichtung bekommt nichts.
 Bis zum 08.11.2026 wirkte eine projizierte Last an Schalen gar nicht; ältere
 Ergebnisse solcher Modelle tragen „Ergebnis möglicherweise betroffen – neu
 rechnen“. Geprüft in `tests/test_paket_b_neben.py`.
+
+Welche Seite „der Last zugewandt“ ist, bestimmt die **Kraft** p · d, nicht die
+Achse allein. Schnee als „global Z, p = −5 kN/m²“ trifft also das Dach eines
+Körpers, ebenso wie die gleichwertige Eingabe „Richtung (0; 0; −1),
+p = +5 kN/m²“. Bis zum 09.11.2026 traf eine projizierte Last mit negativem Wert
+an Volumen die abgewandte Seite, etwa die Unterseite eines Blocks. Die
+Lastsumme stimmte, der Angriffspunkt nicht. Ältere Ergebnisse solcher Modelle
+tragen „Ergebnis möglicherweise betroffen – neu rechnen“. An Schalen ändert
+sich nichts. Geprüft in `tests/test_projiziert_vorzeichen.py`.
+
+**Temperaturunterschied auf Schalen.** ΔT_z ist die Temperatur oben minus
+unten; „oben“ ist bei der Schale die Seite der Elementnormalen. Die Schale
+bekommt daraus die Krümmung α · ΔT_z / t in beiden Richtungen, im Lastvektor
+und in den Momenten (m = D (κ − κ_T)). Eine frei gelagerte Platte krümmt sich
+also zur Kugelkappe und bleibt momentenfrei; oben warm biegt sich ein
+Kragstreifen wie ein Stab nach unten. Bis zum 09.11.2026 trug die Schale nur
+den gleichmäßigen Anteil ΔT, ΔT_z wurde still verworfen. Ältere Ergebnisse
+solcher Modelle tragen „Ergebnis möglicherweise betroffen – neu rechnen“.
+Geprüft in `tests/test_schale_temperatur_gradient.py`.
+
+**Zwangsverformung an Lagern.** An einem starren Lager (Knoten-, Linien- oder
+Flächenlager) steht der Freiheitsgrad auf dem vorgegebenen Wert. An einer
+Feder verschiebt die Vorgabe den **Fußpunkt** der Feder: die Feder zieht mit
+k (u − d), ihre Lagerkraft ist −k (u − d). An einem freien Freiheitsgrad,
+ohne Lager und an einem Lager mit Ausfall, Reibung, Schlupf oder Grenzkraft
+bleibt die Vorgabe unwirksam; Protokoll und Zusammenfassung nennen sie mit
+Grund („ohne Lager“, „Lager frei“, „Lager mit Ausfall oder nichtlinear“).
+Bis zum 09.11.2026 wirkte die Vorgabe an einer Feder still nicht, an einem
+freien Freiheitsgrad oder einem Lager mit Ausfall ebenso ohne Meldung, und
+an einem starren Linienlager kam fälschlich „ohne Lager – unwirksam“, obwohl
+sie wirkte. Ältere Ergebnisse mit Zwangsverformung an einer Feder tragen
+„Ergebnis möglicherweise betroffen – neu rechnen“. Geprüft in
+`tests/test_zwang_feder.py`.
+
+**Kontaktbedingung nur mit Körpern.** Nennt eine Kontaktbedingung nur den
+gelösten Körper und die Gegenkörper, aber keine Flächen, sind die Flächen der
+Gegenkörper die Gegenseite: Die Fuge sind die Randseiten des gelösten Körpers,
+die auf ihnen liegen, wie bei einer RFEM-Freigabe ohne freigegebene Flächen.
+Die Bedingung selbst bleibt, wie sie eingegeben ist. Bis zum 09.11.2026 blieb
+so eine Bedingung unausgeführt; hielt eine zweite Lagerung den Körper, lief die
+Last still daran vorbei. Ältere Ergebnisse tragen „Ergebnis möglicherweise
+betroffen – neu rechnen“. Geprüft in `tests/test_kontakt_nur_koerper.py`.
 
 Lasten auf Stäben, Linien, Flächen und Volumen hängen am **Objekt** und
 werden beim Vernetzen (und bei jedem Neuvernetzen) auf die Elemente und
@@ -6232,6 +6411,15 @@ Last heraus (bei Objektlasten samt ihren Elementlasten).
 * Automatische Kombinationen: GZT nach 6.10 (oder 6.10a/b), ständige Lasten
   günstig und ungünstig, jede veränderliche Einwirkung als Leiteinwirkung;
   GZG charakteristisch/häufig/quasi-ständig; außergewöhnlich 6.11b.
+  In 6.10b mindert ξ nur die ungünstigen ständigen Lasten (ξ · γ_G,sup); die
+  Vorspannung bleibt bei γ_P, Setzungen und günstiges G (γ_G,inf) bleiben
+  ohne ξ. Bis zum 09.11.2026 traf ξ jeden ständigen Faktor, also auch P und
+  das günstige G mit 0,85 statt 1,0. Trägt eine erzeugte 6.10b-Kombination
+  noch die alten Faktoren, erkennt das Programm es an den Faktoren selbst:
+  jedes Ergebnis mit ihr – auch eine neue Rechnung – trägt „Ergebnis
+  möglicherweise betroffen – neu rechnen“ mit dem Rat, die Kombinationen neu
+  zu erzeugen (*Lasten → EN 1990…*); erst danach entfällt der Status. Geprüft in
+  `tests/test_kombination_xi.py`.
   Beschreibung „auto: …“ kennzeichnet erzeugte Kombinationen; sie werden bei
   erneuter Erzeugung ersetzt, manuelle bleiben erhalten. Die erzeugten
   Kombinationen heißen seit dem 06.10.2026 LK1, LK2 …, ihre Bezeichnung nennt
@@ -6340,6 +6528,34 @@ gilt:
   Lastfall aufgehoben.
 * **Alte Dateien** behalten ihre Einwirkung: ein Lastfall, der bisher Q war, ist
   weiter Q. Nur der RFEM-Import vergibt „nicht zugeordnet“.
+
+**Einwirkungen der DIN 19704 im Generator nach EN 1990 (seit 09.11.2026).** Ein
+Lastfall mit einer Einwirkung der DIN 19704 stand bis dahin in keiner mit
+*EN 1990…* erzeugten Kombination – ohne Meldung (Befund A5 der Prüfagenten). Am
+Einfeldträger mit 6 m, Eigengewicht 10 kN/m und 5 kN/m „Eigengewicht
+Ausrüstung“ kam als größtes Bemessungsmoment 60,75 statt 91,13 kNm heraus. Jetzt
+gilt:
+
+| Einwirkung | im Generator nach EN 1990 |
+|---|---|
+| Eigengewicht Ausrüstung (G_A), Wasserdruck ständig (W_S) | ständig: γ_G 1,35 ungünstig, 1,0 günstig |
+| Wasserdruck veränderlich (W_V), Eis, Schwall, Wind bei Bewegung, Antriebsmoment (A_M, A_MG) | veränderlich: γ_Q 1,5, als Leit- und als Begleiteinwirkung mit ihrem ψ |
+| Anprall, Verklemmen | außergewöhnlich: Gl. 6.11b mit Faktor 1,0 |
+| Erdbeben, Montage- und Revisionszustand | keine Kombination – der Generator weigert sich und nennt den Lastfall |
+
+Für Erdbeben und Montage bildet *EN 1990…* keine Kombination, weil die Regel
+dafür in der DIN 19704 steht (Lastfallklasse LF3): die Kombinationen mit
+**Lasten → DIN 19704** bilden oder von Hand anlegen. Auf der Kommandozeile
+meldet `--kombinationen` bei einem Erdbeben- oder Montagelastfall den Grund
+und gibt den Rückgabecode 2 zurück, statt abzustürzen. Sind die Lasten schon
+Bemessungswerte, genügt am Lastfall der Haken „Bemessungslastfall, bereits
+faktorisiert“. Steht in einem Modell mit nach EN 1990 erzeugten Kombinationen
+ein Lastfall mit einer Einwirkung der DIN 19704 in keiner dieser Kombinationen
+– Erdbeben und Montage: in keiner Kombination des Modells –, trägt jedes
+Ergebnis, auch eine neue Rechnung, „Ergebnis möglicherweise betroffen – neu
+rechnen“ mit dem Rat, die Kombinationen neu zu erzeugen (Erdbeben, Montage:
+mit *Lasten → DIN 19704* bilden oder von Hand anlegen); erst danach entfällt
+der Status.
 
 **Was der RFEM-Import zuordnet.** Die Kennzahl der Einwirkungskategorie
 (`actionCategoryId`) liest der Import jetzt aus der Aufzählung der Dlubal-API
@@ -7248,6 +7464,34 @@ I_v, q_p), die Beiwerte je Zone und Stab (mit Re, λ, ψ_λ), Resultierende
 und Kontrollsummen; der Bericht zeichnet **Höhenprofil und Grundriss** mit
 Anströmung und Zonen.
 
+**Außenseite und Vorzeichen** (seit 09.11.2026). Eine Schale hat keine
+Außenseite; ihre Normale folgt der Reihenfolge der Randlinien. Der Generator
+richtet darum jede Fläche nach außen aus, bezogen auf die Mitte ihrer Hülle
+(Baukörper sind die Gebäudeflächen des Winds, die sich berühren, auch ohne
+gemeinsame Knoten; freie Wände und Schilder zählen nicht dazu. Bei einer
+Fläche allein oder einer Mitte in ihrer Ebene gibt die Rolle die Außenseite
+vor: Dach oben, Wand quer zum Wind je nach Lage Luv oder Lee, Seite zur
+näheren Seitenkante. Die Außenseite wird einmal je Fläche bestimmt.) Steht
+eine Gebäudefläche ganz allein, nennt der Generator seit dem 12.11.2026 einen
+Hinweis im Protokoll: Nach DIN EN 1991-1-4 ist eine einzeln stehende Wand eine
+freistehende Wand (7.4, c_p,net nach Tabelle 7.9) und ein einzelnes Dach ein
+freistehendes Dach (7.3); die Rolle setzt der Anwender. Luv, Lee, Seite und Dach hängen so nicht
+mehr davon ab, wie herum die Linien eingegeben sind. Druck wirkt in das
+Gebäude, Sog heraus; am Gebäude mit Wind in +x zeigen Luvdruck und Leesog
+beide in +x, der Dachsog hebt. Bis zum 09.11.2026 wirkten diese Lasten an
+Schalen verkehrt herum (Gebäude 10 × 20 × 8 m: ΣF (−135; 0; −127) statt
+(+135; 0; +127) kN), und die Kontrollsumme zählte umgekehrt wie die Last,
+darum fiel es nicht auf. Randflächen von Volumen und quadratische Schalen
+(shell6, shell8) bekommen seither ebenfalls ihre Rollen (bis dahin alle
+„Seite“, Kontrollsumme 0,00 kN). Die Kontrollsumme ist der Kraftvektor der
+erzeugten Elementlasten, so wie sie wirken. In der Elementlast einer Schale
+steht p seither in Richtung der Elementnormalen (wie bei jeder Schalenlast);
+den Druck auf die Hülle zeigt die Ansicht der Objektlast. Windlasten, die mit
+einem älteren Programmstand erzeugt sind, wirken an Schalen weiter gegen den
+Wind; das Programm nennt sie beim Öffnen und im Status „möglicherweise
+betroffen“ – auch nach einem Neurechnen –, bis sie über *Lasten → Wind* neu
+erzeugt sind.
+
 **Numerischer Windkanal.** Mit *Verfahren → numerischer Windkanal* wird die
 Strömung um die gewählten Flächen und Stäbe in einem Schnitt gerechnet
 (Gitter-Boltzmann-Verfahren, siehe Theoriehandbuch 2.2a): *Grundriss*
@@ -7433,6 +7677,16 @@ und die Verwölbung je Knoten.
 Lagen (Dicke, Werkstoff, Winkel), rechnet das Programm mit den
 Laminatsteifigkeiten. Ein unsymmetrischer Aufbau koppelt Dehnung und Biegung -
 eine Scheibe unter Zug krümmt sich dann.
+
+**Geschichtete Schale unter Temperatur** (seit 09.11.2026). Bei einem
+unsymmetrischen Aufbau trägt die Temperaturlast neben der Normalkraft A·α·ΔT
+auch das Moment B·α·ΔT. Die Rückrechnung der Schnittgrößen zieht jetzt beide
+Anteile ab. Bis zum 09.11.2026 zog sie nur die Normalkraft ab: Eine frei
+gedehnte Platte aus 5 mm mit E = 210 000 und 5 mm mit E = 70 000 N/mm² zeigte
+unter ΔT = 50 K ein Moment von 1 500 Nm/m und eine Vergleichsspannung von
+90 N/mm², obwohl sie spannungsfrei ist. Verformungen und Lagerkräfte waren
+richtig. Die Wärmedehnzahl gilt für den ganzen Aufbau (die des Werkstoffs der
+Schale), nicht je Lage. Geprüft in `tests/test_laminat_temperatur.py`.
 
 ## 5 Lager: Ausfall, Schlupf, Reibung, Bettung
 
@@ -9248,6 +9502,29 @@ jeweils 0.
 Drehlagers entstehen beim Trennen von den Nachbarn jetzt 359 statt 363
 Knotenkopien (V16 und V29 je 2 weniger), die 24 Linienkopien bleiben.
 
+**Beim Export geht nichts mehr still verloren** (seit 09.11.2026). Der
+IFC-Export schreibt Knoten, Werkstoff, Profil, Stabendgelenke, Fachwerkstäbe,
+Knotenlager, Lasten und Kombinationen; jeder Knoten steht nur einmal in der
+Datei. Der SAF-Export schreibt zusätzlich Stabendgelenke, Fachwerkstäbe und
+Linienlager. Der Nastran-Export schreibt die Knoten im Großfeld mit voller
+Genauigkeit, Fachwerkstäbe als CROD und Gelenke am CBAR. Der Abaqus-Export
+schreibt Gelenke, Stablasten und das Eigengewicht auf eine vorhandene
+Elementmenge. Der DXF-Export nennt im Kopf die Einheit Meter und legt
+Lagersymbole und Beschriftung auf Ebenen mit dem Vorsatz `STATIK3D_`, die der
+Import nicht als Tragwerk liest. Der DXF-Import liest die Einheit aus der
+Datei und wählt sie im Importdialog vor; fehlt sie, nimmt er wie bisher
+Millimeter an und sagt das in einer Warnung. Was ein Format nicht tragen kann,
+steht nach dem Export als Hinweis mit Anzahl im Protokoll, zum Beispiel
+„nicht übertragen: 1 Flächenlager, 2 Kontaktdefinitionen“. Flächenlager
+schreibt kein Format; sie stehen immer in diesem Hinweis. Nach dem Import
+einer Abaqus- oder IFC-Datei heißt der erste Lastfall LF1 (vorher LF1_2). Bis
+zum 09.11.2026 kam ein Rahmen über IFC mit 8 statt 5 Knoten zurück und
+verformte sich nach dem Wiedereinlesen nicht (0,00 statt −1,45 mm), über SAF,
+Nastran und Abaqus fehlten die Gelenke (Verschiebung −0,62, −0,35 und −0,35
+statt −1,45 mm). Die geschriebenen Dateien sind mit dem
+eigenen Import geprüft (Rundreise), nicht in fremden Programmen. Geprüft in
+`tests/test_gruppe6_exporte.py`.
+
 **SAF-Export: Stablasten und Ergebniskombinationen (seit 06.10.2026).** Der
 SAF-Export (Datei → Exportieren, Endung `.xlsx`) schreibt eine Stablast so, wie
 SAF sie beschreibt: gleichmäßig (Distribution „Uniform“), trapezförmig („Trapez“,
@@ -10292,7 +10569,9 @@ obere Stufe (S235: f_y = 235 N/mm²), darüber die untere (S235: 215 N/mm²).
 Ist auch f_u
 leer, kommt f_u ebenso aus der Sorte (S235 bis 40 mm: 360 N/mm²). Ein
 eingetragenes f_y geht der Sorte nur **bis 40 mm** vor, mit leerem f_u gilt
-dort f_u = 1,3 · f_y. Über 40 mm gilt die untere Stufe der Sorte für f_y und
+dort f_u = 1,3 · f_y, außer im Anschluss- und im Schraubennachweis: diese
+nehmen f_u aus dem eingetragenen Wert oder aus der Stahlsorte und melden, wenn
+beides fehlt. Über 40 mm gilt die untere Stufe der Sorte für f_y und
 f_u, auch wenn f_y eingetragen ist: ein Werkstoff mit f_y = 300 N/mm², leerem
 f_u und Sorte S235 ergibt bei 10,7 und 40 mm Erzeugnisdicke f_y = 300 und
 f_u = 390 N/mm², bei 41 mm f_y = 215 und f_u = 360 N/mm² (gemessen
@@ -10587,6 +10866,27 @@ im Kapitel System die Nähte und die Kerbfälle der Stäbe auf.
 Ein Anschluss gehört zum Modell wie ein Stab: er wird mitgespeichert, steht im
 Modellbaum und in der Tabelle „Anschlüsse“, überlebt Rückgängig und wird bei
 **jeder** Berechnung mit nachgewiesen.
+
+**Festigkeiten aus dem Werkstoff.** Der Nachweis nimmt f_y und f_u aus dem
+Werkstoff des Stabes: aus den eingegebenen Werten, der Dickentabelle oder der
+Stahlsorte. Fehlt eines davon, wird der Anschluss nicht nachgewiesen, und der
+Nachweis nennt den Werkstoff („f_u fehlt – bitte im Werkstoff angeben“). Bis
+zum 09.11.2026 rechnete er still mit 1,3 · f_y bzw. ganz ohne Festigkeiten mit
+S355 (355/510 N/mm²). Ältere Ergebnisse solcher Modelle tragen „Ergebnis
+möglicherweise betroffen – neu rechnen“. Geprüft in
+`tests/test_anschluss_festigkeit.py`.
+
+Dasselbe gilt seit dem 09.11.2026 für den **Anschlussvorschlag** (Kopfplatte,
+Lasche, Knotenblech) und für den **Nachweis eines Stabes mit Gewinde**. Fehlt
+im Werkstoff f_y oder f_u, gibt es keinen Vorschlag, sondern die Meldung mit
+dem Namen des Werkstoffs; der Stab mit Gewinde meldet „Werkstoff … ohne
+Zugfestigkeit f_u“. Bis dahin bemaß der Vorschlag die Geometrie still mit
+S355 (355/510 N/mm²), und der Stab mit Gewinde rechnete bei einem Werkstoff
+mit f_y ohne f_u mit f_ub = 1,3 · f_y (640 → 832 N/mm²). Steht neben f_y eine
+Stahlsorte, aber kein Wert f_u, gilt das f_u der Sorte (S355: 510 statt
+832 N/mm²); ältere Ergebnisse solcher Modelle tragen den Status „möglicherweise
+betroffen“. Geprüft in
+`tests/test_nachweis_ohne_fu.py`.
 
 **Anlegen**: Stabende wählen (die beiden Knoten des Stabelements markieren),
 dann Register *Lager / Kontakt* → „Anschluss“ — oder im Modellbaum
@@ -11008,6 +11308,105 @@ das α_cr des Systems; das Knicken des einzelnen Stabs weist der Stabnachweis
 (Biegeknicken) nach. Bis zum 14.10.2026 stand nur das α_cr des Systems in
 der Übersicht, auch wenn ein Druckstab schon bei einem kleineren Faktor
 knickte.
+
+**Stabendgelenke in α_cr und Theorie II. Ordnung** (seit 09.11.2026). Die
+geometrische Steifigkeit eines Balkens mit Stabendgelenk oder Federgelenk wird
+jetzt genau so kondensiert wie seine elastische Steifigkeit. Ein Balken mit
+Gelenken an beiden Enden wirkt damit wie ein Fachwerkstab als Saite. Bis zum
+09.11.2026 bekam er die volle Balkenform: Eine Pendelstütze als Balken mit
+Gelenken hatte neben einem Kragstiel α_cr = 1,667 statt 2,000, und ein
+gezogener Gelenkstab hielt den Kopf zu steif, α_cr bis 37 % zu hoch, also auf
+der unsicheren Seite. Ein Balken aus einem einzigen Element, der an beiden
+Enden in einer Ebene gelenkig ist, steht deshalb wie ein Fachwerk-Druckstab
+im Einzelknicken (π²·E·I/(L²·N) mit dem Trägheitsmoment der gelenkigen
+Ebene).
+
+**Schnittgrößen nach Theorie II. Ordnung** (seit 09.11.2026). Die
+Stabendkräfte rechnen mit derselben Steifigkeit wie das Gleichungssystem,
+elastisch plus geometrisch. Im Feld kommt der Anteil der Normalkraft am Hebel
+der Durchbiegung dazu (N·w). Die Biegelinie im Element wird dafür aus der
+Momentenlinie integriert, gemessen gegen die Sehne zwischen den Stabenden.
+Bis zum 09.11.2026 fehlten beide Anteile. Ein Einfeldträger mit Druck
+0,6·N_cr in einem Element hatte ein Feldmoment von 37,1 statt 57,3 kNm
+(−35 %), und am Kragarm war das Stabendmoment 7,9 % größer als das
+Lagermoment. Jetzt sind es 57,25 kNm gegen geschlossen 57,27 kNm, und
+Stabend- und Lagermoment sind gleich, auch an Stäben mit Gelenk oder
+Federgelenk und Feldlast.
+
+**Interne Stabteilung** (seit 12.11.2026). Nach Theorie II. und III.
+Ordnung teilt das Programm Balken intern in kürzere Abschnitte, ohne das
+Modell zu ändern: Jeder Stab bekommt mindestens so viele Abschnitte, wie die
+**Stabteilung** der Netzeinstellungen angibt (Vorgabe 10, wie RFEM; der
+RFEM-Import übernimmt den Wert), nach Theorie III. Ordnung doppelt so viele.
+Ein Element bekommt seinen Anteil nach seiner Länge; ein Stab, der schon in
+genug Elemente geteilt ist, bleibt, wie er ist. Ohne Stabobjekt zählt die
+gerade Kette von Balken zwischen Knoten mit Abzweig, Gelenk oder Lager als
+Stab. Geteilt wird nur, wo die Normalkraft nach Theorie I. Ordnung mindestens
+ein Tausendstel der Euler-Last des Elements erreicht; starre Kurzstäbe und
+Balken ohne Normalkraft bleiben ganz. Nicht geteilt werden außerdem
+Fachwerkstäbe, Seile, Stäbe mit Wölbkrafttorsion und Stäbe mit Versatz der
+Stabenden. Die Ergebnisse gelten für die Knoten und Elemente des Modells; das
+Feld eines Elements setzt sich aus seinen Teilstücken zusammen, auch in der
+gespeicherten Ergebnisdatei. Stabteilung 1 schaltet die Teilung ab. Bis zum
+12.11.2026 rechnete ein Stab in einem Element bei gehaltenen Enden ohne den
+Anteil der Normalkraft: Der links eingespannte, rechts gelenkige
+Einfeldträger (6 m, q = 5 kN/m, Druck 0,6·N_cr) hatte 22,50 kNm am Lager, das
+Ergebnis nach Theorie I. Ordnung, ohne Hinweis. Jetzt sind es nach Theorie II.
+Ordnung 44,21 kNm (Differentialgleichung 44,207) und nach Theorie III.
+Ordnung 44,07 kNm (−0,3 %, das korotationale Element braucht mehr Teile).
+Geprüft in `tests/test_stabteilung.py`.
+
+**Stabteilung für α_cr** (seit 09.11.2026). Die Verzweigung rechnet je
+Element mit einer kubischen Biegelinie. Seit der internen Stabteilung
+(12.11.2026) betrifft der folgende Hinweis nur noch Elemente, die nicht
+geteilt werden, oder die Stabteilung 1. Liegt eine ganze Knickhalbwelle in
+einem Element, ist α_cr zu hoch, beim beidseits gelenkigen Druckstab in einem
+Element um 21,6 %. Mit zwei Elementen sind es 0,75 %, mit vier 0,05 %.
+Erreicht α_cr·|N| eines gedrückten Balkenelements 30 % der Euler-Last dieses
+Elements (π²·E·I/l², l seine Länge), steht in den Hinweisen der Kombination
+und in der Zusammenfassung „α_cr: Stabteilung zu grob“. Der Hinweis nennt das
+Element und verlangt mindestens vier Elemente. Bis zum 09.11.2026 sagte das
+Programm dazu nichts.
+
+**Federgelenk mit Steifigkeit 0** (seit 09.11.2026). Ein Federgelenk mit
+k = 0 ist ein Gelenk. Bis dahin wirkte es biegesteif, wenn es im Skript oder
+über die Web-Schnittstelle angelegt war; die Maske lässt k = 0 nicht zu.
+Nachgezogen werden nur Dateien, die vor diesem Stand gespeichert sind: eine
+solche Datei bekommt das Gelenk beim Öffnen und meldet es im Protokoll. Ein am
+Element entferntes Gelenk bleibt weg. Ältere Ergebnisse werden mit „Ergebnis
+möglicherweise betroffen – neu rechnen“ geladen statt verworfen.
+
+**Stäbe mit Versatz in α_cr und Theorie II. Ordnung** (seit 09.11.2026). Die
+geometrische Steifigkeit eines Stabes mit Versatz der Stabenden
+(Exzentrizität) wirkt jetzt an den Stabenden, wie seine elastische
+Steifigkeit. Bis zum 09.11.2026 wirkte sie an den Knoten: Ein Druckstab
+0,2 m neben seiner Knotenlinie hatte α_cr = 1,158 statt 2,000.
+
+**Schubweiche Balken im Feld** (seit 09.11.2026). Der Feldanteil N·w nach
+Theorie II. Ordnung nimmt bei einem Querschnitt mit Schubflächen die
+Schubdurchbiegung mit. Bis zum 09.11.2026 fehlte sie: Ein Einfeldträger mit
+N_E/(G·A_s) = 0,1 und Druck 0,6·N_cr in einem Element hatte ein um 12 % zu
+kleines Feldmoment, jetzt sind es −0,04 %. Eine Längslast entlang des Stabes
+bleibt im Feldanteil außen vor; die Stabkraft gilt im Element als
+gleichbleibend (ein Element bis +22,6 %, mit vier Elementen unter 1 %).
+
+**Stabendgelenke nach Theorie III. Ordnung** (seit 09.11.2026). Die Tangente
+der Theorie III. Ordnung kondensiert die geometrische Steifigkeit an Gelenken
+und Federgelenken wie die Theorie II. Ordnung. Bis zum 09.11.2026 bekam sie
+die volle Balkenform; mit einer Pendelstütze als Balken mit Gelenken neben
+einem Kragstiel fand die Rechnung ab 5/6 der Knicklast kein Gleichgewicht.
+Der Versatz der Stabenden ist nach Theorie III. Ordnung **nicht**
+berücksichtigt.
+
+**Stablast am Gelenk nach Theorie III. Ordnung** (seit 12.11.2026). Die
+Stabendkräfte eines Balkens mit Gelenk oder Federgelenk nehmen die Stablast
+(Strecken-, Eigengewicht, Temperatur) kondensiert wie die Steifigkeit. Bis
+dahin stand dort die Festeinspannkraft des beidseits eingespannten Stabs: Am
+Gelenk mit Streckenlast zeigte das Ergebnis q·L²/12 statt 0 (15,0 kNm am
+eingespannten Einfeldträger in einem Element, am Stabanfang 15,0 statt
+22,5 kNm). Das Gleichgewicht der Knoten stimmte, nur die Stabendkräfte und
+das Feld nicht. Alle drei Punkte sind geprüft in
+`tests/test_theorie_nebenbefund16.py`.
 
 **α_cr in Situationen** (seit 14.10.2026). Ein Stab, der in der Situation
 eines Lastfalls oder einer Kombination abgeschaltet ist oder als
@@ -13137,6 +13536,100 @@ Auslassungspunkte. Die Rückfrage fasst nur zusammen, wie viele je Prüfung
 anstehen; die Entscheidung bleibt beim Anwender. Wer mit 17 % Abdeckung
 rechnen will, kann es — aber nachdem er gelesen hat, dass es 17 % sind.
 
+
+**Meldungen richtiggestellt** (seit 10.11.2026). Die Kontrollsumme des
+Wasserdrucks ist die Summe des Lastvektors und gilt damit auch für
+quadratische Schalen (vorher 0 N an einer Wand aus achtknotigen Schalen,
+jetzt 61 298 N gegen 61 312 N von Hand). Bei einem abgebildeten Quader nennt
+das Protokoll die Teilung des Körpers; sie ersetzt dort die Netzdichte. Eine
+nicht ausgeführte Kontaktbedingung wird mit Namen und Grund gemeldet, und die
+Folge wird benannt: Teilen die beiden Seiten Knoten, rechnet das Modell dort
+durchverbunden (zu steif); teilen sie keine, sind die Bauteile dort nicht
+verbunden (zu weich). Teilen sie nur einzelne Knoten, etwa den gemeinsamen
+Rand eigener, aufeinanderliegender Flächen, ist die Fuge dazwischen offen:
+Druck geht nur an diesen Knoten über (zu weich), dort aber auch Zug. Schalen
+werden bei eingeschalteter Plastizität elastisch gerechnet, Stäbe ebenso,
+gezählt in Stabelementen; Protokoll und Zusammenfassung weisen darauf hin. Endet eine
+Laststufe an der Iterationsgrenze, bevor ein Mechanismus erkennbar ist, lautet
+die Meldung „Iterationsgrenze erreicht …“; das ist kein Nachweis einer
+überschrittenen Traglast, sondern die Aufforderung, mehr Iterationen oder
+Laststufen zu wählen. Bilden Stabendgelenke mit den Lagern eine kinematische
+Kette, nennt die Modellprüfung die „Gelenkkette“ mit Stabelement und Knoten;
+„Freie Bewegungen suchen“ zeigt sie. Ab einem Steifigkeitsunterschied von
+Faktor 1 000 000 zwischen zwei Elementen warnt die Modellprüfung, weil die
+Rechnung bei sehr ungleichen Steifigkeiten ein tragfähiges System als singulär
+abweisen kann (an einem Kragarm aus Stäben ab Faktor 100 000 000). Zahlen in
+Zusammenfassung, Plastizitätsprotokoll und Diagnose stehen mit Dezimalkomma
+und ohne wissenschaftliche Schreibweise; das Kontaktprotokoll ist noch nicht
+umgestellt. Rechenergebnisse ändern sich dadurch nicht. Geprüft in
+`tests/test_gruppe5_meldungen.py`.
+
+**Eingabeprüfung vor dem Rechnen** (seit 09.11.2026). Vor dem Rechnen prüft
+das Programm die Eingaben und nennt den Fehler mit Namen und Wert: E-Modul
+null oder negativ, Querdehnzahl außerhalb des möglichen Bereichs (größer als
+−1, höchstens 0,5; genau 0,5 ist bei Volumenelementen nicht rechenbar), Dicke
+oder Querschnittswerte null oder negativ, tragende Flächen ohne Dicke, Lasten
+und Lager auf Flächen, Linien, Körper, Stäbe oder Knoten, die es nicht gibt,
+sowie Kombinationen mit einem Lastfall, den es nicht gibt. Bis dahin lief
+etwa ein negativer E-Modul durch, und die Verformung hatte das falsche
+Vorzeichen (+114,1 statt −114,1 mm); ein Lager auf einer unbekannten Linie
+fiel still weg. Warnungen halten das Rechnen nicht auf: Querdehnzahl über
+0,495 bei Volumenelementen (fast inkompressibel, das Netz versteift), Lager
+auf einer vorhandenen, aber nicht vernetzten Linie oder Fläche, und „Netz
+geändert – Lager prüfen“, wenn ein Flächenlager durch Löschen eigene Elemente
+verloren hat. Ein Flächenlager zieht beim Löschen von Elementen jetzt mit:
+Die Nummern seiner Elemente werden nachgeführt (vorher zeigte es danach auf
+andere Elemente; an einer Platte auf Bettung 0,75 statt 1,00 m² gebettete
+Fläche). Nach dem Rechnen warnt die Zusammenfassung, wenn die größte
+Verformung über 10 % der größten Modellabmessung liegt; dann Einheiten und
+Lagerung prüfen. Element- und Knotennummern in Meldungen zählen ab 0, auch in
+den Meldungen zu Flächen ohne gemeinsame Linie (A19).
+Geprüft in `tests/test_gruppe5_robustheit.py`.
+
+**Deckungsgleiche Trennflächen zweier Körper** (seit 09.11.2026). Haben zwei
+Volumenkörper an derselben Stelle je eine eigene Fläche über denselben
+Randlinien und nennt keine Kontaktbedingung diese Flächen oder Körper,
+vernetzt das Programm beide Flächen als eine gemeinsame: Die Körper bekommen
+dort gemeinsame Knoten und tragen wie ein Stück. Die Geometrie bleibt
+unverändert, zusammengelegt wird nur im Netz. Jede Stelle steht mit den Namen
+der Körper und Flächen im Protokoll des Vernetzens. Gibt es für die Stelle
+eine Kontaktbedingung (über die Flächen oder nur über die beiden Körper),
+wird nichts zusammengelegt, dann gilt der Kontakt. In der Oberfläche legt das
+Programm für berührende Körper in der Regel selbsttätig einen Kontakt „starr
+(Verbund)“ an; auch dann gilt der Kontakt. Passen die Netze beider Seiten
+nicht zusammen (verschiedene Teilung oder Elementart) oder wird nur einer der
+beiden Körper neu vernetzt, bleibt die Stelle getrennt, und das Protokoll
+nennt den Grund. Die Warnung „Trennfläche doppelt“ der Abnahme erscheint nur
+noch, wenn ein vorhandenes Netz an einer solchen Stelle getrennt ist. Das
+betrifft Dateien mit einem Netz aus einer früheren Fassung: Dort waren die
+Körper nur über die Randlinien verbunden (zwei Würfel unter Zug verformten
+sich 52 % zu viel). Solche Modelle bitte neu vernetzen. Geprüft in
+`tests/test_a16_trennflaechen.py`.
+
+**Flächen ohne gemeinsame Linie werden im Netz geteilt** (seit 09.11.2026).
+Berühren sich Schalenflächen, ohne eine Linie zu teilen, teilt der Vernetzer
+sie an fremden Knoten und Linien, wie in RFEM „Knoten auf Linie“ und „Linie in
+Fläche“. Liegt ein Eckknoten einer anderen Fläche mitten auf einer geraden
+Randlinie, bekommt das Netz dort einen gemeinsamen Knoten, und die
+anschließenden Flächen hängen längs des gemeinsamen Stücks zusammen. Liegt
+eine gerade Randlinie einer anderen Fläche in einer ebenen Fläche, die dort
+keine Linie hat (Rippe auf ungeteilter Platte), wird sie im Netz dieser Fläche
+zur Zwangslinie mit gemeinsamen Knoten. Knoten, Linien und Flächen des Modells
+bleiben unverändert; geteilt wird nur im Netz, und jede Stelle steht mit Namen
+im Protokoll des Vernetzens. Die so geteilte Fläche wird frei mit Dreiecken
+vernetzt. Vorher hing ein Stoß mit einer ungeteilten Linie nur an den Ecken
+zusammen (0,742 statt 0,143 mm), und die Rippe auf der ungeteilten Platte trug
+nichts (33,1 statt 0,52 mm). Nicht geteilt wird, was nicht genau passt: ein
+Knoten, der bis 1 mm neben der Linie liegt, eine Linie, die nur teilweise in
+der Fläche liegt oder auf dem Rand ohne Knoten endet, zwei Linien, die sich in
+der Fläche ohne gemeinsamen Knoten kreuzen, sowie gekrümmte Linien und Linien
+mit Zwischenknoten. Dort bleibt das Netz unverbunden, das Protokoll nennt den
+Grund, und die Abnahme warnt weiter mit „Flächen ohne gemeinsame Linie“.
+Ein fremder Knoten mitten auf einem Bogen steht mit Namen im Protokoll und als
+Warnung in der Abnahme; gekrümmte Linien werden nicht geteilt. Abhilfe ist,
+den Bogen dort von Hand in zwei Bögen zu teilen. Dieselbe Warnung erscheint für Netze von vor dem 09.11.2026; dann neu
+vernetzen. Geprüft in `tests/test_flaechen_teilen.py`.
+
 ### Abbruch der Kontakt-Iteration: die letzte Verformung bleibt sichtbar
 
 **Vorher greift ein Halt** (17.09.2026): verliert ein Teil in einem Schritt
@@ -13631,6 +14124,12 @@ beim größten Auswertepunkt, die Nachweise lesen, was sie vorher lasen.
     wählt die **Schalenseite** — oben, unten oder je Element die Seite mit dem
     größeren Betrag (wie Top/Bottom in ANSYS). Scheiben (ebene Elemente)
     liefern ihren ebenen Zustand.
+    Die Komponenten σ_x, σ_y, τ_xy (und n_x, m_x …) stehen seit dem
+    09.11.2026 im **Flächensystem**: x ist die globale X-Achse in die
+    Elementebene projiziert, bei Flächen fast quer zu X die globale Y-Achse.
+    Bis dahin lag x an der ersten Kante jedes Elements, und die Knotenmittel
+    mischten verschieden gedrehte Systeme (Patchtest Zug 10 N/mm²: σ_x
+    zwischen 0,8 und 9,3). Hauptspannungen und σ_v waren richtig.
   - **Stäbe**: σ_x Rand = |σ_N| + σ_My + σ_Mz, σ_N = N/A,
     σ_My = |M_y| z_max/I_y, σ_Mz = |M_z| y_max/I_z an den Stabenden, am Knoten
     gemittelt.
@@ -13695,6 +14194,27 @@ Drahtnetzes, und gewählte, aus dem Modellbaum aufleuchtende oder mit der Maus
 überfahrene Flächen und Volumen leuchten **ohne Elementkanten** (seit
 15.09.2026; vorher zeigte die Hervorhebung das Netz auch bei ausgeschaltetem
 Netz).
+
+Seit 10.11.2026 baut die Datentabelle auch die Zeilen der Knoten- und der
+Elementtabelle erst, wenn ihr Register nach vorn kommt; vorher wurden sie bei
+jedem Modellstand gebaut und nur nicht angezeigt. Die Spannungen je Knoten
+(σ_v, Hauptspannungen) rechnet die Ansicht einmal je Ergebnis und Größe statt
+bei jedem Neuzeichnen, die Bindungen der Mittelknoten werden bei der
+Auswertung einmal statt 36-mal bestimmt, und die Lastverteilung beim Öffnen
+rechnet Kreuzprodukt und Seitenmitte ohne den Umweg über numpy-Hilfsfunktionen
+(die verteilten Lasten sind bitgleich, am Drehlager mit 2 032 936 Lastzeilen
+geprüft). Gemessen am Drehlager (1,18 Mio. Knoten) im Programmfenster, alt
+und neu zweimal im Wechsel; ein gleichzeitig laufender Rechenlauf belegte 1
+bis 17 Kerne, daher sind nur Werte bei vergleichbarer Fremdlast
+gegenübergestellt: Öffnen 74 und 88 s statt 113 und 170 s, Modelltabellen
+2,5 bis 3,6 s statt 9,0 bis 9,5 s, Ergebnisgröße wiederholt auf σ_v wechseln
+1,5 bis 3,7 s statt 6,4 bis 6,6 s (neu sogar bei höherer Fremdlast),
+Arbeitsspeicher 4,9 statt 5,5 GB. Gehalten werden die Knotenfelder der
+zuletzt vier angesehenen Ergebnisse (je bis zu acht Größen); beim
+Durchblättern weiterer Lastfälle wächst der Speicher nicht weiter. Die
+Bildzeiten beim Drehen bleiben bei
+etwa 5 ms; die halb deckenden Elementkanten kosten dabei nichts. Geprüft in
+`tests/test_ansicht_schneller.py`.
 
 **Skala und Kennwerte nur für das Sichtbare.** Sind Teile ausgeblendet
 (Sicht → *Selektion anzeigen*, *Auswahl ausblenden*, Schalter der

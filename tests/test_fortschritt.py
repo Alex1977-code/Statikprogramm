@@ -107,7 +107,8 @@ def test_modellpruefung_meldet_entartung():
           bool(treffer) and treffer[0].startswith("WARNUNG"),
           treffer[0][:40] if treffer else "")
     check("die Meldung nennt Elementnummer, Folge und Abhilfe",
-          bool(treffer) and "Element 6" in treffer[0]
+          # Nummer ab 0 wie in der Tabelle (Befund C13): das sechste Element ist 5
+          bool(treffer) and "Element 5 " in treffer[0]
           and "übergangen" in treffer[0] and "Vernetzen" in treffer[0])
     check("kein FEHLER, der die Rechnung sperrt",
           not [z for z in zeilen if z.startswith("FEHLER")],
@@ -127,9 +128,10 @@ def test_elementfehler_nennt_das_element():
     except ValueError as ex:
         text = str(ex)
     check("entartetes Element bricht die Assemblierung ab", True)
-    check("Meldung nennt die Elementnummer", f"Element {i + 1} " in text, text[:90])
+    # Element- und Knotennummern ab 0 wie in Tabellen und Modellbaum (Befund C13)
+    check("Meldung nennt die Elementnummer", f"Element {i} " in text, text[:90])
     check("Meldung nennt die Elementart", "tet4" in text, text[:90])
-    check("Meldung nennt die Knoten", "Knoten 1, 2, 3, 4" in text, text[:110])
+    check("Meldung nennt die Knoten", "Knoten 0, 1, 2, 3" in text, text[:110])
     check("Meldung erklaert die Ursache",
           "Ebene" in text or "fallen" in text, text[-90:])
 

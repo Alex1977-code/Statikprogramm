@@ -5691,23 +5691,23 @@ class MainWindow(QtWidgets.QMainWindow):
             # (tests/test_symbole_ribbon, keine gleichen Symbole in einer Gruppe)
             symbol="pruefen")
         g = r.gruppe("Beispiele")
-        # ein Knopf mit Menue statt acht Knoepfen, die jeder das Modell ersetzen
-        # (24.09.2026) - die Suche findet die Beispiele weiter
-        act_beispiele = g.menue(
-            "Beispiel öffnen ▾", [(label, lambda k=key: self.load_example(k), f"Beispiel {label} laden")
-                                  for key, label in (("frame", "Rahmen"), ("truss", "Fachwerk"),
-                                                     ("plate", "Platte"), ("solid", "Konsole"),
-                                                     ("hall", "Hallenrahmen"), ("gate", "Stauwand"),
-                                                     ("contact", "Abhebendes Lager"), ("friction", "Reibung"))],
-            hinweis="Ein Beispielmodell laden - es ersetzt das offene Modell (mit Rückfrage, "
-                    "wenn etwas ungespeichert ist)", symbol="beispiel")
+        # Die Beispielbibliothek (09.11.2026) ersetzt das Menue „Beispiel
+        # öffnen ▾“ mit acht festen Beispielen: Gruppen, Beschreibung,
+        # Parametertabelle, eigene Beispiele aus Dokumente\Statik3D\Beispiele.
+        # Der Knopf oeffnet nur den Dialog; das Modell ersetzt erst
+        # „Übernehmen“ (mit Rueckfrage, wenn etwas ungespeichert ist).
+        self.act_beispielbibliothek = g.gross(
+            "Beispielbibliothek…", "", self.maske_beispielbibliothek,
+            hinweis="Beispielmodelle nach Stabwerk, Flächentragwerk und Volumen mit einstellbaren Werten; "
+                    "„Übernehmen“ baut das Modell und ersetzt das offene (mit Rückfrage, wenn etwas "
+                    "ungespeichert ist)", symbol="beispiel")
         g = r.gruppe("Sitzung")
         act_beenden = g.klein("Beenden", self.close, "Ctrl+Q",
                               hinweis="Das Programm schließen")
         # Befehle, die das Modell ersetzen oder leeren, laufen nie direkt aus
         # der Befehlssuche - die Suche zeigt ihr Register (Loeschbefehle
         # erkennt sie am Namen)
-        rb.vorsicht(self.act_neu, act_oeffnen, act_import, act_leeren, act_beenden, *act_beispiele)
+        rb.vorsicht(self.act_neu, act_oeffnen, act_import, act_leeren, act_beenden)
 
         # -- Start -------------------------------------------------------
         r = rb.register("Start")
@@ -15689,15 +15689,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 pass
         return out
 
-    def refresh_modelltabellen(self):
+    def _knotenzeilen(self) -> list:
+        """Zeilen der Knotentabelle - im Block: bei 95 000 Knoten und 490 000
+        Elementen darf der Aufbau der Tabellen keine Minuten kosten."""
         m = self.model
-        self._raender_stand = None
-        self._inhalte_stand = None
-        self._stabnummern_stand = None
-        if not hasattr(self, "tbl_knoten"):
-            return
-        # Knoten - im Block: bei 95 000 Knoten und 490 000 Elementen darf der
-        # Aufbau der Tabellen keine Minuten kosten
         alle_knoten = np.fromiter((int(x) for e in m.elements for x in e.nodes), dtype=np.int64,
                                   count=sum(len(e.nodes) for e in m.elements))
         alle_knoten = alle_knoten[(alle_knoten >= 0) & (alle_knoten < m.nn)]
@@ -15706,9 +15701,32 @@ class MainWindow(QtWidgets.QMainWindow):
         for i, sp in enumerate(m.supports):
             lagername.setdefault(int(sp.node), sp.name or f"Lager {i + 1}")
         XYZ = np.asarray(m.nodes[:m.nn], float).reshape(-1, 3).tolist()
-        self._fill(self.tbl_knoten,
-                   [[i, x, y, z, int(c), lagername.get(i, "")]
-                    for i, ((x, y, z), c) in enumerate(zip(XYZ, anzahl.tolist()))])
+        return [[i, x, y, z, int(c), lagername.get(i, "")]
+                for i, ((x, y, z), c) in enumerate(zip(XYZ, anzahl.tolist()))]
+
+    def _elementzeilen(self, mass=None) -> list:
+        """Zeilen der Elementtabelle: Laenge, Flaeche oder Volumen je
+        Elementart im Block. ``mass``: die Elementmasse, wenn das Auffrischen
+        sie schon bestimmt hat (passen sie nicht zum Netz, werden sie neu
+        bestimmt)."""
+        m = self.model
+        if mass is None or len(mass) != len(m.elements):
+            mass = self._elementmasse()
+        return [[i, e.typ, ", ".join(str(int(n)) for n in e.nodes), e.mat,
+                 e.sec or "", float(np.degrees(e.roll or 0.0)), float(mass[i]),
+                 ", ".join(str(h) for h in (e.hinges or []))]
+                for i, e in enumerate(m.elements)]
+
+    def refresh_modelltabellen(self):
+        m = self.model
+        self._raender_stand = None
+        self._inhalte_stand = None
+        self._stabnummern_stand = None
+        if not hasattr(self, "tbl_knoten"):
+            return
+        # Knoten und Elemente als Zeilenquelle: eine grosse Tabelle, die nicht
+        # zu sehen ist, baut ihre Zeilen erst beim Anzeigen (10.11.2026)
+        self._fill(self.tbl_knoten, tab.Zeilenquelle(m.nn, self._knotenzeilen))
         # Linien
         zeilen = []
         for name, ln in m.lines.items():
@@ -15718,13 +15736,17 @@ class MainWindow(QtWidgets.QMainWindow):
             folge = ", ".join(str(x) for x in pts)
             zeilen.append([name, ln.typ, len(pts), laenge, folge, ln.comment])
         self._fill(self.tbl_linie, zeilen)
-        # Elemente: Laenge, Flaeche oder Volumen je Elementart im Block
-        mass = self._elementmasse()
-        zeilen = [[i, e.typ, ", ".join(str(int(n)) for n in e.nodes), e.mat,
-                   e.sec or "", float(np.degrees(e.roll or 0.0)), float(mass[i]),
-                   ", ".join(str(h) for h in (e.hinges or []))]
-                  for i, e in enumerate(m.elements)]
-        self._fill(self.tbl_elem, zeilen)
+        # Die Elementmasse hoechstens einmal je Auffrischen: die Koerpertabelle
+        # unten braucht sie sofort, die Elementtabelle erst beim Anzeigen.
+        masse = []
+
+        def elementmasse():
+            if not masse:
+                masse.append(self._elementmasse())
+            return masse[0]
+
+        self._fill(self.tbl_elem, tab.Zeilenquelle(len(m.elements),
+                                                   lambda: self._elementzeilen(elementmasse())))
         # Lager
         zeilen = []
         for i, (art, obj) in enumerate(self._lagerliste()):
@@ -15780,8 +15802,11 @@ class MainWindow(QtWidgets.QMainWindow):
         for name, k in (getattr(m, "koerper", {}) or {}).items():
             # aus den vektorisierten Elementmassen - je Tetraeder einzeln
             # kostete das beim Drehlager eine halbe Minute
-            idx = [int(i) for i in (k.elemente or []) if 0 <= int(i) < len(mass)]
-            V = float(mass[idx].sum()) if idx else 0.0
+            V = 0.0
+            if k.elemente:
+                mass = elementmasse()
+                idx = [int(i) for i in k.elemente if 0 <= int(i) < len(mass)]
+                V = float(mass[idx].sum()) if idx else 0.0
             zeilen.append([name, ", ".join(k.flaechen), k.material,
                            " × ".join(str(x) for x in k.teilung),
                            len(k.elemente or []), V, float(k.kerbfall or 0.0) / 1e6,
@@ -20274,7 +20299,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh_beulfelder()
         self.refresh_volumen()
         self.refresh_lasteinleitungen()
-        self.refresh_lasteinleitungen()
         self.refresh_stellungen()
         self._refresh_kopf()
         self._titel_nachziehen()
@@ -23653,7 +23677,9 @@ class MainWindow(QtWidgets.QMainWindow):
                   f"(Nr. {kw.get('lastfall_nr', 0)}); "
                   f"q_p(h) = {kw.get('q_p_h', 0):.0f} N/m², "
                   f"Kontrollsumme Flächen {kw['kontrolle']['betrag'] / 1e3:.1f} kN, Stäbe {kw['kontrolle']['F_staebe'] / 1e3:.1f} kN"
-                  + (f"; Windkanal Re = {wk_['re']:.0f}, c_p {wk_['cp_min']:+.2f} … {wk_['cp_max']:+.2f}" if wk_ else ""))
+                  + (f"; Windkanal Re = {wk_['re']:.0f}, c_p {wk_['cp_min']:+.2f} … {wk_['cp_max']:+.2f}" if wk_ else "")
+                  + (f"; {bg.anzahl(len(kw['hinweise']), 'Hinweis', 'Hinweise')} im Protokoll"
+                     if kw.get("hinweise") else ""))
         for zeile in wm.erlaeuterung(wd, kw):
             self.log.appendPlainText("  " + zeile)
         self.refresh_all()
@@ -24516,8 +24542,14 @@ class MainWindow(QtWidgets.QMainWindow):
         erg = getattr(an, "joints", None) if an is not None else None
         if erg is None:
             from ..joints import anschluss as ans
-            text = "\n\n".join(
-                ans.vorlage(self.model, j).describe() for j in self.model.joints.values())
+
+            def beschreibung(j):
+                # ohne f_y/f_u im Werkstoff gibt es keine Vorlage (09.11.2026, A23)
+                try:
+                    return ans.vorlage(self.model, j).describe()
+                except Exception as ex:          # noqa: BLE001
+                    return f"{j.name}: {ex}"
+            text = "\n\n".join(beschreibung(j) for j in self.model.joints.values())
             text += "\n\nNoch nicht gerechnet - „Berechnen“ (F5) führt die Nachweise."
         else:
             teile = []
@@ -25072,6 +25104,12 @@ class MainWindow(QtWidgets.QMainWindow):
         if offen:
             from ..combinations import sperrhinweis_erzeugen
             return self.hinweis(sperrhinweis_erzeugen(offen))
+        # Erdbeben, Montagezustand (DIN 19704): der Generator nach EN 1990 hat
+        # dafuer keine Regel (Befund A5, 09.11.2026) - ebenfalls vor dem Dialog
+        from ..combinations import lastfaelle_ohne_regel_en1990, sperrhinweis_ohne_regel
+        ohne = lastfaelle_ohne_regel_en1990(self.model)
+        if ohne:
+            return self.hinweis(sperrhinweis_ohne_regel(self.model, ohne))
         d = AutoCombinationDialog(self, self.model.design)
         if d.exec():
             from ..combinations import generate_combinations
@@ -25605,7 +25643,10 @@ class MainWindow(QtWidgets.QMainWindow):
             # nur **ob**, die Guete sagt **wie fest** - und das ist die Zahl,
             # die zwei aeusserlich gleiche Bauteile unterscheidet.
             g: list = []
-            return sg.restfreiheiten(self.model, guete=g), g
+            # dazu die Gelenkketten (Befund C8, 09.11.2026): die Suche je
+            # Teiltragwerk kennt keine Stabendgelenke und fand den
+            # Einfeldtraeger mit Mittelgelenk nicht
+            return list(sg.restfreiheiten(self.model, guete=g)) + sg.gelenkketten(self.model), g
 
         self._run_background(suchen, self._singular_fertig, "Freie Bewegungen")
 
@@ -32061,12 +32102,34 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ---- Beispiele / Hilfe -------------------------------------------
     def load_example(self, which):
+        """Ein eingebautes Beispiel mit seinen Vorgabewerten laden."""
         from ..examples_lib import build_example
         if not self._ungespeichert_fragen("Beispiel öffnen", lambda: self.load_example(which)):
             return
+        self._beispiel_einsetzen(f"Beispiel '{which}'", lambda: build_example(which))
+
+    def maske_beispielbibliothek(self):
+        """Die Beispielbibliothek zeigen; „Übernehmen“ baut das gewaehlte
+        Beispiel mit den eingetragenen Werten (beispiel_uebernehmen)."""
+        from .beispielbibliothek import BeispielDialog
+        dlg = BeispielDialog(self)
+        self._beispieldialog = dlg          # fuer die Pruefungen
+        if dlg.exec() and dlg.ergebnis is not None:
+            self.beispiel_uebernehmen(*dlg.ergebnis)
+
+    def beispiel_uebernehmen(self, bsp, werte: dict):
+        """Das Beispiel ``bsp`` (statik3d.beispiele.Beispiel) mit ``werte``
+        bauen und als neues Modell einsetzen; fragt vorher, wenn etwas
+        ungespeichert ist."""
+        if not self._ungespeichert_fragen("Beispiel öffnen", lambda: self.beispiel_uebernehmen(bsp, werte)):
+            return
+        self._beispiel_einsetzen(f"Beispiel '{bsp.titel}'", lambda: bsp.bauen(werte))
+
+    def _beispiel_einsetzen(self, text: str, bauen):
         try:
-            self._protokoll_neu(f"Beispiel '{which}'")
-            self.model = build_example(which)
+            neu = bauen()
+            self._protokoll_neu(text)
+            self.model = neu
             self.__init_defaults()
             # derselbe saubere Stand wie nach Neu (02.10.2026), dazu das Beispiel
             self._neues_modell_zuruecksetzen()
@@ -32079,7 +32142,7 @@ class MainWindow(QtWidgets.QMainWindow):
             # Schliessen der Maske rechts frei ist
             self.plotter.view_isometric()
             self.zoom_alles()
-            self.info(f"Beispiel '{which}' geladen - jetzt BERECHNEN (F5)")
+            self.info(f"{text} geladen - jetzt BERECHNEN (F5)")
         except Exception as ex:
             self.log.appendPlainText(traceback.format_exc())
             self.error(str(ex))

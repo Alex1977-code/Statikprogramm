@@ -1180,6 +1180,17 @@ class ImportDialog(QtWidgets.QDialog):
         self.unit = QtWidgets.QComboBox()
         self.unit.addItems(["mm (×0,001)", "cm (×0,01)", "m (×1)"])
         self.unit.setCurrentIndex(0 if ext in (".dxf",) else 2)
+        self._faktoren = [1e-3, 1e-2, 1.0]
+        if ext == ".dxf":
+            # nennt die DXF-Datei ihre Einheit im Kopf ($INSUNITS), ist das die
+            # Vorwahl (09.11.2026, Befund B5: der eigene Export in Metern kam
+            # mit der Vorwahl mm 1000fach zu klein zurück)
+            from ..importers.dxf import einheit_der_datei, _de
+            datei = einheit_der_datei(path)
+            if datei is not None:
+                self.unit.addItem(f"wie in der Datei: {datei[0]} (×{_de(datei[1])})")
+                self._faktoren.append(float(datei[1]))
+                self.unit.setCurrentIndex(self.unit.count() - 1)
         self.append = QtWidgets.QCheckBox("an vorhandenes Modell anhängen")
         self.section = QtWidgets.QComboBox()
         self.section.addItems(_namen(model.sections) + profiles.list_profiles("IPE")[:6]
@@ -1221,7 +1232,7 @@ class ImportDialog(QtWidgets.QDialog):
         self.ext = ext
 
     def options(self) -> dict:
-        scale = [1e-3, 1e-2, 1.0][self.unit.currentIndex()]
+        scale = self._faktoren[self.unit.currentIndex()]
         opt = {"unit_scale": scale, "section": self.section.currentText(),
                "mat": self.material.currentText(), "material": self.material.currentText(),
                "shell_prop": self.shell.currentText(), "subdivide": self.subdiv.value(),

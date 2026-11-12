@@ -122,7 +122,8 @@ def test_modellpruefung_sieht_alternativen():
     check("in der eigenen Situation nicht", not [x for x in m.check() if "EK" in x], str(m.check()))
     m.combinations["EK"].alternativen = [{"LF9": 1.0}]
     check("ein unbekannter Lastfall in einer Alternative wird beanstandet",
-          any("EK" in x and "LF9" in x and "unbekannt" in x for x in m.check()), str(m.check()))
+          # Satzform seit Befund C14: „… nennt den Lastfall „LF9“ – den gibt es nicht“
+          any("EK" in x and "LF9" in x and "gibt es nicht" in x for x in m.check()), str(m.check()))
 
 
 class _Maskenrekorder:

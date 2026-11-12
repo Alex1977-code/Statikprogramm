@@ -480,6 +480,10 @@ class Units:
 _CATEGORY_BY_SOURCE = {
     "DEAD_LOAD": "G", "COMPLETION_G1": "G", "LIVE_LOAD_Q": "Q", "LIVE_LOAD": "Q",
     "SNOW": "S", "WIND": "W", "PRESTRESSING": "P", "SETTLEMENT_U": "SET", "TEMPERATURE_T": "T",
+    # die Schreibweise der IFC-Aufzaehlung IfcActionSourceTypeEnum (09.11.2026:
+    # bis dahin kam ein Lastfall mit SNOW_S oder WIND_W als Nutzlast an)
+    "DEAD_LOAD_G": "G", "SNOW_S": "S", "WIND_W": "W", "PRESTRESSING_P": "P",
+    "EARTHQUAKE_E": "A",
     "THERMAL": "T", "EARTHQUAKE": "A", "FIRE": "A", "IMPULSE": "A", "IMPACT": "A",
     "TRANSPORT": "Q", "ERECTION": "Q", "PROPPING": "Q", "SYSTEM_IMPERFECTION": "G",
     "SHRINKAGE": "T", "CREEP": "T", "LACK_OF_FIT": "T", "BUOYANCY": "H", "ICE": "H",
@@ -508,6 +512,9 @@ class _Builder:
         self.member_elems: dict[int, list[int]] = {}
         self.member_chain: dict[int, list[int]] = {}   # Stab -> Knotenkette
         self.case_of_group: dict[int, str] = {}
+        # der leere Vorgabelastfall eines frischen Modells weicht dem
+        # gleichnamigen Lastfall der Datei (Befund B6, 09.11.2026: "LF1_2")
+        self.vorgabe_lf = C.leerer_vorgabelastfall(model)
         self.materials: dict[int, str] = {}
         self.sections: dict[int, str] = {}
         self.default_mat: Optional[str] = None
@@ -544,6 +551,7 @@ class _Builder:
                 continue
             for obj in rel.refs(4):
                 self.material_of[obj.id] = mat
+        self._profilwerte_cache: Optional[dict] = None
         self.profile_props_of: dict[int, IfcEntity] = {}
         for rel in ifc.by_type("IfcRelAssociatesProfileProperties"):
             pp = rel.ref(5)
@@ -809,6 +817,64 @@ class _Builder:
         return Section(name, A=A, Iy=Iy or 1e-8, Iz=Iz or 1e-8, It=It or 1e-9,
                        Asy=Asy, Asz=Asz, Iw=Iw)
 
+    def _profilwerte(self, pdef: Optional[IfcEntity]) -> dict:
+        """IFC 4: die Querschnittswerte, die die Datei zu einem Profil nennt
+        (IfcProfileProperties mit Pset_ProfileMechanical), in m. Leer, wenn
+        die Datei keine nennt."""
+        if pdef is None:
+            return {}
+        if self._profilwerte_cache is None:
+            self._profilwerte_cache = {}
+            for pp in self.ifc.by_type("IfcProfileProperties"):
+                if pp.type != "IFCPROFILEPROPERTIES":
+                    continue
+                ziel = pp.ref(3)
+                if ziel is not None:
+                    self._profilwerte_cache.setdefault(ziel.id, []).extend(pp.refs(2))
+        L = self.L
+        potenz = {"CROSSSECTIONAREA": ("A", 2), "MOMENTOFINERTIAY": ("Iy", 4),
+                  "MOMENTOFINERTIAZ": ("Iz", 4), "TORSIONALCONSTANTX": ("It", 4),
+                  "SHEARDEFORMATIONAREAY": ("Asy", 2), "SHEARDEFORMATIONAREAZ": ("Asz", 2),
+                  "WARPINGCONSTANT": ("Iw", 6), "MINIMUMSECTIONMODULUSY": ("Wy", 3),
+                  "MINIMUMSECTIONMODULUSZ": ("Wz", 3)}
+        aus = {}
+        for p in self._profilwerte_cache.get(pdef.id, []):
+            if p.type != "IFCPROPERTYSINGLEVALUE" or p[2] is None:
+                continue
+            key = potenz.get(str(p[0] or "").upper().replace(" ", ""))
+            val = _num(p[2], None)
+            if key and val is not None:
+                aus[key[0]] = val * L ** key[1]
+        return aus
+
+    def _mit_profilwerten(self, sec: Optional[Section], pdef: Optional[IfcEntity],
+                          name: str) -> Optional[Section]:
+        """Nennt die Datei die Querschnittswerte selbst, gelten sie: vor den
+        aus den Massen berechneten und statt des Ersatzprofils (09.11.2026,
+        Befund B2: bis dahin wurden sie nicht gelesen)."""
+        w = self._profilwerte(pdef)
+        if not (w.get("A", 0.0) > 0 and w.get("Iy", 0.0) > 0 and w.get("Iz", 0.0) > 0):
+            return sec
+        if sec is None:
+            return Section(name, A=w["A"], Iy=w["Iy"], Iz=w["Iz"],
+                           It=w.get("It") or 1e-9, Asy=w.get("Asy", 0.0),
+                           Asz=w.get("Asz", 0.0), Iw=w.get("Iw", 0.0),
+                           zmax=w["Iy"] / w["Wy"] if w.get("Wy") else 0.0,
+                           ymax=w["Iz"] / w["Wz"] if w.get("Wz") else 0.0)
+        neu = {k: v for k, v in w.items() if k in ("A", "Iy", "Iz", "It", "Asy", "Asz", "Iw")
+               and abs(v - getattr(sec, k)) > 1e-9 * max(abs(v), abs(getattr(sec, k)))}
+        if neu:
+            for k, v in neu.items():
+                setattr(sec, k, v)
+            if "Iy" in neu and sec.zmax > 0:
+                sec.Wel_y = sec.Iy / sec.zmax
+            if "Iz" in neu and sec.ymax > 0:
+                sec.Wel_z = sec.Iz / sec.ymax
+            C.say(self.log, f"Profil '{sec.name}': die Datei nennt eigene Querschnittswerte "
+                            f"({', '.join(sorted(neu))}); sie gelten vor den aus den Maßen "
+                            "berechneten.")
+        return sec
+
     def section_name(self, product: IfcEntity, explicit_profile: IfcEntity = None) -> str:
         key = product.id
         if key in self.sections:
@@ -835,6 +901,8 @@ class _Builder:
             if sec is None and pp is not None:
                 sec = self._section_from_props(pp, C.unique_name(self.model.sections,
                                                                   pname or f"Profil #{pp.id}"))
+            sec = self._mit_profilwerten(sec, pdef, C.unique_name(
+                self.model.sections, pname or f"Profil #{pdef.id}"))
         elif pp is not None:
             pname = pp[0] if isinstance(pp[0], str) else ""
             sec = C.section_from_designation(pname, pname) if pname else None
@@ -875,6 +943,7 @@ class _Builder:
         if grp.id in self.case_of_group:
             return self.case_of_group[grp.id]
         name = grp.name or f"LG {grp.id}"
+        self.vorgabe_lf = C.vorgabelastfall_weicht(self.model, self.vorgabe_lf, name)
         name = C.unique_name(self.model.load_cases, name)
         cat = self._group_category(grp) or "Q"
         desc = str(grp[3] or "")

@@ -8,6 +8,7 @@ Neu gegenueber Version 1:
 """
 from __future__ import annotations
 
+import contextlib
 import math
 
 import numpy as np
@@ -226,6 +227,42 @@ def condense(kl: np.ndarray, fl: np.ndarray, released: list[int]):
     return K, f, (c, r, Kcc_inv, Kcr)
 
 
+def stab_endkinematik(model: Model, e, kl: np.ndarray = None):
+    """Die Stabend-Verschiebungen eines Stabs mit Gelenken oder Federgelenken
+    aus den lokalen Knotenverschiebungen (hinter dem Versatz): u_stab = C u.
+    C ist dieselbe Kondensation wie in der Steifigkeit (element_matrix):
+    erst die Federgelenke (innere FHG), dann die freien Gelenke. Ein freier
+    Gelenk-FHG des Knotens wirkt nicht auf den Stab (Spalte 0). None ohne
+    Gelenk und Federgelenk.
+
+    Die geometrische Steifigkeit (Theorie II. Ordnung, alpha_cr) wird damit
+    wie die elastische kondensiert, K_G = C^T k_G C (Befund A7 der
+    Pruefagenten, 09.11.2026). Bis dahin bekam ein Balken mit Stabendgelenken
+    die volle Balkenform: die Pendelstuetze als Balken mit Gelenken hatte
+    alpha_cr 1,667 statt 2,000, ein gezogener Gelenkstab bis 37 % zu viel
+    (unsichere Seite)."""
+    federn = bool(getattr(e, "hinge_springs", None))
+    if not (federn or e.hinges):
+        return None
+    if kl is None:
+        kl = beam_local(model, e)[0]
+    Cs = np.eye(12)
+    kl_s = kl
+    if federn:
+        kl_s, _f, rec = hinge_springs(kl, np.zeros(12), e.hinge_springs)
+        if rec is not None:
+            B, Kii_inv, Kio, _fi = rec
+            Cs = B @ np.vstack([np.eye(12), -Kii_inv @ Kio])
+    Ch = np.eye(12)
+    if e.hinges:
+        _K, _f, cond = condense(kl_s, np.zeros(12), e.hinges)
+        if cond is not None:
+            c, r, Kcc_inv, Kcr = cond
+            Ch[c, :] = 0.0
+            Ch[np.ix_(c, r)] = -Kcc_inv @ Kcr
+    return Cs @ Ch
+
+
 def element_matrix(model: Model, e):
     """Elementsteifigkeitsmatrix im globalen System."""
     mat = model.materials[e.mat]
@@ -382,14 +419,18 @@ def elementfehler(model: Model, i: int, ex: Exception) -> ValueError:
     Bisher kam aus einer halben Million Elementen nur „entartetes Tet4“
     zurueck - ohne Nummer, ohne Knoten, ohne Koerper. Wer das Netz reparieren
     soll, braucht beides.
+
+    Element- und Knotennummern zaehlen ab 0 wie in Tabellen, Modellbaum und
+    Modellpruefung (bis zum 09.11.2026 stand hier die Nummer plus eins - das
+    Element der Meldung war in der Tabelle das davor, Befund C13).
     """
     try:
         e = model.elements[i]
-        kn = ", ".join(str(int(k) + 1) for k in e.nodes)
+        kn = ", ".join(str(int(k)) for k in e.nodes)
         wo = f" im Volumen/Objekt '{e.group}'" if getattr(e, "group", "") else ""
-        return ValueError(f"Element {i + 1} ({e.typ}{wo}, Knoten {kn}): {ex}")
+        return ValueError(f"Element {i} ({e.typ}{wo}, Knoten {kn}): {ex}")
     except Exception:      # noqa: BLE001 - die Meldung darf nie selbst scheitern
-        return ValueError(f"Element {i + 1}: {ex}")
+        return ValueError(f"Element {i}: {ex}")
 
 
 #: Hoechstzahl Sechsflaechner je Stapel. 4096 mal 24x24 in double sind 19 MB
@@ -706,6 +747,31 @@ def stiffness(model: Model, workers=None, aktiv=None) -> sparse.csr_matrix:
     return (K + Ks).tocsr() if Ks is not None else K
 
 
+@contextlib.contextmanager
+def bindungen_halten(model):
+    """Die Bindungen der Mittelknoten fuer eine Folge von Aufrufen festhalten,
+    waehrend der sich das Netz nicht aendert (Auswertung in Stapeln).
+
+    :func:`mittelknoten_bindungen` prueft sonst bei jedem Aufruf mit dem
+    Netzschluessel, ob ihr Zwischenspeicher noch gilt - am Drehlager 0,5 s
+    je Aufruf, in der Anzeige der Integrationspunktwerte 36-mal (10.11.2026).
+    Der Wert ist derselbe; verschachtelt bleibt der aeussere gueltig.
+    """
+    if getattr(model, "_mittelknoten_gehalten", None) is not None:
+        yield
+        return
+    bind = mittelknoten_bindungen(model)
+    try:
+        model._mittelknoten_gehalten = bind
+    except AttributeError:
+        yield
+        return
+    try:
+        yield
+    finally:
+        model._mittelknoten_gehalten = None
+
+
 def mittelknoten_bindungen(model: Model) -> list:
     """[(Mittelknoten, Ecke a, Ecke b)] gebundener Seitenmitten quadratischer
     Volumenelemente (tet10, hex20, pent15): u_m = (u_a + u_b)/2. Zwei Quellen:
@@ -749,6 +815,9 @@ def mittelknoten_bindungen(model: Model) -> list:
     from . import parallel as _par
     if _par._WORKER_MODEL is model and getattr(model, "_mittelknoten_arbeiter", None) is not None:
         return model._mittelknoten_arbeiter      # im Arbeitsprozess: die des Hauptprozesses
+    gehalten = getattr(model, "_mittelknoten_gehalten", None)
+    if gehalten is not None:
+        return gehalten                          # bindungen_halten: das Netz aendert sich dort nicht
     typen = {e.typ for e in model.elements}
     vol = typen & set(SOLID_TYPES)
     if not any(EL.ist_quadratisch(t) for t in vol):
@@ -1762,6 +1831,18 @@ def geometric_stiffness(model: Model, u: np.ndarray, aktiv=None, n_anfang: dict 
             kg = bm.kg_local_saite(N, L)
         else:
             kg = bm.kg_local_beam(N, L, sec.A, sec.Iy + sec.Iz)
+            # Gelenke und Federgelenke wie in der elastischen Steifigkeit (A7)
+            C = stab_endkinematik(model, e)
+            if C is not None:
+                kg = C.T @ kg @ C
+        # Versatz der Stabenden (Exzentrizitaet) wie in der elastischen
+        # Steifigkeit (element_matrix): K_G = A^T k_G A. Bis zum 09.11.2026
+        # wirkte k_G auf die Knoten statt auf die Stabenden - ein Druckstab
+        # 0,2 m neben seiner Knotenlinie hatte alpha_cr 1,158 statt 2,000
+        # (Nebenbefund 16 b, tests/test_theorie_nebenbefund16.py)
+        A = beam_versatz(e)
+        if A is not None:
+            kg = A.T @ kg @ A
         kg = T.T @ kg @ T
         r, c = np.meshgrid(d, d, indexing="ij")
         rows.append(r.ravel())
@@ -2122,29 +2203,50 @@ def lastresultierende(abschnitte, x: np.ndarray):
     return Q, Mq
 
 
-def shell_thermal_loads(model: Model, e, dT: float) -> np.ndarray:
-    """Aequivalente Knotenlasten einer gleichmaessigen Temperaturaenderung
-    eines Schalenelements (Membrananteil), global."""
+def shell_thermal_loads(model: Model, e, dT: float, dT_z: float = 0.0) -> np.ndarray:
+    """Aequivalente Knotenlasten einer Temperaturaenderung eines
+    Schalenelements, global: gleichmaessig dT (Membrananteil) und seit dem
+    09.11.2026 der Unterschied dT_z oben − unten (Biegeanteil mit der
+    Anfangskruemmung alpha dT_z / t; bis dahin still verworfen, Befund A4)."""
     mat = model.materials[e.mat]
     prop = model.shells[e.sec]
     X = model.nodes[e.nodes]
     if schalen_formulierung(e, prop) != "dkt":
         from .elements import shell_rm
         return shell_rm.temperatur_schale(e.typ, X, mat.E, mat.nu, prop.t, mat.alpha, dT,
-                                          laminat=laminat_von(model, prop))
+                                          laminat=laminat_von(model, prop), dT_z=dT_z)
     t = prop.t
     tris = [(0, 1, 2)] if e.typ == "shell3" else [(0, 1, 2), (0, 2, 3)]
     nn = len(e.nodes)
     f = np.zeros(6 * nn)
     eps0 = mat.alpha * dT * np.array([1.0, 1.0, 0.0])
-    Dm = sh._material_matrices(mat.E, mat.nu, t)[0]
-    for tri in tris:
-        T3, xy, A = sh.shell_frame(X[tri[0]], X[tri[1]], X[tri[2]])
-        Bm, _ = sh.cst_b(xy)
-        fm = A * (Bm.T @ (Dm @ eps0))           # [u1 v1 u2 v2 u3 v3] lokal
-        for k, n in enumerate(tri):
-            fl = np.array([fm[2 * k], fm[2 * k + 1], 0.0])
-            f[6 * n:6 * n + 3] += T3.T @ fl
+    Dm, Db, _ = sh._material_matrices(mat.E, mat.nu, t)
+    if dT:
+        for tri in tris:
+            T3, xy, A = sh.shell_frame(X[tri[0]], X[tri[1]], X[tri[2]])
+            Bm, _ = sh.cst_b(xy)
+            fm = A * (Bm.T @ (Dm @ eps0))           # [u1 v1 u2 v2 u3 v3] lokal
+            for k, n in enumerate(tri):
+                fl = np.array([fm[2 * k], fm[2 * k + 1], 0.0])
+                f[6 * n:6 * n + 3] += T3.T @ fl
+    if dT_z:
+        # Biegeanteil wie die Steifigkeit (k_shell3_local, k_shell4): DKT je
+        # Dreieck mit drei Punkten, das Viereck gemittelt ueber beide
+        # Diagonalen - f = A Σ w Bᵀ Db kT
+        from .elements.shell_rm import temperatur_kruemmung
+        m0 = Db @ temperatur_kruemmung(mat.alpha, dT_z, t)
+        if e.typ == "shell3":
+            teile = [((0, 1, 2), 1.0)]
+        else:
+            teile = [((0, 1, 2), 0.5), ((0, 2, 3), 0.5), ((0, 1, 3), 0.5), ((1, 2, 3), 0.5)]
+        for tri, g in teile:
+            T3, xy, A = sh.shell_frame(X[tri[0]], X[tri[1]], X[tri[2]])
+            fb = np.zeros(9)                         # [w tx ty] je Knoten, lokal
+            for (xi, eta), w in zip(sh._TRI_GP, sh._TRI_W):
+                fb += w * A * (sh.dkt_b(xy, xi, eta).T @ m0)
+            for k, n in enumerate(tri):
+                f[6 * n:6 * n + 3] += g * (T3.T @ np.array([0.0, 0.0, fb[3 * k]]))
+                f[6 * n + 3:6 * n + 6] += g * (T3.T @ np.array([fb[3 * k + 1], fb[3 * k + 2], 0.0]))
     return f
 
 
@@ -2272,7 +2374,7 @@ def load_vector(model: Model, case: LoadCase = None, aktiv=None) -> np.ndarray:
             d, fe = _tp.anfangsspannung_modell(model, tl.elem, s0)
             np.add.at(F, d, fe)
         elif e.typ in SHELL_TYPES:
-            F[element_dofs(e)] += shell_thermal_loads(model, e, tl.dT)
+            F[element_dofs(e)] += shell_thermal_loads(model, e, tl.dT, getattr(tl, "dT_z", 0.0))
         elif e.typ in SOLID_TYPES:
             F[element_dofs(e)] += solid_thermal_loads(model, e, tl.dT)
         elif e.typ in PLANE_TYPES:
@@ -2395,14 +2497,23 @@ def solid_face_pressure(model: Model, e, p: float, face: int, direction=None) ->
     if ln <= 0:
         return f
     n = nvec / ln
+    innen = 1.0
     if np.dot(n, X.mean(axis=0) - ecken.mean(axis=0)) < 0:
         n = -n                                  # nach innen zeigend
-    if direction is not None:
-        d = np.asarray(direction, float)
+        innen = -1.0
+    if direction is not None or len(fn) not in (6, 8):
+        # mit Richtung, oder eine lineare Seite (eben bzw. bilinear): wie bisher
+        # laengs der Richtung bzw. der Eckennormale
+        d = n if direction is None else np.asarray(direction, float)
         d = d / (np.linalg.norm(d) or 1.0)
+        fk = sl.flaechenlast_knoten(P, p, d)    # (k, 3)
     else:
-        d = n
-    fk = sl.flaechenlast_knoten(P, p, d)        # (k, 3)
+        # senkrecht zur Seite: die oertliche Normale der (gekruemmten) Seite
+        # an jedem Integrationspunkt, nach innen wie die Eckennormale. Bis zum
+        # 09.11.2026 wirkte p an allen Punkten laengs der Normale der Ecken
+        # (Sehne): auf gekruemmten tet10/hex20-Seiten +0,56 % (grob) bis
+        # +0,06 % (fein) zu viel Kraft (Befund A15 der Pruefagenten).
+        fk = sl.flaechenlast_knoten(P, innen * p, None)
     for k, node_local in enumerate(fn):
         f[3 * node_local:3 * node_local + 3] += fk[k]
     return f

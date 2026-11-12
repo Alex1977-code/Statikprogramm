@@ -355,19 +355,31 @@ def test_anschluesse_fest_eingetragene_werte():
     check("Vorgabe des Schraubennachweises (check_bolt, f_u des Blechs) ist f_u von S355",
           inspect.signature(design.check_bolt).parameters["fu"].default == f510,
           str(inspect.signature(design.check_bolt).parameters["fu"].default))
-    # ein Werkstoff ohne f_u, f_y und Sorte: die Anschluesse nehmen S355 - mit f_u 510
+    # ein Werkstoff ohne f_u, f_y und Sorte: seit 09.11.2026 (Befund A23, Festlegung
+    # „Meldung statt Vorgabewert“) kein Nachweis mehr mit S355, sondern eine Meldung;
+    # dasselbe gilt seit dem 09.11.2026 fuer den Vorschlag (Nebenbefund 15) - bis dahin
+    # bemass er die Geometrie mit S355 und diese Pruefung schrieb „f_u 510“ fest
     m = _hall_mit_anschluessen()
     m.materials["S355"] = Material("S355")
-    t = A.vorlage(m, m.joints["K1"])
-    check("Anschluss aus einem Werkstoff ohne Angaben: Sorte S355, f_y 355, f_u 510",
-          (t.grade, mpa(t.fy), mpa(t.fu)) == ("S355", 355.0, 510.0), f"{t.grade} {mpa(t.fy)} {mpa(t.fu)}")
+    try:
+        A.vorlage(m, m.joints["K1"])
+        meldung = ""
+    except ValueError as ex:
+        meldung = str(ex)
+    check("Anschluss aus einem Werkstoff ohne Angaben: kein Nachweis, Meldung nennt f_y und f_u",
+          "f_y" in meldung and "f_u" in meldung, meldung)
     r = m.members["Riegel"]
     e = r.elements[0]
     for art, kw in (("kopfplatte", dict(end=0, N=-50e3, Vz=100e3, My=100e3)),
                     ("lasche", dict(end=1, N=-50e3, Vz=50e3, My=100e3)),
                     ("diagonale", dict(end=1, N=100e3))):
-        p = propose(art, m, e, **kw)
-        check(f"Vorschlag „{art}“ aus einem Werkstoff ohne Angaben: f_u 510", p.fu == f510, f"{mpa(p.fu)}")
+        try:
+            p = propose(art, m, e, **kw)
+            meldung = f"kein Fehler, f_u {mpa(p.fu)}"
+        except ValueError as ex:
+            meldung = str(ex)
+        check(f"Vorschlag „{art}“ aus einem Werkstoff ohne Angaben: kein Vorschlag, Meldung nennt f_y und f_u",
+              "f_y" in meldung and "f_u" in meldung and "kein Vorgabewert" in meldung, meldung)
 
 
 def test_beispiele():

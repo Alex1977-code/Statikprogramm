@@ -1070,10 +1070,19 @@ def _alte_namen_in_meldungen(meldungen, m) -> list:
     """check()-Meldungen mit den alten Namen: neue Namen in Anfuehrung zurueck
     ueber die Tabelle, „verwaist: “ weg - so vergleichbar mit dem Stand vor
     der Umstellung."""
+    from statik3d.diagnose import kombination_text
     lf, ko = _tabellen(m)
     rueck = {b: a for a, b in list(lf.items()) + list(ko.items())}
-    return sorted(re.sub(r"'([^']*)'", lambda t: "'" + rueck.get(t.group(1), t.group(1)) + "'", z)
-                  .replace(m.VERWAIST, "") for z in meldungen)
+
+    def zurueck(z):
+        z = re.sub(r"'([^']*)'", lambda t: "'" + rueck.get(t.group(1), t.group(1)) + "'", z)
+        # Meldungen in Satzform (Befund C14, 10.11.2026): „Name“ und LK<Nr>/EK<Nr>
+        # ohne Anfuehrung, so wie diagnose.kombination_text sie schreibt
+        z = re.sub(r"„([^“]*)“", lambda t: "„" + rueck.get(t.group(1), t.group(1)) + "“", z)
+        return re.sub(r"^((?:FEHLER|WARNUNG): )((?:LK|EK)\d+) ",
+                      lambda t: t.group(1) + (kombination_text(rueck[t.group(2)]) if t.group(2) in rueck
+                                              else t.group(2)) + " ", z)
+    return sorted(zurueck(z).replace(m.VERWAIST, "") for z in meldungen)
 
 
 def _verwaist_dict() -> dict:

@@ -661,6 +661,430 @@ def _ist_schale(model: Model, f) -> bool:
     traegt = getattr(model, "flaeche_traegt", None)
     return bool(f.dicke) or traegt is None or bool(traegt(f.name))
 
+# ---------------------------------------------------------------------------
+# Teilen im Netz: Knoten auf Linie, Linie in Flaeche (Befund A19, 09.11.2026)
+# ---------------------------------------------------------------------------
+#: Fangbereich fuer fremde Knoten und Linien - derselbe wie in der Abnahme
+#: (diagnose._abnahme_schalen_ohne_linie)
+TEIL_FANG = 1e-3
+#: kuerzestes Teilstueck einer im Netz geteilten Linie
+TEIL_MIN = 1e-3
+
+
+class _Netzgeometrie:
+    """Das Modell, wie der Schalenvernetzer es sieht: dieselben Knoten und
+    Linien, dazu die **Teilstuecke** der Linien, die im Netz an einem fremden
+    Knoten geteilt werden. Die Teilstuecke stehen nur hier - ``model.lines``
+    bleibt, wie der Anwender es angelegt hat (Entscheidung vom 09.11.2026:
+    geteilt wird nur im Netz, nicht in der Geometrie)."""
+
+    def __init__(self, model, teilstuecke: dict):
+        import collections
+        self.__dict__["_modell"] = model
+        self.__dict__["lines"] = collections.ChainMap(dict(teilstuecke), model.lines)
+
+    def __getattr__(self, name):
+        return getattr(self.__dict__["_modell"], name)
+
+
+def _strecken_kreuzen(p, q, a, b) -> bool:
+    """Trifft das **Innere** der ebenen Strecke p-q die Strecke a-b
+    (Enden von a-b eingeschlossen)? Parallele Strecken: nein."""
+    r, t = q - p, b - a
+    det = float(r[0] * t[1] - r[1] * t[0])
+    if abs(det) <= 1e-12 * float(np.linalg.norm(r) * np.linalg.norm(t)):
+        return False
+    w = a - p
+    lam = float(w[0] * t[1] - w[1] * t[0]) / det
+    mue = float(w[0] * r[1] - w[1] * r[0]) / det
+    return 1e-9 < lam < 1 - 1e-9 and -1e-9 <= mue <= 1 + 1e-9
+
+
+def kurve_fein(model, name: str) -> np.ndarray:
+    """Punkte auf einer gekruemmten Linie, so dicht, dass der Abstand zur
+    Sehnenkette weit unter dem Fangbereich TEIL_FANG bleibt (Abschnitte bis
+    5 mm, 64 bis 4096). Leer, wenn die Linie sich nicht abtasten laesst."""
+    from . import mesher3d as M3
+    try:
+        P = M3._linienpunkte(model, name, 64)
+        if len(P) < 2:
+            return np.zeros((0, 3))
+        L = float(np.linalg.norm(np.diff(P, axis=0), axis=1).sum())
+        n = int(min(4096, max(64, np.ceil(L / 5e-3))))
+        return P if n == 64 else M3._linienpunkte(model, name, n)
+    except Exception:                         # noqa: BLE001 - nicht abtastbar: keine Aussage
+        return np.zeros((0, 3))
+
+
+def abstand_zur_kette(P: np.ndarray, Q: np.ndarray) -> np.ndarray:
+    """Kleinster Abstand der Punkte Q (m, 3) zur Sehnenkette P (n+1, 3)."""
+    A, B = P[:-1], P[1:]
+    d = B - A
+    L2 = np.maximum((d * d).sum(1), 1e-300)
+    aus = np.empty(len(Q))
+    schritt = max(1, 1_000_000 // max(len(A), 1))      # Speicher je Block begrenzen
+    for i in range(0, len(Q), schritt):
+        q = Q[i:i + schritt]
+        t = np.clip(((q[:, None, :] - A[None]) * d[None]).sum(2) / L2[None], 0.0, 1.0)
+        aus[i:i + schritt] = np.linalg.norm(q[:, None, :] - (A[None] + t[..., None] * d[None]), axis=2).min(axis=1)
+    return aus
+
+
+def fremde_knoten_auf_kurve(model, name: str, K: np.ndarray, baum, besitz: dict, wem) -> list:
+    """[(Knoten, Abstand, fremde Flaechen)]: Linienknoten anderer Flaechen,
+    die im Innern der gekruemmten Linie ``name`` liegen (bis TEIL_FANG
+    daneben, nicht an ihren Enden). ``K``/``baum``: die Kandidaten und ihr
+    KD-Baum, ``besitz`` {Knoten: Flaechen}, ``wem`` die Flaechen der Linie."""
+    ln = model.lines.get(name)
+    if ln is None or len(ln.nodes) < 2:
+        return []
+    P = kurve_fein(model, name)
+    if len(P) < 2:
+        return []
+    seg = float(np.linalg.norm(np.diff(P, axis=0), axis=1).max())
+    kand = sorted({int(K[j]) for js in baum.query_ball_point(P, 0.5 * seg + TEIL_FANG) for j in js})
+    eigen = {int(k) for k in ln.nodes}
+    kand = [k for k in kand if k not in eigen and besitz.get(k, set()) - set(wem)]
+    if not kand:
+        return []
+    X = np.asarray(model.nodes, float)
+    Q = X[kand]
+    ab = abstand_zur_kette(P, Q)
+    L = float(np.linalg.norm(np.diff(P, axis=0), axis=1).sum())
+    ende = np.minimum(np.linalg.norm(Q - X[int(ln.nodes[0])], axis=1),
+                      np.linalg.norm(Q - X[int(ln.nodes[-1])], axis=1))
+    return [(k, float(a), besitz[k] - set(wem)) for k, a, e in zip(kand, ab, ende)
+            if a < TEIL_FANG and e > 1e-6 * L + 1e-9]
+
+
+def _teilplan(model: Model, schalen: list) -> dict:
+    """Wo beruehren sich Schalenflaechen, ohne eine Linie zu teilen - und wie
+    wird dort **im Netz** geteilt (wie in RFEM Knoten auf Linie und Linie in
+    Flaeche)? Entscheidung des Anwenders vom 09.11.2026 zum Befund A19 der
+    Pruefagenten: am Stoss ohne gemeinsame Linie hingen zehn doppelte Knoten
+    lose nebeneinander (0,7421 statt 0,1429 mm), die Rippe auf der ungeteilten
+    Platte trug nichts (33,089 statt 0,517 mm).
+
+    (a) **Knoten auf Linie**: liegt ein Linienknoten einer anderen Flaeche im
+        Innern einer geraden Randlinie (zwei Knoten), wird die Linie dort in
+        Teilstuecke zerlegt. Ein Teilstueck, das es zwischen genau diesen
+        Knoten schon als Linie gibt, **ist** diese Linie - so teilen die
+        Flaechen beiderseits ihre Netzknoten wie an einer gemeinsamen Linie.
+    (b) **Linie in Flaeche**: liegt ein gerades Stueck einer anderen, nicht
+        in derselben Ebene liegenden Flaeche ganz in einer ebenen Flaeche
+        (Enden an Randknoten oder im Innern), wird es dort Zwangslinie des
+        Netzes.
+
+    Verbunden wird nur, was genau passt (Abstand bis 1e-6 der Laenge, wie die
+    Stuetzknoten); was im Fangbereich von 1 mm daneben liegt (schleifend), was
+    nur teilweise in der Flaeche liegt oder den Rand ohne Knoten kreuzt, bleibt
+    unverbunden und steht mit dem Grund in ``warnungen``. Gekruemmte Linien
+    und Linien mit Zwischenknoten werden nicht geteilt.
+
+    Rueckgabe: ``teilstuecke`` {Name: Line} (nur fuer :class:`_Netzgeometrie`),
+    ``ersetzt`` (Linienliste -> Linienliste im Netz), ``zwang`` {Flaeche:
+    [Linien]}, ``geteilt`` (Flaechen, die deshalb frei vernetzt werden),
+    ``beteiligt`` (alle Flaechen an einer Stelle), ``meldungen``, ``warnungen``."""
+    from .model import Line, _randstuecke
+    ersatz: dict = {}
+    umlegen: dict = {}
+
+    def ersetzt(namen) -> list:
+        aus = []
+        for x in namen or []:
+            aus.extend(ersatz.get(x) or [umlegen.get(x, x)])
+        return aus
+    plan = {"teilstuecke": {}, "ersetzt": ersetzt, "zwang": {}, "geteilt": set(), "beteiligt": set(),
+            "meldungen": [], "warnungen": [], "aktiv": False}
+    lines = getattr(model, "lines", None) or {}
+    if len(schalen) < 2 or not lines:
+        return plan
+    from scipy.spatial import cKDTree
+    from . import mesher3d as M3
+    X = np.asarray(model.nodes, float)
+    nn = len(X)
+
+    def linien_von(f) -> list:
+        return list(f.linien or []) + [y for loch in (f.oeffnungen or []) for y in loch]
+
+    def gerade(ln) -> bool:
+        return str(getattr(ln, "typ", "polyline") or "polyline").lower() in GERADE_LINIEN
+
+    def mm(x: float) -> str:
+        return f"{x * 1e3:.3f}".replace(".", ",")
+
+    def fl(namen) -> str:
+        namen = sorted(namen)
+        return ("Fläche " if len(namen) == 1 else "Flächen ") + ", ".join(namen)
+
+    def stelle(*mengen):
+        for m in mengen:
+            plan["beteiligt"].update(m)
+
+    besitzer: dict = {}                       # Linie -> Flaechen
+    for f in schalen:
+        for x in dict.fromkeys(linien_von(f)):
+            ln = lines.get(x)
+            if ln is not None and len(ln.nodes) >= 2 and all(0 <= int(k) < nn for k in ln.nodes):
+                besitzer.setdefault(x, []).append(f.name)
+    kn_besitzer: dict = {}                    # Knoten -> Flaechen
+    for x, wem in besitzer.items():
+        ln = lines[x]
+        kn = ln.nodes if gerade(ln) else (ln.nodes[0], ln.nodes[-1])
+        for k in kn:
+            kn_besitzer.setdefault(int(k), set()).update(wem)
+    if not kn_besitzer:
+        return plan
+
+    # ---- (a) Knoten auf Linie -------------------------------------------
+    K = np.array(sorted(kn_besitzer), int)
+    baum = cKDTree(X[K])
+    ketten: dict = {}                         # Linie -> [a, k1, ..., b]
+    for x, wem in besitzer.items():
+        ln = lines[x]
+        if not gerade(ln):
+            # Gekruemmte Linien werden nicht geteilt; ein fremder Knoten darauf
+            # steht aber als Warnung im Protokoll (Befund 38 vom 11.11.2026:
+            # bis dahin blieb der Stoss am Bogen unverbunden und still).
+            for k, ab, fremd in fremde_knoten_auf_kurve(model, x, K, baum, kn_besitzer, wem):
+                plan["warnungen"].append(
+                    f"Knoten {k + 1} ({fl(fremd)}) liegt auf der gekrümmten Linie {x} ({fl(wem)})"
+                    + (f", {mm(ab)} mm daneben" if ab > 5e-7 else "")
+                    + ": gekrümmte Linien werden im Netz nicht geteilt – dort nicht verbunden.")
+            continue
+        kn = [int(k) for k in ln.nodes]
+        treffer = []
+        for a, b in zip(kn[:-1], kn[1:]):
+            d = X[b] - X[a]
+            L2 = float(d @ d)
+            if L2 <= 0:
+                continue
+            for j in baum.query_ball_point(0.5 * (X[a] + X[b]), 0.5 * np.sqrt(L2) + TEIL_FANG):
+                k = int(K[j])
+                if k in kn:
+                    continue
+                fremd = kn_besitzer[k] - set(wem)
+                if not fremd:
+                    continue
+                t = float((X[k] - X[a]) @ d) / L2
+                if not 1e-6 < t < 1 - 1e-6:
+                    continue
+                ab = float(np.linalg.norm(X[k] - (X[a] + t * d)))
+                if ab < TEIL_FANG:
+                    treffer.append((t, k, ab, fremd))
+        if not treffer:
+            continue
+        treffer.sort(key=lambda z: (z[0], z[1]))
+        if len(kn) > 2:
+            for _t, k, _ab, fremd in treffer:
+                stelle(wem, fremd)
+                plan["warnungen"].append(
+                    f"Knoten {k} ({fl(fremd)}) liegt auf der Linie {x} ({fl(wem)}): die Linie hat "
+                    "Zwischenknoten und wird im Netz nicht geteilt – dort nicht verbunden.")
+            continue
+        a, b = kn
+        ell = float(np.linalg.norm(X[b] - X[a]))
+        tol = STUETZKNOTEN_TOL * ell + 1e-9
+        kette, gruende = [a], []
+        for _t, k, ab, fremd in treffer:
+            stelle(wem, fremd)
+            if ab > tol:
+                plan["warnungen"].append(
+                    f"Knoten {k} ({fl(fremd)}) liegt {mm(ab)} mm neben der Linie {x} ({fl(wem)}) – "
+                    f"schleifend, über der Toleranz von {mm(tol)} mm: dort nicht verbunden.")
+                continue
+            nachbar = next((m for m in (kette[-1], b)
+                            if float(np.linalg.norm(X[k] - X[m])) < TEIL_MIN), None)
+            if nachbar is not None:
+                plan["warnungen"].append(
+                    f"Knoten {k} ({fl(fremd)}) liegt auf der Linie {x} ({fl(wem)}) weniger als 1 mm "
+                    f"neben dem Knoten {nachbar}: das Teilstück wäre zu kurz – dort nicht verbunden.")
+                continue
+            kette.append(k)
+            gruende.append(
+                f"Linie {x} ({fl(wem)}) im Netz am Knoten {k} geteilt (Knoten auf Linie): dort "
+                f"{'schließt' if len(fremd) == 1 else 'schließen'} {fl(fremd)} an – gemeinsamer Netzknoten.")
+        if len(kette) > 1:
+            kette.append(b)
+            ketten[x] = kette
+            plan["geteilt"].update(wem)
+            plan["meldungen"].extend(gruende)
+    # Teilstuecke benennen: gibt es die Linie zwischen den zwei Knoten schon, ist sie es
+    paar_linien: dict = {}
+    for x in besitzer:
+        ln = lines[x]
+        if x not in ketten and gerade(ln) and len(ln.nodes) == 2:
+            paar_linien.setdefault(frozenset(int(k) for k in ln.nodes), []).append(x)
+    paar: dict = {}
+    for x, kette in ketten.items():
+        namen = []
+        for i, (u, v) in enumerate(zip(kette[:-1], kette[1:])):
+            key = frozenset((u, v))
+            if key not in paar:
+                vorhanden = paar_linien.get(key)
+                if vorhanden:
+                    paar[key] = vorhanden[0]
+                    for y in vorhanden[1:]:      # Doppellinien zwischen denselben Knoten
+                        umlegen[y] = vorhanden[0]
+                else:
+                    name = f"{x} (Teil {i + 1})"
+                    while name in lines or name in plan["teilstuecke"]:
+                        name += "'"
+                    plan["teilstuecke"][name] = Line(name=name, nodes=[int(u), int(v)], typ="polyline")
+                    paar[key] = name
+            namen.append(paar[key])
+        ersatz[x] = namen
+
+    # ---- (b) Linie in Flaeche -------------------------------------------
+    geo = _Netzgeometrie(model, plan["teilstuecke"])
+    glines = geo.lines
+    lage: dict = {}
+    for f in schalen:
+        vr = ersetzt(f.linien)
+        vl = [ersetzt(loch) for loch in (f.oeffnungen or [])]
+        ringe3 = []
+        for i, namen in enumerate([vr] + vl):
+            st = _randstuecke(geo, namen)
+            pts = []
+            for name, kn in st or []:
+                ln = glines[name]
+                if gerade(ln):
+                    pts.extend(X[int(k)] for k in kn[:-1])
+                    continue
+                P = M3._linienpunkte(geo, name, 16)
+                if len(P) < 2:
+                    pts = []
+                    break
+                if np.linalg.norm(P[0] - X[int(kn[0])]) > np.linalg.norm(P[-1] - X[int(kn[0])]):
+                    P = P[::-1]
+                pts.extend(P[:-1])
+            if len(pts) >= 3:
+                ringe3.append(np.asarray(pts, float))
+            elif i == 0:
+                break                          # kein geschlossener Aussenrand
+        if not ringe3:
+            continue
+        alle = np.vstack(ringe3)
+        c, e1, e2, n, abw = M3.ausgleichsebene(alle)
+        gr = float(np.linalg.norm(alle - c, axis=1).max())
+        namen_v = set(vr) | {y for loch in vl for y in loch}
+        lage[f.name] = {
+            "eben": gr > 0 and abw <= M3.EBENHEIT * gr, "c": c, "e1": e1, "e2": e2, "n": n, "gr": gr,
+            "namen": namen_v,
+            "knoten": {int(k) for y in namen_v if y in glines for k in glines[y].nodes},
+            "ringe": [np.stack([(R - c) @ e1, (R - c) @ e2], axis=1) for R in ringe3],
+            "lo": alle.min(axis=0), "hi": alle.max(axis=0)}
+    stuecke: dict = {}                        # gerades Stueck -> (Knoten, Knoten, Flaechen)
+    for f in schalen:
+        for x in dict.fromkeys(ersetzt(linien_von(f))):
+            ln = glines.get(x)
+            if ln is None or not gerade(ln) or len(ln.nodes) != 2:
+                continue
+            if not all(0 <= int(k) < nn for k in ln.nodes):
+                continue
+            stuecke.setdefault(x, (int(ln.nodes[0]), int(ln.nodes[1]), []))[2].append(f.name)
+    namen_s = list(stuecke)
+    PA = X[[stuecke[x][0] for x in namen_s]] if namen_s else np.zeros((0, 3))
+    PB = X[[stuecke[x][1] for x in namen_s]] if namen_s else np.zeros((0, 3))
+    proben = np.linspace(0.1, 0.9, 9)[:, None]
+    for fa in schalen:
+        la = lage.get(fa.name)
+        if la is None or not la["eben"] or not namen_s:
+            continue
+        da = (PA - la["c"]) @ la["n"]
+        db = (PB - la["c"]) @ la["n"]
+        nah = (np.abs(da) < TEIL_FANG) & (np.abs(db) < TEIL_FANG)
+        nah &= np.all(np.maximum(PA, PB) >= la["lo"] - TEIL_FANG, axis=1)
+        nah &= np.all(np.minimum(PA, PB) <= la["hi"] + TEIL_FANG, axis=1)
+        tol = STUETZKNOTEN_TOL * la["gr"] + 1e-9
+        ringe = la["ringe"]
+        angenommen = []
+        for i in np.nonzero(nah)[0]:
+            x = namen_s[int(i)]
+            if x in la["namen"]:
+                continue
+            u, v, wem = stuecke[x]
+            fremd = [w for w in wem if w != fa.name
+                     and not (w in lage and lage[w]["eben"]
+                              and abs(float(lage[w]["n"] @ la["n"])) >= 0.999)]
+            if not fremd:
+                continue
+            u2 = np.array([(X[u] - la["c"]) @ la["e1"], (X[u] - la["c"]) @ la["e2"]])
+            v2 = np.array([(X[v] - la["c"]) @ la["e1"], (X[v] - la["c"]) @ la["e2"]])
+            S = u2 + proben * (v2 - u2)
+            drin = M3._in_polygon_2d(S, ringe)
+            ds = M3.randstreckenabstand(S, ringe)
+            if not np.any(drin & (ds > tol)):
+                continue                       # ausserhalb oder auf dem Rand: keine Stelle
+            stelle([fa.name], fremd)
+            wo = f"Linie {x} ({fl(fremd)}) in der Fläche {fa.name}"
+            neben = max(abs(float(da[i])), abs(float(db[i])))
+            if neben > tol:
+                plan["warnungen"].append(
+                    f"{wo}: sie liegt bis {mm(neben)} mm neben der Ebene der Fläche – schleifend, über "
+                    f"der Toleranz von {mm(tol)} mm: dort nicht verbunden.")
+                continue
+            grund = ""
+            for k, k2 in ((u, u2), (v, v2)):
+                if k in la["knoten"]:
+                    continue
+                if float(M3.randstreckenabstand(k2[None, :], ringe)[0]) <= TEIL_FANG:
+                    grund = (f"ihr Ende am Knoten {k} liegt auf dem Rand der Fläche, der dort "
+                             "keinen Knoten hat")
+                elif not bool(M3._in_polygon_2d(k2[None, :], ringe)[0]):
+                    grund = "sie liegt nur teilweise in der Fläche"
+                if grund:
+                    break
+            if not grund:
+                kreuzt = any(_strecken_kreuzen(u2, v2, R[j], R[(j + 1) % len(R)])
+                             for R in ringe for j in range(len(R)))
+                if kreuzt or not np.all(drin) or np.any(ds <= tol):
+                    grund = "sie liegt nur teilweise in der Fläche (sie kreuzt oder berührt den Rand ohne Knoten)"
+            if not grund:
+                for y, a2, b2 in angenommen:
+                    if _strecken_kreuzen(u2, v2, a2, b2) or _strecken_kreuzen(a2, b2, u2, v2):
+                        grund = f"sie kreuzt die Zwangslinie {y} ohne gemeinsamen Knoten"
+                        break
+            if grund:
+                plan["warnungen"].append(f"{wo}: {grund} – dort nicht verbunden.")
+                continue
+            angenommen.append((x, u2, v2))
+            plan["meldungen"].append(
+                f"Fläche {fa.name}: Linie {x} ({fl(fremd)}) liegt in der Fläche und wird im Netz zur "
+                "Zwangslinie (Linie in Fläche) – gemeinsame Netzknoten.")
+        if angenommen:
+            plan["zwang"][fa.name] = [x for x, _a, _b in angenommen]
+            plan["geteilt"].add(fa.name)
+    plan["aktiv"] = bool(ersatz or umlegen or plan["zwang"])
+    return plan
+
+
+def flaechen_teilstellen(model: Model) -> list:
+    """Namen der Schalenflaechen, die der Vernetzer an einem fremden Knoten
+    oder an einer fremden Linie im Netz teilt (:func:`_teilplan`)."""
+    schalen = [f for f in (getattr(model, "flaechen", None) or {}).values() if _ist_schale(model, f)]
+    return sorted(_teilplan(model, schalen)["geteilt"])
+
+
+def _gruppe_und_plan(model: Model, flaechen) -> tuple:
+    """(gemeinsam zu vernetzende Schalenflaechen, Teilplan) - siehe
+    :func:`gemeinsame_schalen` und :func:`_teilplan`."""
+    schalen = [f for f in flaechen if _ist_schale(model, f)]
+    plan = _teilplan(model, schalen)
+    ersetzt = plan["ersetzt"]
+
+    def alle_linien(f):
+        return (ersetzt(f.linien) + [y for loch in (f.oeffnungen or []) for y in ersetzt(loch)]
+                + list(plan["zwang"].get(f.name, [])))
+    zahl: dict = {}
+    for f in schalen:
+        for x in set(alle_linien(f)):
+            zahl[x] = zahl.get(x, 0) + 1
+    gruppe = [f for f in schalen
+              if any(zahl.get(x, 0) > 1 for x in alle_linien(f)) or len(f.linien or []) == 3
+              or any(f.oeffnungen or []) or f.name in plan["beteiligt"]]
+    return gruppe, plan
+
 
 def gemeinsame_schalen(model: Model, flaechen) -> list:
     """Die Schalenflaechen, die gemeinsam vernetzt werden muessen.
@@ -678,18 +1102,70 @@ def gemeinsame_schalen(model: Model, flaechen) -> list:
     mesh_flaeche kennt keine Oeffnungen und vernetzte eine einzelne Scheibe
     mit Kreisloch ueber den Aussenrand - das Loch war gefuellt (Netzflaeche
     4,0000 statt 3,9686 m2), am Lochrand keine Kerbspannung. Der freie Weg
-    hier spart das Loch aus."""
-    schalen = [f for f in flaechen if _ist_schale(model, f)]
+    hier spart das Loch aus.
 
-    def alle_linien(f):
-        return list(f.linien or []) + [y for loch in (f.oeffnungen or []) for y in loch]
-    zahl: dict = {}
+    Dazu jede Flaeche, die eine andere beruehrt, ohne eine Linie mit ihr zu
+    teilen (Befund A19, Entscheidung vom 09.11.2026): ein fremder Knoten auf
+    ihrer Randlinie oder eine fremde Linie in ihr - dort wird im Netz geteilt
+    (:func:`_teilplan`), und die Flaechen beiderseits gehoeren zusammen."""
+    return _gruppe_und_plan(model, flaechen)[0]
+
+
+def unverbundene_schalenlinien(model: Model) -> list:
+    """Gemeinsame Randlinien vernetzter Schalenflaechen, an denen die Netze
+    nicht dieselben Knoten haben - ein Netz von vor dem 09.11.2026 (Vernetzer
+    ohne gemeinsame Linienknoten) oder ein von Hand zusammengesetztes.
+
+    Rueckgabe [(Linie, Flaeche A, Flaeche B, Knoten nur auf einer Seite), ...].
+    Je Linie werden die Netzknoten auf ihr (Model.knoten_auf_linie) mit den
+    Knoten jeder anliegenden Flaeche geschnitten; verbunden ist die Linie, wenn
+    jede Flaeche dieselben Linienknoten traegt. Entscheidung des Anwenders vom
+    09.11.2026: alte, unverbundene Schalennetze beim Oeffnen erkennen und zum
+    Neuvernetzen auffordern."""
+    schalen = [f for f in (getattr(model, "flaechen", None) or {}).values()
+               if _ist_schale(model, f) and f.elemente]
+    if len(schalen) < 2 or not len(model.elements):
+        return []
+    knoten_von = {}
+    an_linie: dict = {}
     for f in schalen:
-        for x in set(alle_linien(f)):
-            zahl[x] = zahl.get(x, 0) + 1
-    return [f for f in schalen
-            if any(zahl.get(x, 0) > 1 for x in alle_linien(f)) or len(f.linien or []) == 3
-            or any(f.oeffnungen or [])]
+        knoten_von[f.name] = {int(k) for e in f.elemente if 0 <= int(e) < len(model.elements)
+                              for k in model.elements[int(e)].nodes}
+        for x in set(list(f.linien or []) + [y for loch in (f.oeffnungen or []) for y in loch]):
+            an_linie.setdefault(x, []).append(f.name)
+    out = []
+    cache: dict = {}
+    X = model.nodes
+    for linie, namen in an_linie.items():
+        if len(namen) < 2 or linie not in model.lines:
+            continue
+        ln = model.lines[linie]
+        kand = sorted(set().union(*(knoten_von[n] for n in namen)))
+        if str(ln.typ or "") in GERADE_LINIEN and len(ln.nodes) == 2 and kand:
+            # gerade Linie: Abstand zur Strecke, nur unter den Knoten der anliegenden
+            # Flaechen (knoten_auf_linie tastet fein ab und sucht im ganzen Modell -
+            # am Stemmtor 167 s fuer 591 Linien)
+            p, q = X[int(ln.nodes[0])], X[int(ln.nodes[1])]
+            d = q - p
+            L2 = float(d @ d)
+            if L2 <= 0:
+                continue
+            K = np.asarray(kand, int)
+            t = (X[K] - p) @ d / L2
+            r = np.linalg.norm(X[K] - (p + t[:, None] * d), axis=1)
+            tol = STUETZKNOTEN_TOL * np.sqrt(L2) + 1e-12
+            auf = {int(k) for k in K[(r <= tol) & (t >= -1e-9) & (t <= 1 + 1e-9)]}
+        else:
+            try:
+                auf = {int(k) for k, _s in model.knoten_auf_linie(linie, cache=cache)}
+            except Exception:               # noqa: BLE001 - eine Linie ohne Kurve sperrt nichts
+                continue
+        seiten = [(n, auf & knoten_von[n]) for n in namen]
+        a, ka = seiten[0]
+        for b, kb in seiten[1:]:
+            if ka != kb:
+                out.append((linie, a, b, len(ka ^ kb)))
+    return out
 
 
 def _h_eigene_teilung(model: Model, f) -> float:
@@ -716,12 +1192,37 @@ def schalen_gemeinsam_vernetzen(model: Model, flaechen, hs: dict = None, log: li
     vier, Oeffnungen - frei mit Dreiecken in ihrer Kantenlaenge
     (mesher3d.flaechennetz). Rueckgabe {Flaechenname: Elementnummern}; nur die
     Flaechen aus :func:`gemeinsame_schalen` werden hier vernetzt, alle
-    anderen bleiben bei :func:`mesh_flaeche`."""
+    anderen bleiben bei :func:`mesh_flaeche`.
+
+    Beruehren sich Flaechen, ohne eine Linie zu teilen, wird **im Netz**
+    geteilt (:func:`_teilplan`, Befund A19, 09.11.2026): die Randlinie am
+    fremden Knoten, die Flaeche an der fremden Linie (Zwangslinie). So eine
+    Flaeche wird frei mit Dreiecken vernetzt. Die Linien und Flaechen des
+    Modells bleiben, wie sie sind; jede Stelle steht im Protokoll, und was
+    sich nicht sauber teilen laesst, steht dort mit dem Grund als Warnung."""
+    import copy
     from . import mesher3d as M3
     from .importers import _common as C
-    gruppe = gemeinsame_schalen(model, flaechen)
+    gruppe, plan = _gruppe_und_plan(model, flaechen)
     if not gruppe:
+        for zeile in plan["warnungen"]:      # z. B. fremder Knoten auf einem Bogen (Befund 38)
+            C.warn(log, zeile)
         return {}
+    # Die Geometrie, wie das Netz sie sieht: Teilstuecke statt geteilter Linien
+    geo = _Netzgeometrie(model, plan["teilstuecke"]) if plan["aktiv"] else model
+    sicht: dict = {}
+    for f in gruppe:
+        v = f
+        if plan["aktiv"]:
+            v = copy.copy(f)
+            v.linien = plan["ersetzt"](f.linien)
+            v.oeffnungen = [plan["ersetzt"](loch) for loch in (f.oeffnungen or [])]
+        sicht[f.name] = v
+    zwang = plan["zwang"]
+    for zeile in plan["meldungen"]:
+        C.say(log, zeile)
+    for zeile in plan["warnungen"]:
+        C.warn(log, zeile)
     hs = dict(hs or {})
     kanten = {} if kanten is None else kanten
     if dreiecke is None:
@@ -739,18 +1240,23 @@ def schalen_gemeinsam_vernetzen(model: Model, flaechen, hs: dict = None, log: li
         hf[f.name] = max(h, 1e-6)
     h_lin: dict = {}
     for f in gruppe:
-        for x in list(f.linien or []) + [y for loch in (f.oeffnungen or []) for y in loch]:
+        v = sicht[f.name]
+        for x in (list(v.linien or []) + [y for loch in (v.oeffnungen or []) for y in loch]
+                  + list(zwang.get(f.name, []))):
             h_lin[x] = min(h_lin.get(x, hf[f.name]), hf[f.name])
     namen_f = frozenset(f.name for f in gruppe)
-    teil = M3.Linienteilung(model, gruppe, max(hf.values()), h_linien=h_lin, h_flaechen=hf,
-                            gemeinsam=(namen_f, frozenset(h_lin)), eben_binden=True)
+    teil = M3.Linienteilung(geo, [sicht[f.name] for f in gruppe], max(hf.values()), h_linien=h_lin,
+                            h_flaechen=hf, gemeinsam=(namen_f, frozenset(h_lin)), eben_binden=True)
     for erste, k, grenze in getattr(teil, "gekappt", []) or []:
         C.warn(log, f"Linie {erste} und ihre Gegenseiten: {k} Abschnitte gefordert, auf {grenze} begrenzt")
 
     def abgebildet_moeglich(f) -> bool:
+        if f.name in plan["geteilt"]:
+            return False                     # im Netz geteilt: frei, mit Zwangsknoten
+        f = sicht[f.name]
         if len(f.linien or []) != 4 or f.oeffnungen:
             return False
-        st = M3.seiten_im_umlauf(model, f.linien)
+        st = M3.seiten_im_umlauf(geo, f.linien)
         if not st or len(st) != 4:
             return False
         n = [teil.n.get(x, 1) for x, _k in st]
@@ -759,12 +1265,18 @@ def schalen_gemeinsam_vernetzen(model: Model, flaechen, hs: dict = None, log: li
     # 1. Freie Netze in der Ebene - fehlt eine Randstrecke, wird ihre Linie
     #    nachgeteilt, und zwar fuer alle Flaechen daran (darum neu fuer alle)
     frei: dict = {}
+    zwang_offen: dict = {}
     for _runde in range(4):
-        frei, fehlt_alle = {}, set()
+        frei, fehlt_alle, zwang_offen = {}, set(), {}
         for f in gruppe:
             if abgebildet_moeglich(f):
                 continue
-            P, T, meldung, fehlt, kenn = M3.flaechennetz(model, f, teil)
+            zw = zwang.get(f.name)
+            if zw:
+                P, T, meldung, fehlt, kenn = M3.flaechennetz(geo, sicht[f.name], teil, zwang=zw)
+                zwang_offen[f.name] = [x for x in (fehlt or []) if x in zw]
+            else:
+                P, T, meldung, fehlt, kenn = M3.flaechennetz(geo, sicht[f.name], teil)
             frei[f.name] = (P, T, meldung, kenn)
             fehlt_alle.update(fehlt or [])
         if not fehlt_alle or not teil.verfeinern(sorted(fehlt_alle)):
@@ -793,7 +1305,7 @@ def schalen_gemeinsam_vernetzen(model: Model, flaechen, hs: dict = None, log: li
                 j += 1
             kette = [ring_ids[k % n] for k in range(i, j + 1)]
             linie = herkunft[i]
-            _randmitten(model, kette, [int(x) for x in model.lines[linie].nodes], linie, kanten)
+            _randmitten(model, kette, [int(x) for x in geo.lines[linie].nodes], linie, kanten)
             i = j
 
     out: dict = {}
@@ -801,7 +1313,7 @@ def schalen_gemeinsam_vernetzen(model: Model, flaechen, hs: dict = None, log: li
     for f in gruppe:
         mat = f.material or C.ensure_material(model, log=log)
         prop = f.dicke or C.ensure_shell_prop(model, log=log)
-        zug = M3._linienzug(teil, model, f.linien or [])
+        zug = M3._linienzug(teil, geo, sicht[f.name].linien or [])
         if zug is None:
             C.warn(log, f"Fläche {f.name}: die Linien bilden keinen geschlossenen Rand.")
             f.elemente = []
@@ -851,10 +1363,18 @@ def schalen_gemeinsam_vernetzen(model: Model, flaechen, hs: dict = None, log: li
                        + (" (quadratisch)" if ordnung >= 2 else "")
                        + f" frei vernetzt, h = {teil.h_fuer(f) * 1e3:.0f} mm, "
                        "Randknoten gemeinsam mit den Nachbarflächen")
+            for x in zwang_offen.get(f.name, []):
+                C.warn(log, f"Fläche {f.name}: die Zwangslinie {x} ist im Netz nicht durchgehend "
+                            "Elementkante – dort nicht verbunden.")
         f.elemente = els
         out[f.name] = els
     C.say(log, f"{len(out)} Flächen mit gemeinsamen Randlinien zusammenhängend vernetzt "
                f"({n_vier} abgebildet, {n_drei} frei)")
+    if plan["meldungen"]:
+        C.say(log, f"{len(plan['meldungen'])} "
+                   + ("Stelle" if len(plan["meldungen"]) == 1 else "Stellen")
+                   + " ohne gemeinsame Linie im Netz verbunden (Knoten auf Linie, Linie in Fläche); "
+                     "Knoten, Linien und Flächen des Modells bleiben unverändert.")
     return out
 
 
@@ -1061,15 +1581,16 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
                                  OHNE_NETZ, karten=karten)
             if v_hex < 0:
                 order = order[4:] + order[:4]
-            nx, ny, nz = (list(koerper.teilung) + [4, 4, 4])[:3]
+            teil, achsen = quader_teilung(model, koerper, order)
             # Eine Linienvorgabe (sweep.lagenvorgabe: Kanten, die Nachbarn
             # gehoeren) geht vor der eigenen Teilung - je Richtung dieselbe.
             vorgabe = getattr(model, "linienvorgabe", None) or {}
             richtungen = quader_richtungen(quader_kanten(model, koerper, order))
-            teil = [nx, ny, nz]
+            vom_nachbarn = False
             for d in range(3):
                 fest = [int(vorgabe[x]) for x in richtungen[d] if x in vorgabe]
                 if fest:
+                    vom_nachbarn = vom_nachbarn or max(fest) != teil[d]
                     teil[d] = max(fest)
             nx, ny, nz = teil
             ord_ = netz_ordnung(model, ordnung)
@@ -1084,13 +1605,25 @@ def mesh_koerper(model: Model, koerper, log: list = None, frei: bool = True,
             els = _hex_netz(model, order, max(1, nx), max(1, ny), max(1, nz), mat,
                             koerper.name, ord_, kanten, koerper=koerper, cache=cache)
             koerper.elemente = els
-            koerper.kommentar = f"{len(els)} Hexaeder (abgebildet, {nx} x {ny} x {nz})"
+            # in x, y, z angeben, wie die Teilung eingegeben wird (A14)
+            xyz = [nx, ny, nz]
+            if sorted(achsen) == [0, 1, 2]:
+                for k_, a_ in enumerate(achsen):
+                    xyz[a_] = (nx, ny, nz)[k_]
+            zahl = f"{xyz[0]} x {xyz[1]} x {xyz[2]}"
+            koerper.kommentar = f"{len(els)} Hexaeder (abgebildet, {zahl})"
             koerper.randtreue = 1.0
             koerper.netzgrund = ""
             koerper.netzkanten = []
+            # Woher die Zahl kommt, steht dabei (Befund C3 der Pruefagenten,
+            # 09.11.2026): der abgebildete Quader folgt seiner eigenen Teilung,
+            # die Netzdichte (Ziellaenge) wirkt an ihm nicht - das Protokoll
+            # kuendigte davor „≈ 3472 Elemente“ an, entstanden sind 64.
             C.say(log, f"Volumen {koerper.name}: {len(els)} Hexaeder"
                        + (" (quadratisch, 20 Knoten)" if ord_ >= 2 else "")
-                       + f" ({nx} x {ny} x {nz})")
+                       + f" ({zahl}) – abgebildeter Quader, geteilt nach der Teilung des Körpers"
+                       + (" und der Teilung gemeinsamer Kanten" if vom_nachbarn else "")
+                       + ", nicht nach der Netzdichte")
             return els
     if len(knoten) == 4 and _dreiflaechner(ringe, flaechen, model):
         X = model.nodes[knoten]
@@ -1173,6 +1706,37 @@ def abgebildet(model: Model, koerper, h: float = 0.0, karten: tuple = None, log:
     # erst danach.
     from . import sweep as SW
     return SW.sweepbar(model, koerper, h=h, karten=karten, log=log)
+
+
+def quader_abgebildet(model: Model, koerper) -> bool:
+    """Geht der Koerper in :func:`mesh_koerper` den ersten Weg - **abgebildeter
+    Quader** (sechs Vierecke, acht Ecken, gerade Kanten, mit Rauminhalt)?
+
+    Dann bestimmt seine eigene Teilung [nx, ny, nz] die Elementzahl, und die
+    Netzdichte (Ziellaenge) wirkt an ihm nicht. Das Protokoll der Netzdichte
+    fragt hier nach, damit es keine Elementzahl ankuendigt, die nicht entsteht
+    (Befund C3 der Pruefagenten, 09.11.2026). Die Bedingungen sind dieselben
+    wie dort; geaendert wird hier nichts."""
+    if getattr(koerper, "ordnung", None) == 2:
+        return False                    # tet10: freier Vernetzer (Anweisung V1)
+    flaechen = [model.flaechen.get(x) for x in (koerper.flaechen or [])]
+    if len(flaechen) != 6 or any(f is None for f in flaechen):
+        return False
+    try:
+        ringe = [f.randknoten(model) for f in flaechen]
+        knoten = {n for r in ringe for n in r}
+        if len(knoten) != 8 or any(len(r) != 4 for r in ringe):
+            return False
+        from .importers.rfem6_db import _hex_order, _hex_volumen
+        order = _hex_order(ringe)
+        if not order or not _gerade_kanten(model, koerper, order):
+            return False
+        entartetes_volumen, _ohne = _entartungspruefung()
+        X = model.nodes[order]
+        return not entartetes_volumen(float(_hex_volumen(X)),
+                                      float(np.linalg.norm(X.max(axis=0) - X.min(axis=0))))
+    except Exception:                   # noqa: BLE001 - im Zweifel die alte Zeile
+        return False
 
 
 # --------------------------------------------------------------------------
@@ -1304,10 +1868,268 @@ def _netz_zuruecksetzen(model: Model, koerper: list, n_el0: int, n_kn0: int,
                     f"({len(model.elements)} statt {n_el0} Elemente, {model.nn} statt {n_kn0} Knoten).")
 
 
+#: Befund A16 der Pruefagenten, Entscheidung des Anwenders vom 09.11.2026:
+#: zwei Koerper mit je einer eigenen, deckungsgleichen Trennflaeche ohne
+#: Kontaktbedingung werden dort als **eine** gemeinsame Flaeche vernetzt
+#: (:func:`koerper_vernetzen`). False vernetzt wie bis zum 09.11.2026 - jede
+#: Flaeche fuer sich, die Koerper haengen nur an den Randlinien zusammen.
+TRENNFLAECHEN_ZUSAMMENLEGEN = True
+
+
+def _kontakt_nennt_trennstelle(model: Model, fa: str, fb: str, ka: str, kb_: str) -> str:
+    """Name der Kontaktbedingung, die die Trennstelle nennt - "" ohne.
+
+    Genannt ist die Stelle, wenn eine Bedingung eine der beiden Flaechen
+    fuehrt (freigegebene Flaechen oder Gegenflaechen) oder die beiden Koerper
+    als geloesten Koerper und Gegenkoerper - die Eingabe nur mit Koerpern, die
+    fugen.kontaktfuge_ausfuehren seit dem 09.11.2026 ausfuehrt (Befund A17).
+    Eine in der Quelldatei deaktivierte Bedingung nennt die Stelle auch: was
+    der Anwender als Fuge angelegt hat, wird nicht still zum Verbund."""
+    for name, kb in (getattr(model, "kontaktbedingungen", None) or {}).items():
+        fl = set(getattr(kb, "flaechennamen", None) or []) | set(getattr(kb, "gegenflaechen", None) or [])
+        if fa in fl or fb in fl:
+            return str(name)
+        los = set(getattr(kb, "koerpernamen", None) or [])
+        gegen = set(getattr(kb, "gegenkoerper", None) or [])
+        if (ka in los and kb_ in gegen) or (kb_ in los and ka in gegen):
+            return str(name)
+    return ""
+
+
+def trennstellen(model: Model) -> list:
+    """Die Stellen, an denen zwei Koerper je eine **eigene** Flaeche ueber
+    denselben Randlinien (und Oeffnungen) haben - deckungsgleiche
+    Trennflaechen (Befund A16 der Pruefagenten, 09.11.2026).
+
+    Je Stelle ein Woerterbuch: ``flaechen`` (fa, fb), ``koerper`` (ka, kb) -
+    fa gehoert ka, fb gehoert kb -, ``kontakt`` (Name der Kontaktbedingung,
+    die die Stelle nennt, sonst "") und ``hindernis`` (warum die beiden
+    Flaechen nicht als eine vernetzt werden koennen, sonst ""). Dieselbe
+    Liste lesen der Vernetzer (:func:`koerper_vernetzen`) und die Abnahme
+    (diagnose._abnahme_deckungsgleiche_flaechen)."""
+    koerper = getattr(model, "koerper", None) or {}
+    flaechen = getattr(model, "flaechen", None) or {}
+    if len(koerper) < 2:
+        return []
+    je_rand: dict = {}
+    for k in koerper.values():
+        for fn in dict.fromkeys(k.flaechen or []):
+            f = flaechen.get(fn)
+            if f is None or not (f.linien or []):
+                continue
+            rand = (frozenset(f.linien),
+                    frozenset(frozenset(o) for o in (getattr(f, "oeffnungen", None) or [])))
+            je_rand.setdefault(rand, []).append((fn, k.name))
+    aus = []
+    for liste in je_rand.values():
+        if len({fn for fn, _k in liste}) < 2:
+            continue
+        for i, (fa, ka) in enumerate(liste):
+            for fb, kb_ in liste[i + 1:]:
+                if fa == fb or ka == kb_:
+                    continue
+                hindernis = ""
+                if len(liste) != 2:
+                    hindernis = (f"an der Stelle liegen {len(liste)} Körperflächen über denselben Randlinien, "
+                                 "nicht zwei")
+                else:
+                    a, b = flaechen[fa], flaechen[fb]
+                    if (a.typ or "eben") != (b.typ or "eben"):
+                        hindernis = f"die Flächen haben verschiedene Geometriearten ({a.typ} und {b.typ})"
+                    elif (set(getattr(a, "integrierte_knoten", None) or [])
+                          != set(getattr(b, "integrierte_knoten", None) or [])
+                          or set(getattr(a, "integrierte_linien", None) or [])
+                          != set(getattr(b, "integrierte_linien", None) or [])):
+                        hindernis = "die Flächen haben verschiedene integrierte Knoten oder Linien"
+                    elif a.ecken and b.ecken and set(a.ecken) != set(b.ecken):
+                        hindernis = "die Flächen haben verschiedene Eckknoten"
+                aus.append({"flaechen": (fa, fb), "koerper": (ka, kb_),
+                            "kontakt": _kontakt_nennt_trennstelle(model, fa, fb, ka, kb_),
+                            "hindernis": hindernis})
+    return aus
+
+
+def trennstelle_knoten(model: Model, flaeche: str, koerper: str) -> set:
+    """Die Knoten der Elementseiten des Koerpers, die auf der Flaeche liegen
+    (aus ``Flaeche.randseiten``; Ecken und Seitenmitten)."""
+    from .elements import solid as sl
+    f = (getattr(model, "flaechen", None) or {}).get(flaeche)
+    k = (getattr(model, "koerper", None) or {}).get(koerper)
+    if f is None or k is None:
+        return set()
+    els = {int(e) for e in (k.elemente or [])}
+    knoten: set = set()
+    for e, seite in (f.randseiten or []):
+        e = int(e)
+        if e not in els or not 0 <= e < len(model.elements):
+            continue
+        el = model.elements[e]
+        seiten = sl.FLAECHEN.get(el.typ)
+        if seiten and 0 <= int(seite) < len(seiten):
+            knoten.update(int(el.nodes[j]) for j in seiten[int(seite)])
+    return knoten
+
+
+def trennstelle_getrennt(model: Model, stelle: dict) -> bool:
+    """Ist das **vorhandene** Netz an der Trennstelle getrennt - beide Koerper
+    vernetzt, aber ihre Seiten auf den beiden Flaechen haben nicht dieselben
+    Knoten? Ohne Netz in einem der beiden Koerper ist nichts getrennt."""
+    (fa, fb), (ka, kb_) = stelle["flaechen"], stelle["koerper"]
+    koerper = getattr(model, "koerper", None) or {}
+    if not (getattr(koerper.get(ka), "elemente", None) and getattr(koerper.get(kb_), "elemente", None)):
+        return False
+    na = trennstelle_knoten(model, fa, ka)
+    nb = trennstelle_knoten(model, fb, kb_)
+    return not na or na != nb
+
+
+def _trennstellen_des_laufs(model: Model, koerper: list, log: list = None) -> list:
+    """Die Trennstellen, die dieser Lauf als eine gemeinsame Flaeche vernetzt:
+    ohne Kontaktbedingung, ohne Hindernis, beide Koerper im Lauf. Was aus den
+    letzten beiden Gruenden getrennt bleibt, steht im Protokoll."""
+    from .importers import _common as C
+    im_lauf = {k.name for k in koerper}
+    aus = []
+    belegt: set = set()
+    for s in trennstellen(model):
+        (fa, fb), (ka, kb_) = s["flaechen"], s["koerper"]
+        if s["kontakt"] or not (ka in im_lauf or kb_ in im_lauf):
+            continue
+        grund = s["hindernis"]
+        if not grund and not (ka in im_lauf and kb_ in im_lauf):
+            fehlt = kb_ if ka in im_lauf else ka
+            grund = f"der Körper {fehlt} wird in diesem Lauf nicht mit vernetzt"
+        if not grund and (fa in belegt or fb in belegt):
+            grund = "eine der beiden Flächen ist schon mit einer anderen zusammengelegt"
+        if grund:
+            C.warn(log, f"Trennfläche nicht zusammengelegt: Die Körper {ka} und {kb_} haben an derselben Stelle "
+                        f"je eine eigene Fläche ({fa} und {fb}) ohne Kontaktbedingung, aber {grund}. Die Körper "
+                        "bleiben dort nur über die Randlinien verbunden.")
+            continue
+        belegt.update((fa, fb))
+        aus.append(s)
+    return aus
+
+
+def _randseiten_aufteilen(model: Model, stellen: list) -> None:
+    """Nach dem Vernetzen als eine Flaeche: die Elementseiten des zweiten
+    Koerpers stehen bei der Flaeche des ersten - sie gehen an seine eigene
+    Flaeche zurueck, damit Lasten, Lager und Kontakt auf jeder der beiden
+    Flaechen ihre Seiten finden wie bisher."""
+    for s in stellen:
+        (fa, fb), (_ka, kb_) = s["flaechen"], s["koerper"]
+        a, b = model.flaechen.get(fa), model.flaechen.get(fb)
+        k = model.koerper.get(kb_)
+        if a is None or b is None or k is None:
+            continue
+        els = {int(e) for e in (k.elemente or [])}
+        zu_b = [x for x in (a.randseiten or []) if int(x[0]) in els]
+        if not zu_b:
+            continue
+        a.randseiten = [x for x in a.randseiten if int(x[0]) not in els]
+        b.randseiten = [x for x in (b.randseiten or []) if int(x[0]) not in els] + zu_b
+
+
 def koerper_vernetzen(model: Model, koerper, hs: dict = None, log: list = None,
                       cache: dict = None, workers: int = None, fortschritt=None,
                       gewicht: dict = None, ordnung: int = 0, stufen=None,
                       hs_fuer=None) -> dict:
+    """Mehrere Volumenkoerper vernetzen - der gemeinsame Einstieg der
+    Oberflaeche und von :func:`modell_vernetzen` (Befehlszeile, Skripte).
+
+    Die Arbeit macht :func:`_koerper_vernetzen_grenze` (mit der Grenze in
+    Unbekannten, dort beschrieben). Hier liegen die **deckungsgleichen
+    Trennflaechen** (Befund A16 der Pruefagenten, Entscheidung des Anwenders
+    vom 09.11.2026): haben zwei Koerper je eine eigene Flaeche ueber denselben
+    Randlinien und nennt keine Kontaktbedingung die Stelle
+    (:func:`trennstellen`), werden beide als **eine** gemeinsame Flaeche
+    vernetzt - gemeinsame Knoten wie an einer Flaeche, die beiden Koerpern
+    gehoert. Bis dahin teilten sich solche Koerper nur die Knoten der
+    Randlinien (die Knoten im Flaecheninneren sind je Flaechenname gemeinsam),
+    und zwei Wuerfel uebereinander unter Zug verformten sich 52 % mehr als ein
+    Block.
+
+    Die Geometrie bleibt, wie sie ist: nur fuer die Dauer des Vernetzens steht
+    in der Flaechenliste des zweiten Koerpers die Flaeche des ersten - so
+    greift alles, was es fuer gemeinsame Flaechen gibt (abgebildeter Quader,
+    Sweep, freies Netz, Arbeitsprozesse, Netzkarten). Danach ist die Liste
+    wieder die alte, und die Elementseiten des zweiten Koerpers stehen bei
+    seiner eigenen Flaeche. Jede zusammengelegte Stelle steht mit Namen im
+    Protokoll. Haben die beiden Seiten danach **nicht** dieselben Knoten
+    (zwei abgebildete Quader mit verschiedener Teilung), wird das Netz
+    zurueckgenommen und ohne diese Stelle neu erzeugt - getrennt wie bisher,
+    und das Protokoll sagt, warum. ``aus["zusammengelegt"]`` nennt die
+    Stellen als (Flaeche, Flaeche, Koerper, Koerper).
+    """
+    cache = {} if cache is None else cache
+    koerper = list(koerper)
+
+    def lauf():
+        return _koerper_vernetzen_grenze(model, koerper, hs=hs, log=log, cache=cache, workers=workers,
+                                         fortschritt=fortschritt, gewicht=gewicht, ordnung=ordnung,
+                                         stufen=stufen, hs_fuer=hs_fuer)
+    stellen = _trennstellen_des_laufs(model, koerper, log) if TRENNFLAECHEN_ZUSAMMENLEGEN else []
+    if not stellen:
+        return lauf()
+    import copy
+    from .importers import _common as C
+    n_el0, n_kn0 = len(model.elements), int(model.nn)
+    cache0 = copy.deepcopy(cache) if cache else {}
+    while True:
+        # Geometrie nur leihweise aendern: die Flaechenliste des zweiten Koerpers
+        alt = []
+        for s in stellen:
+            fa, fb = s["flaechen"]
+            k = model.koerper[s["koerper"][1]]
+            alt.append((k, k.flaechen))
+            k.flaechen = [fa if fn == fb else fn for fn in k.flaechen]
+        try:
+            aus = lauf()
+        finally:
+            for k, liste in reversed(alt):
+                k.flaechen = liste
+        _randseiten_aufteilen(model, stellen)
+        if aus.get("abgebrochen"):
+            return aus
+        passt, passt_nicht = [], []
+        for s in stellen:
+            (fa, fb), (ka, kb_) = s["flaechen"], s["koerper"]
+            if not (model.koerper[ka].elemente and model.koerper[kb_].elemente):
+                continue                   # ein Koerper blieb ohne Netz: nichts zu verbinden
+            na, nb = trennstelle_knoten(model, fa, ka), trennstelle_knoten(model, fb, kb_)
+            if na and na == nb:
+                passt.append((s, len(na)))
+            else:
+                passt_nicht.append(s)
+                C.warn(log, f"Trennfläche nicht zusammengelegt: Die Netze der Körper {ka} und {kb_} passen an "
+                            f"den Flächen {fa} und {fb} nicht zusammen (als eine Fläche vernetzt: {len(na)} "
+                            f"Knoten von {ka}, {len(nb)} von {kb_}, {len(na & nb)} gemeinsam). Die Körper "
+                            "werden dort getrennt vernetzt und bleiben nur über die Randlinien verbunden. "
+                            "Für einen durchgehenden Verbund brauchen beide Körper an der Fläche dasselbe "
+                            "Netz (gleiche Teilung, gleiche Elementart), für eine Fuge eine Kontaktbedingung "
+                            "anlegen.")
+        if not passt_nicht:
+            break
+        stellen = [s for s in stellen if s not in passt_nicht]
+        _netz_zuruecksetzen(model, koerper, n_el0, n_kn0, cache, log)
+        cache.update(copy.deepcopy(cache0))
+        if not stellen:
+            return lauf()
+    for s, n in passt:
+        (fa, fb), (ka, kb_) = s["flaechen"], s["koerper"]
+        C.say(log, f"Trennfläche zusammengelegt: Die Körper {ka} und {kb_} haben an derselben Stelle je eine "
+                   f"eigene Fläche ({fa} und {fb}) über denselben Randlinien, und keine Kontaktbedingung nennt "
+                   f"sie. Beide Flächen sind als eine gemeinsame Fläche vernetzt ({n} gemeinsame Knoten); die "
+                   "Geometrie bleibt unverändert. Für eine Fuge eine Kontaktbedingung anlegen.")
+    aus["zusammengelegt"] = [(s["flaechen"][0], s["flaechen"][1], s["koerper"][0], s["koerper"][1])
+                             for s, _n in passt]
+    return aus
+
+
+def _koerper_vernetzen_grenze(model: Model, koerper, hs: dict = None, log: list = None,
+                              cache: dict = None, workers: int = None, fortschritt=None,
+                              gewicht: dict = None, ordnung: int = 0, stufen=None,
+                              hs_fuer=None) -> dict:
     """Mehrere Volumenkoerper vernetzen, mit der Grenze in Unbekannten.
 
     Die Arbeit macht :func:`_koerper_lauf` (unten beschrieben). Hier liegt
@@ -1780,6 +2602,33 @@ def quader_kanten(model: Model, koerper, ecken: list) -> dict:
             aus[(e0, e1)] = lname
             aus[(e1, e0)] = lname
     return aus
+
+
+def quader_teilung(model: Model, koerper, ecken: list) -> tuple:
+    """(Teilung je Quaderrichtung, Achse je Richtung) eines abgebildeten
+    Sechsflaechners mit den Eckknoten ``ecken`` (hex8-Reihenfolge, schon
+    positiv orientiert) - die Richtungen wie in :func:`quader_richtungen`
+    (Ecke 0->1, 0->3, 0->4).
+
+    Die Teilung [nx, ny, nz] gilt in den globalen Achsen x, y, z (Befund A14
+    der Pruefagenten, 09.11.2026). Die Richtungen des Quaders folgen der
+    Reihenfolge seiner Flaechen; bis dahin bekam die erste nx, gleich wohin
+    sie zeigte (Kragarm 2 x 0,1 x 0,2 m mit [2, 3, 5]: 5 x 3 x 2 Elemente,
+    Durchbiegung 74 statt 97 % der Balkenloesung). Jetzt bekommt jede
+    Richtung die Zahl der Achse, der sie am naechsten liegt; zeigen zwei
+    Richtungen zur selben Achse (schiefer Quader), bleibt es bei der
+    Reihenfolge. Vernetzer (:func:`mesh_koerper`) und Lagenvorgabe des Sweeps
+    (sweep.lagenvorgabe) lesen die Teilung hier - bis zum 11.11.2026 las die
+    Lagenvorgabe sie roh in der Flaechenreihenfolge und ueberschrieb die
+    richtig zugeordnete Teilung (Befund 36: [2, 3, 5] wurde 2 x 2 x 4).
+    """
+    teil_xyz = (list(getattr(koerper, "teilung", None) or []) + [4, 4, 4])[:3]
+    teil = list(teil_xyz)
+    Xo = model.nodes[ecken]
+    achsen = [int(np.argmax(np.abs(Xo[j] - Xo[0]))) for j in (1, 3, 4)]
+    if sorted(achsen) == [0, 1, 2]:
+        teil = [int(teil_xyz[a]) for a in achsen]
+    return teil, achsen
 
 
 def quader_richtungen(kanten: dict) -> list:

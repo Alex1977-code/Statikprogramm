@@ -533,8 +533,14 @@ def test_seil_im_export():
     nastran.write_bdf(m, p)
     with open(p, encoding="utf-8", errors="replace") as f:
         t = f.read()
-    zahl = t.count("CBAR    ")
-    check("Nastran: Balken, Fachwerkstab und Seil als Stabelemente", zahl == 3, f"{zahl} CBAR")
+    # (seit 09.11.2026, Befund B4: der Balken ist ein CBAR im Grossfeld, Fachwerkstab
+    # und Seil sind CROD - bis dahin gingen alle drei als biegesteifer CBAR hinaus)
+    karten = [z[:8].rstrip("* ") for z in t.splitlines() if z.startswith(("CBAR", "CROD"))]
+    zahl = len(karten)
+    check("Nastran: Balken, Fachwerkstab und Seil als Stabelemente", zahl == 3,
+          f"{karten.count('CBAR')} CBAR, {karten.count('CROD')} CROD")
+    check("Nastran: der Balken ist ein CBAR, Fachwerkstab und Seil sind CROD",
+          karten.count("CBAR") == 1 and karten.count("CROD") == 2, str(karten))
 
 
 def main():

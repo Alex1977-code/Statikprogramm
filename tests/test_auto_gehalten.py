@@ -155,7 +155,7 @@ def test_kette_wird_gemeldet():
     s = r.summary().splitlines()
     summe = [z for z in s if z.startswith("Summe Auflagerkräfte")]
     check("Summe Auflagerkräfte ohne die automatisch gehaltene Kraft",
-          summe == ["Summe Auflagerkräfte    : [0.0, 0.0, 0.0] N"], str(summe))
+          summe == ["Summe Auflagerkräfte    : [0,0; 0,0; 0,0] N"], str(summe))
     getrennt = [z for z in s if z.startswith("Automatisch gehalten")]
     check("und getrennt genannt",
           len(getrennt) == 1 and "[0.0, 0.0, 1000.0] N" in getrennt[0], str(getrennt))

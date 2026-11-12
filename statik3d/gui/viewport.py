@@ -653,6 +653,16 @@ DARSTELLUNG_SYMBOL = {"Voll": "voll", "Transparent": "transparent",
 KOERPERLICH = ("Voll", "Transparent")
 
 
+#: Deckung der Elementkanten (FE-Netz) in den Darstellungen Voll und
+#: Transparent. Mit voll deckenden Kanten wurde ein fein vernetztes Modell in
+#: der Gesamtansicht schwarz: am Drehlager (854 000 Oberflaechenzellen) liegen
+#: die Kanten dichter als die Bildpunkte, und von Bauteil und Ergebnisfarben
+#: blieb nichts (10.11.2026). Halb deckend mischt sich die Kante mit der
+#: Flaeche darunter - aus der Naehe bleibt das Netz lesbar, von weitem die
+#: Farbe. Die Kantenfarbe selbst bleibt, Hidden-Line zeichnet weiter deckend.
+NETZ_DECKUNG = 0.45
+
+
 def darstellung(modus: str, netz: bool, farbig: bool = False) -> dict:
     """Angaben fuer ``add_mesh`` zu einer Darstellungsart.
 
@@ -666,14 +676,19 @@ def darstellung(modus: str, netz: bool, farbig: bool = False) -> dict:
         # Farben wenig (Saettigung 77 gegen 178 in Voll, Quader-Beispiel
         # 13.09.2026: "im Transparentmodus sehe ich keine Spannungen"); 0,55
         # bringt 104 und laesst Inneres noch durchscheinen
-        return {"opacity": 0.55 if farbig else 0.35, "show_edges": netz}
+        d = {"opacity": 0.55 if farbig else 0.35, "show_edges": netz}
+        if netz:
+            d["edge_opacity"] = NETZ_DECKUNG
+        return d
     if modus == "Hidden-Line":
         d = {"show_edges": True, "edge_color": "#202020", "line_width": 2,
              "lighting": False}
         if not farbig:
             d["color"] = "#ffffff"
         return d
-    return {"show_edges": netz}
+    if netz:
+        return {"show_edges": True, "edge_opacity": NETZ_DECKUNG}
+    return {"show_edges": False}
 
 
 _UNBELEGT_CACHE: dict = {}

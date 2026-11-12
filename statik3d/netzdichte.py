@@ -314,6 +314,18 @@ def anwenden(model, netz, flaechen, koerper, log: list = None) -> dict:
         e = elementlaenge(model, netz, k)
         aus[k.name] = e["h"]
         if log is not None:
+            # Ein abgebildeter Quader folgt seiner eigenen Teilung, nicht der
+            # Netzdichte: die Schaetzung „≈ n Elemente“ (freies Tetraedernetz)
+            # kuendigte dort eine Zahl an, die nie entsteht - 3472 statt 64
+            # (Befund C3 der Pruefagenten, 09.11.2026). Die wirkliche Zahl
+            # nennt der Vernetzer danach („Volumen …: 64 Hexaeder (4 x 4 x 4)“).
+            from .mesher import quader_abgebildet
+            if quader_abgebildet(model, k):
+                t = (list(getattr(k, "teilung", None) or []) + [4, 4, 4])[:3]
+                log.append(f"Netzdichte Volumen {k.name}: abgebildeter Quader – die Teilung des Körpers "
+                           f"({int(t[0])} × {int(t[1])} × {int(t[2])} in x, y, z) ersetzt die Netzdichte; "
+                           f"h = {e['h'] * 1e3:.0f} mm ({e['grund']}) wirkt an diesem Körper nicht")
+                continue
             log.append(f"Netzdichte Volumen {k.name}: h = {e['h'] * 1e3:.0f} mm ({e['grund']}), "
                        f"≈ {e['n']:.0f} Elemente")
     return aus

@@ -93,6 +93,31 @@ def sperrhinweis_erzeugen(offen: list) -> str:
             "„Bemessungslastfall, bereits faktorisiert“ setzen.")
 
 
+def lastfaelle_ohne_regel_en1990(model: Model) -> list:
+    """Die Lastfaelle, fuer deren Einwirkung dieser Generator keine Kombination
+    bildet (Erdbeben, Montage- und Revisionszustand nach DIN 19704) und die
+    kein Bemessungslastfall sind. Bis zum 09.11.2026 fielen sie still aus jeder
+    Kombination (Befund A5)."""
+    from .model import KATEGORIEN_OHNE_EN1990
+    return [n for n, lc in model.load_cases.items()
+            if lc.category in KATEGORIEN_OHNE_EN1990 and not getattr(lc, "faktorisiert", False)]
+
+
+def sperrhinweis_ohne_regel(model: Model, namen: list) -> str:
+    """Der Bedienhinweis dazu (auch die Oberflaeche fragt vor dem Dialog danach)."""
+    from .bridges.din19704 import EINWIRKUNGEN
+    arten = list(dict.fromkeys(
+        EINWIRKUNGEN.get(model.load_cases[n].category, model.load_cases[n].category)
+        for n in namen))
+    return (f"Kombinationen nach EN 1990 lassen sich nicht erzeugen: {lastfaelle_kurz(namen)} "
+            f"({', '.join(arten)}) – für diese Einwirkung bildet der Generator nach EN 1990 keine "
+            "Kombination, der Lastfall fehlte sonst still in der Bemessung.\n"
+            "So geht es weiter: die Kombinationen mit Lasten → „DIN 19704“ bilden (dort steht die "
+            "Einwirkung in der Lastfallklasse LF3) oder von Hand anlegen – oder, wenn die Lasten "
+            "schon Bemessungswerte sind, am Lastfall den Haken „Bemessungslastfall, bereits "
+            "faktorisiert“ setzen.")
+
+
 def generate_combinations(model: Model, uls: bool = True, sls: bool = True,
                           accidental: bool = True, rule: str = None,
                           g_favourable: bool = True, replace: bool = True,
@@ -151,6 +176,11 @@ def generate_combinations(model: Model, uls: bool = True, sls: bool = True,
     offen = model.lastfaelle_ohne_einwirkung()
     if offen:
         raise KombinationGesperrt(sperrhinweis_erzeugen(offen), lastfaelle=offen)
+    # Erdbeben und Montagezustand (DIN 19704): keine Regel in diesem Generator -
+    # ablehnen statt weglassen (Befund A5, 09.11.2026)
+    ohne = lastfaelle_ohne_regel_en1990(model)
+    if ohne:
+        raise KombinationGesperrt(sperrhinweis_ohne_regel(model, ohne), lastfaelle=ohne)
     # erst entwerfen, dann ersetzen: scheitert der Entwurf („Zu viele Kombinationen“),
     # bleibt das Modell, wie es ist
     entwuerfe: list = []
@@ -376,7 +406,13 @@ def _kombinationen_bilden(model: Model, faelle: list, situation: str, uls: bool,
                             f_a[lc.name] = _gamma(lc, ds, False) * lc.psi_factors[0]
                         add("GZT 6.10a", f_a, "ULS", f"6.10a, {gdesc}", begleit=vs, nur="ständig",
                             fav=fav)
-                        f_b = {k: (v * ds.xi if k in gf else v) for k, v in f.items()}
+                        # ξ nur auf die ungünstigen ständigen Lasten (ξ γ_G,sup G_k,sup),
+                        # nicht auf γ_P P, nicht auf Setzungen und nicht auf das günstige
+                        # G (γ_G,inf G_k,inf). Bis zum 09.11.2026 traf ξ jeden ständigen
+                        # Faktor (Befund A6): P und günstiges G mit 0,85 statt 1,0.
+                        mit_xi = set() if fav else {lc.name for lc in perm
+                                                    if lc.category not in ("P", "SET")}
+                        f_b = {k: (v * ds.xi if k in mit_xi else v) for k, v in f.items()}
                         add("GZT 6.10b", f_b, "ULS", f"6.10b Leit {lead.name}, {gdesc}", lead.name,
                             begleit=[lc for lc in vs if lc is not lead], fav=fav)
                     else:

@@ -97,6 +97,16 @@ class Merkmal:
     #: Ergebnis dieses Modells, gleich wie alt; ``vorschlag`` nennt den Weg
     import_korrektur: bool = False
     vorschlag: str = ""
+    #: Korrektur, die erst mit neu erzeugten Kombinationen wirkt (11.11.2026, Befunde 41,
+    #: 42, 44 der Pruefagenten): die alten Faktoren stehen im Modell, ein Neurechnen
+    #: aendert nichts. Die Pruefung am Modell gibt den Text des Status zurueck (wo, und
+    #: was zu tun ist) oder "" - der Status gilt dann unabhaengig vom Alter der
+    #: Ergebnisdatei, auch fuer eine neue Rechnung, bis die Kombinationen neu erzeugt sind
+    im_modell: Optional[Callable[[Any], str]] = field(default=None, repr=False)
+    #: bei einer solchen Korrektur am Modell, die nicht vom Import kommt (Windlasten eines
+    #: aelteren Programmstands, 11.11.2026): warum das Modell betroffen ist; leer heisst
+    #: „Modell vor dem <Datum> aus RFEM übernommen“
+    modellgrund: str = ""
 
     def text(self, wert) -> str:
         return str(self.texte.get(wert, wert))
@@ -177,6 +187,437 @@ def _projiziert_auf_schale(model) -> bool:
                 continue
             f = flaechen.get(str(gl.ziel))
             if f is not None and (getattr(f, "dicke", "") or getattr(f, "elemente", None)):
+                return True
+    return False
+
+
+def _wind_auf_flaechen(model) -> bool:
+    """Eine Windlast des Generators auf Gebaeudeflaechen (Schale oder
+    Volumenrand), die mit einem aelteren Programmstand erzeugt ist - sie wirkt
+    an Schalen gegen den Wind, an Volumen und shell8 mit falschen Rollen
+    (Befunde A1, A2 der Pruefagenten), bis der Anwender sie neu erzeugt.
+    Seit dem 11.11.2026 am Modell, nicht am Alter der Ergebnisdatei: die
+    gespeicherte Last rechnete nach dem Oeffnen weiter verkehrt, und ein
+    Neurechnen loeschte den Status (Befund 40)."""
+    from .wind import alte_windlasten
+    return bool(alte_windlasten(model))
+
+
+def _alte_windlasten_im_ergebnis(model, _analyse) -> str:
+    from .wind import alte_windlasten_text
+    return alte_windlasten_text(model)
+
+
+def _projiziert_negativ_an_volumen(model) -> bool:
+    """Eine Flaechenlast „auf die Projektion“ mit p < 0 an einem Koerper oder einer
+    Koerperrandflaeche - dort traf sie bis zum 09.11.2026 die abgewandte Seite
+    (Befund A3 der Pruefagenten). Schalen sind nicht betroffen."""
+    flaechen = getattr(model, "flaechen", None) or {}
+    for lc in (getattr(model, "load_cases", None) or {}).values():
+        for gl in getattr(lc, "geometrielasten", None) or []:
+            if not getattr(gl, "projiziert", False) or float(getattr(gl, "p", 0.0) or 0.0) >= 0.0:
+                continue
+            if getattr(gl, "art", "flaeche") != "flaeche":
+                return True
+            f = flaechen.get(str(gl.ziel))
+            if f is not None and not (getattr(f, "dicke", "") or getattr(f, "elemente", None)):
+                return True
+    return False
+
+
+def _temperaturunterschied_schale(model) -> bool:
+    """Ein Temperaturunterschied dT_z (oben − unten) auf einer Schale - als Last
+    auf eine Flaeche mit Dicke oder als Elementlast auf ein Schalenelement. Bis
+    zum 09.11.2026 still verworfen (Befund A4 der Pruefagenten)."""
+    from . import elemente as _EL
+    flaechen = getattr(model, "flaechen", None) or {}
+    elemente = getattr(model, "elements", None) or []
+    for lc in (getattr(model, "load_cases", None) or {}).values():
+        for gl in getattr(lc, "geometrielasten", None) or []:
+            if getattr(gl, "lastart", "") != "temperatur" or not float(getattr(gl, "dT_z", 0.0) or 0.0):
+                continue
+            f = flaechen.get(str(gl.ziel)) if getattr(gl, "art", "flaeche") == "flaeche" else None
+            if f is not None and (getattr(f, "dicke", "") or getattr(f, "elemente", None)):
+                return True
+        for tl in getattr(lc, "temp_loads", None) or []:
+            if (float(getattr(tl, "dT_z", 0.0) or 0.0) and 0 <= int(tl.elem) < len(elemente)
+                    and elemente[int(tl.elem)].typ in _EL.SCHALEN_TYPEN):
+                return True
+    return False
+
+
+def _kombination_610b(model) -> bool:
+    """Eine Kombination nach Regel 6.10b - dort traf ξ bis zum 09.11.2026 auch
+    die Vorspannung und das günstige G (Befund A6 der Pruefagenten)."""
+    for c in (getattr(model, "combinations", None) or {}).values():
+        if "6.10b" in str(getattr(c, "description", "") or ""):
+            return True
+    return False
+
+
+def _xi_alte_faktoren(model) -> list:
+    """Die Kombinationen des Generators nach Regel 6.10b (Beschreibung „auto: 6.10b…“),
+    deren gespeicherte Faktoren noch der Regel vor dem 09.11.2026 folgen (Befund 41):
+    eine Vorspannung oder Setzung - in einer Kombination „G günstig“ jede staendige
+    Last - steht nicht mit ihrem γ ohne ξ darin. Erkannt an den Faktoren selbst, nicht
+    am Alter der Datei: erst neu erzeugte Kombinationen tragen die richtigen."""
+    from .combinations import _gamma
+    ds = getattr(model, "design", None)
+    faelle = getattr(model, "load_cases", None) or {}
+    namen = []
+    for name, c in (getattr(model, "combinations", None) or {}).items():
+        desc = str(getattr(c, "description", "") or "")
+        if not desc.startswith("auto") or "6.10b" not in desc:
+            continue
+        guenstig = "G guenstig" in desc or "G günstig" in desc
+        for k, f in (getattr(c, "factors", None) or {}).items():
+            lc = faelle.get(k)
+            if lc is None or getattr(lc, "faktorisiert", False) or not lc.is_permanent:
+                continue
+            if not (guenstig or lc.category in ("P", "SET")):
+                continue
+            soll = _gamma(lc, ds, guenstig)
+            if abs(float(f) - soll) > 1e-6 * max(1.0, abs(soll)):
+                namen.append(str(name))
+                break
+    return namen
+
+
+def _kurz(namen, n: int = 6) -> str:
+    return ", ".join(namen[:n]) + (" …" if len(namen) > n else "")
+
+
+def _xi_im_modell(model) -> str:
+    from .combinations import gehoert_dem_generator
+    namen = _xi_alte_faktoren(model)
+    if not namen:
+        return ""
+    kombis = getattr(model, "combinations", None) or {}
+    hand = [n for n in namen if not gehoert_dem_generator(kombis[n])]
+    return (f"die Kombinationen {_kurz(namen)} tragen noch die Faktoren von vor dem 09.11.2026 "
+            "(ξ auch auf P bzw. das günstige G) – Lasten › „EN 1990…“: die Kombinationen neu erzeugen"
+            + (f" (von Hand geänderte ersetzt der Generator nicht: in {_kurz(hand)} die Faktoren prüfen)"
+               if hand else "") + ", dann neu rechnen")
+
+
+def _xi_im_ergebnis(model, an) -> str:
+    """Gerechnete Kombinationen mit den alten 6.10b-Faktoren."""
+    gerechnet = {str(n) for n in (getattr(an, "combinations", None) or {})}
+    namen = [n for n in _xi_alte_faktoren(model) if n in gerechnet]
+    return ("Kombinationen " + _kurz(namen)) if namen else ""
+
+
+def _en1990_erzeugt(c) -> bool:
+    """Vom Generator nach DIN EN 1990 erzeugt (aus Dateien ohne Fingerabdruck: die
+    Beschreibung „auto…“)."""
+    return (getattr(c, "erzeugt", "") == "EN 1990"
+            or (not getattr(c, "erzeugt", "") and str(getattr(c, "description", "") or "").startswith("auto")))
+
+
+def _din19704_fehlende(model) -> list:
+    """[(Lastfall, Kategorie)] der Lastfaelle mit einer Einwirkung der DIN 19704, die
+    der Generator nach DIN EN 1990 bis zum 09.11.2026 still wegliess (Befund A5 der
+    Pruefagenten), und die noch fehlen - nur in einem Modell mit Kombinationen dieses
+    Generators. Eigengewicht Ausruestung, Wasserdruck, Eis, Schwall, Wind bei
+    Bewegung, Antriebsmoment, Anprall, Verklemmen: in keiner dieser Kombinationen;
+    Erdbeben und Montage (fuer sie bildet er keine Kombination, Befund 44): in keiner
+    Kombination des Modells. Bemessungslastfaelle zaehlen nicht."""
+    from .model import KATEGORIEN_DIN19704_EN1990, KATEGORIEN_OHNE_EN1990
+    kombis = list((getattr(model, "combinations", None) or {}).values())
+    erzeugt = [c for c in kombis if _en1990_erzeugt(c)]
+    if not erzeugt:
+        return []
+
+    def in_keiner(n, liste):
+        return all(abs(float((getattr(c, "factors", None) or {}).get(n, 0.0))) < 1e-12
+                   and not any(abs(float(a.get(n, 0.0))) >= 1e-12 for a in (getattr(c, "alternativen", None) or []))
+                   for c in liste)
+    aus = []
+    for n, lc in (getattr(model, "load_cases", None) or {}).items():
+        kat = getattr(lc, "category", "")
+        if getattr(lc, "faktorisiert", False):
+            continue
+        if (kat in KATEGORIEN_DIN19704_EN1990 and in_keiner(n, erzeugt)) \
+                or (kat in KATEGORIEN_OHNE_EN1990 and in_keiner(n, kombis)):
+            aus.append((str(n), kat))
+    return aus
+
+
+def _din19704_kategorie_fehlt(model) -> bool:
+    """Ein Lastfall mit einer Einwirkung der DIN 19704, der in keiner Kombination des
+    Generators nach DIN EN 1990 steht (Erdbeben, Montage: in keiner Kombination) -
+    :func:`_din19704_fehlende`."""
+    return bool(_din19704_fehlende(model))
+
+
+def _din19704_im_modell(model) -> str:
+    from .model import KATEGORIEN_OHNE_EN1990
+    fehlen = _din19704_fehlende(model)
+    if not fehlen:
+        return ""
+    teile = []
+    gen = [n for n, k in fehlen if k not in KATEGORIEN_OHNE_EN1990]
+    ohne = [f"{n} ({'Erdbeben' if k == 'ERD' else 'Montage'})" for n, k in fehlen if k in KATEGORIEN_OHNE_EN1990]
+    if gen:
+        teile.append(f"{_kurz(gen)} in keiner nach EN 1990 erzeugten Kombination – Lasten › „EN 1990…“: "
+                     "die Kombinationen neu erzeugen, dann neu rechnen")
+    if ohne:
+        teile.append(f"{_kurz(ohne)} in keiner Kombination – die Kombinationen "
+                     "mit Lasten › „DIN 19704“ bilden oder von Hand anlegen, dann neu rechnen")
+    return "; ".join(teile)
+
+
+def _en1990_im_ergebnis(model, an) -> str:
+    """Gerechnete Kombinationen des Generators nach DIN EN 1990."""
+    kombis = getattr(model, "combinations", None) or {}
+    namen = sorted(str(n) for n in (getattr(an, "combinations", None) or {})
+                   if n in kombis and _en1990_erzeugt(kombis[n]))
+    return ("Kombinationen " + _kurz(namen)) if namen else ""
+
+
+def _laminat_gekoppelt_mit_temperatur(model) -> bool:
+    """Eine geschichtete Schale mit Kopplung (unsymmetrischer Aufbau, B != 0)
+    unter gleichmaessiger Temperatur dT - ihre Momente trugen bis zum
+    09.11.2026 den Anteil B alpha dT zu viel (Nebenbefund 14)."""
+    from . import assemble as asm
+    from . import elemente as _EL
+    gekoppelt = set()
+    for name, prop in (getattr(model, "shells", None) or {}).items():
+        try:
+            lam = asm.laminat_von(model, prop)
+        except Exception:        # noqa: BLE001 - unlesbarer Aufbau: nicht betroffen
+            lam = None
+        if lam is not None and float(abs(lam.B).max()) > 1e-9 * float(abs(lam.A).max()) * float(prop.t or 1.0):
+            gekoppelt.add(str(name))
+    if not gekoppelt:
+        return False
+    flaechen = getattr(model, "flaechen", None) or {}
+    elemente = getattr(model, "elements", None) or []
+    for lc in (getattr(model, "load_cases", None) or {}).values():
+        for gl in getattr(lc, "geometrielasten", None) or []:
+            if getattr(gl, "lastart", "") != "temperatur" or not float(getattr(gl, "dT", 0.0) or 0.0):
+                continue
+            f = flaechen.get(str(gl.ziel)) if getattr(gl, "art", "flaeche") == "flaeche" else None
+            if f is not None and str(getattr(f, "dicke", "") or "") in gekoppelt:
+                return True
+        for tl in getattr(lc, "temp_loads", None) or []:
+            if (float(getattr(tl, "dT", 0.0) or 0.0) and 0 <= int(tl.elem) < len(elemente)
+                    and elemente[int(tl.elem)].typ in _EL.SCHALEN_TYPEN
+                    and str(elemente[int(tl.elem)].sec) in gekoppelt):
+                return True
+    return False
+
+
+def _fu_anders_als_bisher(mat, t: float) -> bool:
+    """Liest der Nachweis heute ein anderes f_u als bis zum 09.11.2026? Bisher
+    Material.ultimate_strength (mit f_y und ohne Wert f_u: 1,3 f_y, auch wenn eine
+    Stahlsorte angegeben ist), heute Material.zugfestigkeit_angegeben (Wert, Dicke,
+    Stahlsorte, sonst keins). Verschieden ist es ohne f_u ganz und - Befund 1 der
+    Pruefagenten, 11.11.2026 - bei f_y mit Stahlsorte ohne Wert f_u: dann gilt heute
+    das f_u der Sorte statt 1,3 f_y (Schraubenstab M16, f_y 640, S355: η 1,7346
+    statt 1,0633)."""
+    neu = mat.zugfestigkeit_angegeben(t)
+    alt = float(mat.ultimate_strength(t) or 0.0)
+    return neu is None or abs(float(neu) - alt) > 1e-9 * max(1.0, alt)
+
+
+def _schraubenstab_ohne_fu(model) -> bool:
+    """Ein Stab mit Gewinde (Nachweis als Schraube), dessen Werkstoff f_y, aber
+    keinen Wert f_u angibt - dort rechnete der Nachweis bis zum 09.11.2026 still
+    mit f_ub = 1,3 f_y (Nebenbefund 15), auch neben einer Stahlsorte; jetzt nimmt
+    er das f_u der Sorte oder wird ohne sie nicht gefuehrt (:func:`_fu_anders_als_bisher`)."""
+    from .ec3 import schraubenstab as _ss
+    from .joints.bolts import SIZES
+    for e in getattr(model, "elements", None) or []:
+        if getattr(e, "typ", "") not in ("beam", "beam_shear", "truss", "seil"):
+            continue
+        mat = (getattr(model, "materials", None) or {}).get(e.mat)
+        sec = (getattr(model, "sections", None) or {}).get(e.sec)
+        if mat is None or sec is None or not _ss.ist_schraube(sec, mat):
+            continue
+        d = SIZES[_ss.schraubengroesse(sec)][0] * 1e-3
+        if mat.yield_strength(d) and _fu_anders_als_bisher(mat, d):
+            return True
+    return False
+
+
+def _stab_mit_versatz(model) -> bool:
+    """Ein Stabelement mit Versatz der Stabenden (Exzentrizitaet) - seine
+    geometrische Steifigkeit wirkte bis zum 09.11.2026 auf die Knoten statt
+    auf die Stabenden (Nebenbefund 16 b)."""
+    from . import assemble as asm
+    return any(getattr(e, "typ", "") in asm.LINE_TYPES and asm.beam_versatz(e) is not None
+               for e in getattr(model, "elements", None) or [])
+
+
+def _balken_mit_schubflaeche(model) -> bool:
+    """Ein Balkenelement, dessen Querschnitt eine Schubflaeche hat - sein
+    Feldanteil N w nach Theorie II. Ordnung liess bis zum 09.11.2026 die
+    Schubverformung aus (Nebenbefund 16 c)."""
+    schnitte = getattr(model, "sections", None) or {}
+    for e in getattr(model, "elements", None) or []:
+        sec = schnitte.get(e.sec) if getattr(e, "typ", "") in ("beam", "beam_shear") else None
+        if sec is not None and (float(getattr(sec, "Asy", 0.0) or 0.0) > 0
+                                or float(getattr(sec, "Asz", 0.0) or 0.0) > 0):
+            return True
+    return False
+
+
+def _flaechen_teilstellen(model) -> bool:
+    """Schalenflaechen, die sich ohne gemeinsame Linie beruehren (Befund A19):
+    Knoten auf fremder Randlinie oder Randlinie in fremder Flaeche."""
+    try:
+        from . import mesher
+        return bool(mesher.flaechen_teilstellen(model))
+    except Exception:                       # noqa: BLE001
+        return False
+
+
+def _trennflaechen_getrennt(model) -> bool:
+    """Zwei Koerper mit je einer eigenen Trennflaeche ueber denselben Randlinien, ohne
+    Kontaktbedingung, und ein vorhandenes Netz, das dort getrennt ist (Befund A16)."""
+    try:
+        from . import mesher
+        return any(not s["kontakt"] and mesher.trennstelle_getrennt(model, s)
+                   for s in mesher.trennstellen(model))
+    except Exception:                       # noqa: BLE001
+        return False
+
+
+def _zwang_an_feder(model) -> bool:
+    """Eine Zwangsverformung an einem linearen Federlager - dort wirkte sie bis
+    zum 09.11.2026 nicht (Befund A11 der Pruefagenten)."""
+    faelle = [lc for lc in (getattr(model, "load_cases", None) or {}).values()
+              if getattr(lc, "zwangsverformungen", None)]
+    if not faelle:
+        return False
+    from . import supports as sup
+    lin, _ = sup.split(sup.expand(model))
+    federn = {e.index for e in lin if e.typ == "spring" and e.stiffness}
+    starr = {e.index for e in lin if e.typ == "rigid"}
+    for lc in faelle:
+        for zv in lc.zwangsverformungen:
+            for d in zv.dofs:
+                i = 6 * int(zv.node) + int(d)
+                if i in federn and i not in starr:
+                    return True
+    return False
+
+
+def _anschluss_ohne_festigkeit(model) -> bool:
+    """Ein nachzuweisender Anschluss, dessen Werkstoff f_y oder einen Wert f_u nicht
+    angibt - dort rechnete der Nachweis bis zum 09.11.2026 still mit 1,3 f_y bzw.
+    S355 (Befund A23 der Pruefagenten); jetzt nimmt er das f_u der Stahlsorte oder
+    wird nicht gefuehrt (Befund 1, 11.11.2026: f_y mit Sorte, ohne Wert f_u -
+    Lasche S235 f_u 360 statt 305,5 N/mm²)."""
+    elemente = getattr(model, "elements", None) or []
+    for j in (getattr(model, "joints", None) or {}).values():
+        if not getattr(j, "design", True):
+            continue
+        i = int(getattr(j, "elem", -1))
+        if not 0 <= i < len(elemente):
+            continue
+        e = elemente[i]
+        mat = (getattr(model, "materials", None) or {}).get(e.mat)
+        sec = (getattr(model, "sections", None) or {}).get(e.sec)
+        if mat is None or sec is None:
+            continue
+        t = float(getattr(sec, "t_max", 0.0) or 0.0)
+        if not mat.yield_strength(t) or _fu_anders_als_bisher(mat, t):
+            return True
+    return False
+
+
+def _kontakt_nur_koerper(model) -> bool:
+    """Eine Kontaktbedingung, die nur Koerper nennt (geloest und Gegenkoerper, keine
+    Flaechen) - sie blieb bis zum 09.11.2026 unausgefuehrt (Befund A17)."""
+    for kb in (getattr(model, "kontaktbedingungen", None) or {}).values():
+        if (not getattr(kb, "flaechennamen", None) and not getattr(kb, "gegenflaechen", None)
+                and getattr(kb, "koerpernamen", None) and getattr(kb, "gegenkoerper", None)
+                and not getattr(kb, "aus", False)):
+            return True
+    return False
+
+
+def _balken_mit_gelenk(model) -> bool:
+    """Ein Balkenelement (nicht Fachwerkstab, Seil) mit Stabendgelenk oder
+    Federgelenk - seine geometrische Steifigkeit war bis zum 09.11.2026 nicht
+    kondensiert (Befund A7)."""
+    for e in getattr(model, "elements", None) or []:
+        if getattr(e, "typ", "") in ("beam", "beam_shear") and (e.hinges or getattr(e, "hinge_springs", None)):
+            return True
+    return False
+
+
+def _balken(model) -> bool:
+    """Ein Balkenelement (nicht Fachwerkstab, Seil) - seine Schnittgroessen nach
+    Theorie II. Ordnung hatten bis zum 09.11.2026 keinen Anteil k_G u und N w (A8)."""
+    return any(getattr(e, "typ", "") in ("beam", "beam_shear") for e in getattr(model, "elements", None) or [])
+
+
+def _gelenk_feder_null(model) -> bool:
+    """Ein Gelenk mit Federsteifigkeit 0, auf Elemente gelegt (Befund A10)."""
+    for h in (getattr(model, "hinges", None) or {}).values():
+        if not getattr(h, "elemente", None):
+            continue
+        if any(t == "spring" and not float(k) > 0 for t, k in zip(h.typ, h.stiffness)):
+            return True
+    return False
+
+
+def _theorie2_gerechnet_im_ergebnis(model, an) -> str:
+    """Ergebnisse, die nach Theorie II. Ordnung gerechnet sind (nicht nur alpha_cr)."""
+    th2 = getattr(an, "theorie2", None)
+    namen = [str(n) for n, i in (getattr(th2, "kombinationen", None) or {}).items()
+             if getattr(i, "gerechnet", False)]
+    for n, r in _ergebnis_paare(an):
+        if str((getattr(r, "info", None) or {}).get("theorie", "")).startswith("II."):
+            namen.append(str(n))
+    namen = sorted(set(namen))
+    return ("Theorie II. Ordnung: " + ", ".join(namen[:6]) + (" …" if len(namen) > 6 else "")) if namen else ""
+
+
+def _balken_teilbar(model) -> bool:
+    """Ein Balken, den die interne Stabteilung teilt (statik3d.stabteilung,
+    12.11.2026) - bis dahin rechnete Theorie II./III. Ordnung ihn in seinen
+    Elementen, mit einem Element je Stab ohne Anteil N w bei gehaltenen Enden."""
+    try:
+        from .stabteilung import teilzahlen
+        return bool(teilzahlen(model))
+    except Exception:                       # noqa: BLE001 - Pruefung, nie Abbruch
+        return False
+
+
+def _theorie2_oder_3_im_ergebnis(model, an) -> str:
+    teile = [t for t in (_theorie2_gerechnet_im_ergebnis(model, an), _theorie3_im_ergebnis(model, an)) if t]
+    return "; ".join(teile)
+
+
+def _schalen(model) -> bool:
+    """Ein Schalenelement - seine Komponenten sigma_x, n_x, m_x standen bis zum
+    09.11.2026 in Elementachsen (Befund A20)."""
+    return any(str(getattr(e, "typ", "")).startswith("shell") for e in getattr(model, "elements", None) or [])
+
+
+def _quader_teilung_ungleich(model) -> bool:
+    """Ein Koerper mit einer Teilung, die nicht in allen Richtungen gleich ist (A14)."""
+    for k in (getattr(model, "koerper", None) or {}).values():
+        t = list(getattr(k, "teilung", None) or [])
+        if len(set(int(x) for x in t[:3])) > 1:
+            return True
+    return False
+
+
+def _druck_quadratische_seiten(model) -> bool:
+    """Eine Flaechenlast senkrecht auf eine Seite eines quadratischen
+    Volumenelements (A15: bis 09.11.2026 laengs der Eckennormale)."""
+    quad = {i for i, e in enumerate(getattr(model, "elements", None) or [])
+            if getattr(e, "typ", "") in ("tet10", "hex20", "pent15")}
+    if not quad:
+        return False
+    for lc in (getattr(model, "load_cases", None) or {}).values():
+        for fl in getattr(lc, "face_loads", None) or []:
+            if int(getattr(fl, "elem", -1)) in quad and getattr(fl, "direction", None) is None:
                 return True
     return False
 
@@ -422,8 +863,9 @@ def _alpha_cr_im_ergebnis(an, _an2=None) -> str:
     komb = getattr(th2, "kombinationen", None) or {}
     namen = [str(n) for n, i in komb.items() if getattr(i, "alpha_cr", None) is not None]
     for n, r in (_ergebnis_paare(an)):
-        if getattr(r, "kind", "") == "buckling" or str((getattr(r, "info", None) or {}).get("theorie", "")
-                                                       ).startswith("II"):
+        th = str((getattr(r, "info", None) or {}).get("theorie", ""))
+        # „III. Ordnung“ beginnt auch mit „II“ - Theorie III ist nicht gemeint (Befund 45)
+        if getattr(r, "kind", "") == "buckling" or (th.startswith("II") and not th.startswith("III")):
             namen.append(str(n))
     namen = sorted(set(namen))
     return ("alpha_cr bzw. Theorie II. Ordnung: " + ", ".join(namen[:6]) + (" …" if len(namen) > 6 else "")
@@ -769,6 +1211,285 @@ MERKMALE: list = [
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Flächenlast auf die Projektion an einer Schale", betrifft=_projiziert_auf_schale),
     Merkmal(
+        # Befunde A1/A2 der Pruefagenten (09.11.2026): der Windgenerator gab fuer Schalen p
+        # „gegen die Aussennormale“, die Schalenlast wirkt mit der Elementnormalen - Luvdruck,
+        # Leesog und Dachsog wirkten gegen den Wind (Gebaeude 10 x 20 x 8 m: ΣF −135/−127
+        # statt +135/+127 kN); an Volumen und shell8 waren alle Flaechen „Seite“. Fehlerkorrektur.
+        # Seit dem 11.11.2026 (Befund 40, fix/k-wind) eine Korrektur am Modell: die Last steht mit
+        # dem Modell in der Datei und rechnet nach dem Oeffnen und jedem Neurechnen weiter
+        # verkehrt - der Status haengt an den Windlasten ohne Aussenseite und bleibt, bis sie
+        # neu erzeugt sind (wind.alte_windlasten); dazu ein Ladehinweis
+        name="wind_flaechen", titel="Windlast auf Flächen",
+        texte={"alt": "Wind an Schalen gegen die Windrichtung, an Volumen und shell8 ohne Rollen",
+               "neu": "Wind in die Hülle hinein (Druck) bzw. heraus (Sog), Außenseite je Fläche aus der "
+                      "Mitte ihres Baukörpers, Rollen an allen Flächen"},
+        wechsel=(Wechsel(stand=8, datum="09.11.2026", commit="1b213f9, fix/k-wind", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Windlast des Generators auf Gebäudeflächen, mit einem älteren Programmstand erzeugt "
+                      "(ohne Außenseite)",
+        betrifft=_wind_auf_flaechen, import_korrektur=True, im_ergebnis=_alte_windlasten_im_ergebnis,
+        modellgrund="Windlasten mit einem älteren Programmstand erzeugt",
+        vorschlag="Lasten › Wind: den Wind öffnen und die Windlasten neu erzeugen"),
+    Merkmal(
+        # Befund A3 der Pruefagenten (09.11.2026): der Windschatten der projizierten Last nahm
+        # die Achse ohne das Vorzeichen von p - „global Z, p = −5 kN/m²“ traf am Block die
+        # Unterseite statt das Dach. Summe gleich, Angriffspunkt falsch. Fehlerkorrektur
+        name="projiziert_vorzeichen", titel="Projizierte Flächenlast mit negativem Wert an Volumen",
+        texte={"alt": "Last trifft die der Kraft abgewandte Seite",
+               "neu": "Last trifft die der Kraft p · d zugewandte Seite"},
+        wechsel=(Wechsel(stand=9, datum="09.11.2026", commit="fix/netz-alt-pruefen", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Flächenlast auf die Projektion mit negativem Wert an einem Körper",
+        betrifft=_projiziert_negativ_an_volumen),
+    Merkmal(
+        # Befund A4 der Pruefagenten (09.11.2026): die Schale trug nur den gleichmaessigen
+        # Anteil ΔT, ΔT_z wurde still verworfen (Kragstreifen 0 statt 12 mm). Jetzt die
+        # Anfangskruemmung α ΔT_z / t in Last und Momentenrueckrechnung. Fehlerkorrektur
+        name="temperatur_schale_dTz", titel="Temperaturunterschied oben − unten auf Schalen",
+        texte={"alt": "ΔT_z auf Schalen ohne Wirkung",
+               "neu": "ΔT_z auf Schalen als Krümmung α · ΔT_z / t"},
+        wechsel=(Wechsel(stand=10, datum="09.11.2026", commit="fix/netz-alt-pruefen", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Temperaturunterschied ΔT_z auf einer Schale",
+        betrifft=_temperaturunterschied_schale),
+    Merkmal(
+        # Befund A6 der Pruefagenten (09.11.2026): Regel 6.10b nahm ξ = 0,85 auf jeden
+        # staendigen Faktor, auch auf γ_P und auf das guenstige G (beides 0,85 statt 1,0,
+        # auf der unsicheren Seite). Fehlerkorrektur
+        name="kombination_xi", titel="Abminderungsbeiwert ξ in Regel 6.10b",
+        texte={"alt": "ξ auf alle ständigen Lasten, auch P und günstiges G",
+               "neu": "ξ nur auf ungünstige ständige Lasten (ξ · γ_G,sup)"},
+        wechsel=(Wechsel(stand=11, datum="09.11.2026", commit="fix/netz-alt-pruefen", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Kombination nach Regel 6.10b",
+        # Befund 41 (11.11.2026): die Faktoren stehen in den gespeicherten Kombinationen;
+        # erst neu erzeugte sind richtig - Status am Modell, bis dahin auch nach dem Neurechnen
+        betrifft=_kombination_610b, im_modell=_xi_im_modell, im_ergebnis=_xi_im_ergebnis,
+        vorschlag="Lasten › „EN 1990…“: die Kombinationen neu erzeugen, dann neu rechnen"),
+    Merkmal(
+        # Befund A11 der Pruefagenten (09.11.2026): eine Zwangsverformung wirkte nur an
+        # starren gesperrten FHG; an einer Feder blieb sie still ohne Wirkung. Jetzt
+        # verschiebt sie den Fusspunkt der Feder (Kraft k (u − d)). Fehlerkorrektur
+        name="zwang_feder", titel="Zwangsverformung an Federlagern",
+        texte={"alt": "Zwangsverformung an einer Feder ohne Wirkung",
+               "neu": "Zwangsverformung verschiebt den Fußpunkt der Feder"},
+        wechsel=(Wechsel(stand=12, datum="09.11.2026", commit="fix/netz-alt-pruefen", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Zwangsverformung an einem Federlager",
+        betrifft=_zwang_an_feder),
+    Merkmal(
+        # Befund A23 der Pruefagenten (09.11.2026): ohne f_u rechnete der Anschlussnachweis
+        # still mit 1,3 f_y, ganz ohne Festigkeiten mit S355 (Lasche η 1,048 -> 1,573).
+        # Festlegung des Anwenders: Meldung statt Vorgabewert. Fehlerkorrektur
+        name="anschluss_festigkeit", titel="Festigkeiten im Anschlussnachweis",
+        texte={"alt": "fehlendes f_u als 1,3 f_y (auch neben einer Stahlsorte), fehlende Festigkeiten als S355",
+               "neu": "f_y und f_u aus dem Wert oder der Stahlsorte, ohne sie kein Anschlussnachweis, mit Meldung"},
+        wechsel=(Wechsel(stand=13, datum="09.11.2026", commit="fix/netz-alt-pruefen", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Anschluss mit Werkstoff ohne f_y oder ohne Wert f_u",
+        betrifft=_anschluss_ohne_festigkeit),
+    Merkmal(
+        # Befund A17 der Pruefagenten (09.11.2026): eine Kontaktbedingung nur mit Koerpern
+        # blieb unausgefuehrt; mit einer zweiten Halterung lief die Last still daran vorbei.
+        # Jetzt sind die Flaechen der Gegenkoerper die Gegenseite. Fehlerkorrektur
+        name="kontakt_nur_koerper", titel="Kontaktbedingung nur mit Körpern",
+        texte={"alt": "Kontaktbedingung nur mit Körpern nicht ausgeführt",
+               "neu": "Fuge = Seiten des gelösten Körpers auf den Gegenkörpern"},
+        wechsel=(Wechsel(stand=14, datum="09.11.2026", commit="fix/netz-alt-pruefen", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Kontaktbedingung, die nur Körper nennt",
+        betrifft=_kontakt_nur_koerper),
+    # Befund A7 der Pruefagenten (09.11.2026): die geometrische Steifigkeit
+    # eines Balkens mit Stabendgelenk war nicht kondensiert - Pendelstuetze als
+    # Balken alpha_cr 1,667 statt 2,000, gezogener Gelenkstab bis +37 %.
+    # Jetzt K_G = C^T k_G C wie die elastische Steifigkeit. Fehlerkorrektur
+    Merkmal(
+        name="theorie2_gelenke", titel="Geometrische Steifigkeit an Stabendgelenken",
+        texte={"alt": "K_G eines Balkens ohne Rücksicht auf seine Gelenke",
+               "neu": "K_G kondensiert wie die elastische Steifigkeit"},
+        wechsel=(Wechsel(stand=15, datum="09.11.2026", commit="fix/theorie2-gruppe3", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Balken mit Stabendgelenk oder Federgelenk, mit alpha_cr, Knicken oder Theorie II. Ordnung",
+        betrifft=_balken_mit_gelenk, im_ergebnis=_alpha_cr_im_ergebnis),
+    # Befund A8 (09.11.2026): Stabend- und Feldmomente nach Theorie II.
+    # Ordnung ohne k_G u und ohne N w (Kragarm +7,9 %, Feld bis -35 % bei einem
+    # Element). Fehlerkorrektur
+    Merkmal(
+        name="theorie2_schnittgroessen", titel="Schnittgrößen nach Theorie II. Ordnung",
+        texte={"alt": "Stabendkräfte k u, Feld ohne N·w",
+               "neu": "Stabendkräfte (k + k_G) u, Feld mit N·w"},
+        wechsel=(Wechsel(stand=16, datum="09.11.2026", commit="fix/theorie2-gruppe3", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Balken, nach Theorie II. Ordnung gerechnet",
+        betrifft=_balken, im_ergebnis=_theorie2_gerechnet_im_ergebnis),
+    # Befund A10 (09.11.2026): ein Federgelenk mit k = 0 wirkte biegesteif
+    # (Skript, Web). Jetzt ist es ein Gelenk; aeltere Dateien ziehen es beim
+    # Oeffnen nach (Model._gelenke_feder_null_nachziehen). Fehlerkorrektur
+    Merkmal(
+        name="gelenk_feder_null", titel="Federgelenk mit Steifigkeit 0",
+        texte={"alt": "Federgelenk mit k = 0 biegesteif", "neu": "Federgelenk mit k = 0 gelenkig"},
+        wechsel=(Wechsel(stand=17, datum="09.11.2026", commit="fix/theorie2-gruppe3", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Gelenk mit Federsteifigkeit 0",
+        betrifft=_gelenk_feder_null),
+    # Befund A20 (09.11.2026): sigma_x, sigma_y, tau_xy, n_x, m_x der Flaechen
+    # in Elementachsen (erste Kante), so auf die Knoten gemittelt. Jetzt im
+    # Flaechensystem (x = globale X-Achse in der Ebene). Fehlerkorrektur
+    Merkmal(
+        name="flaechen_achsen", titel="Achsen der Flächenspannungen",
+        texte={"alt": "Komponenten in Elementachsen (erste Kante)",
+               "neu": "Komponenten im Flächensystem (x = globale X-Achse in der Ebene)"},
+        wechsel=(Wechsel(stand=18, datum="09.11.2026", commit="fix/theorie2-gruppe3", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Schalenelemente", betrifft=_schalen),
+    # Befund A14 (09.11.2026): Teilung [nx, ny, nz] eines abgebildeten Quaders
+    # in der Reihenfolge seiner Flaechen statt in x, y, z. Fehlerkorrektur
+    Merkmal(
+        name="quader_teilung_achsen", titel="Teilung des abgebildeten Quaders",
+        texte={"alt": "Teilung in der Reihenfolge der Flächen", "neu": "Teilung in x, y, z"},
+        wechsel=(Wechsel(stand=19, datum="09.11.2026", commit="fix/theorie2-gruppe3", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Körper mit ungleicher Teilung", betrifft=_quader_teilung_ungleich),
+    # Befund A15 (09.11.2026): Druck auf gekruemmten quadratischen
+    # Volumenseiten laengs der Eckennormale. Fehlerkorrektur
+    Merkmal(
+        name="flaechenlast_gekruemmt", titel="Flächenlast auf gekrümmten Volumenseiten",
+        texte={"alt": "Druck längs der Normale der Ecken", "neu": "Druck längs der örtlichen Normale"},
+        wechsel=(Wechsel(stand=20, datum="09.11.2026", commit="fix/theorie2-gruppe3", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Flächenlast senkrecht auf quadratische Volumenelemente",
+        betrifft=_druck_quadratische_seiten),
+    # Befund A5 (09.11.2026): der Generator nach DIN EN 1990 kannte die
+    # Einwirkungen der DIN 19704 nicht und liess solche Lastfaelle still aus
+    # jeder Kombination. Fehlerkorrektur; beheben heisst hier: Kombinationen
+    # neu erzeugen, dann neu rechnen
+    Merkmal(
+        name="kategorien_din19704", titel="Einwirkungen der DIN 19704 im Generator nach EN 1990",
+        texte={"alt": "Lastfälle mit Einwirkungen der DIN 19704 fehlen in den erzeugten Kombinationen",
+               "neu": "G_A, W_S ständig; W_V, Eis, Schwall, Wind bei Bewegung, Antriebsmoment "
+                      "veränderlich; Anprall, Verklemmen außergewöhnlich"},
+        wechsel=(Wechsel(stand=21, datum="09.11.2026", commit="fix/befunde-rest", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Lastfall mit einer Einwirkung der DIN 19704, der in keiner nach EN 1990 "
+                      "erzeugten Kombination steht (Erdbeben, Montage: in keiner Kombination)",
+        # Befunde 42 und 44 (11.11.2026): Status am Modell, bis die Kombinationen neu
+        # erzeugt sind - ein Neurechnen allein aendert nichts
+        betrifft=_din19704_kategorie_fehlt, im_modell=_din19704_im_modell, im_ergebnis=_en1990_im_ergebnis,
+        vorschlag="Lasten › „EN 1990…“: die Kombinationen neu erzeugen, dann neu rechnen"),
+    # Nebenbefund 14 (09.11.2026): die Rueckrechnung der Schalenmomente zog
+    # bei einem Laminat mit Kopplung (B != 0) den Anteil B alpha dT nicht ab -
+    # die frei gedehnte Platte zeigte ein Moment. Fehlerkorrektur
+    Merkmal(
+        name="laminat_temperatur", titel="Momente geschichteter Schalen unter Temperatur",
+        texte={"alt": "Momente mit dem Anteil B·α·ΔT zu viel", "neu": "Momente ohne den Anteil B·α·ΔT"},
+        wechsel=(Wechsel(stand=22, datum="09.11.2026", commit="fix/befunde-rest", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="geschichtete Schale mit unsymmetrischem Aufbau unter Temperaturänderung",
+        betrifft=_laminat_gekoppelt_mit_temperatur),
+    # Nebenbefund 15 (09.11.2026): der Nachweis eines Stabes mit Gewinde nahm
+    # bei einem Werkstoff mit f_y ohne f_u still f_ub = 1,3 f_y. Jetzt Meldung
+    # statt Vorgabewert (Festlegung des Anwenders). Fehlerkorrektur
+    Merkmal(
+        name="schraubenstab_fu", titel="Zugfestigkeit im Nachweis der Stäbe mit Gewinde",
+        texte={"alt": "ohne Wert f_u im Werkstoff mit 1,3·f_y nachgewiesen, auch neben einer Stahlsorte",
+               "neu": "f_u aus dem Wert oder der Stahlsorte, ohne beides kein Nachweis, sondern Meldung"},
+        wechsel=(Wechsel(stand=23, datum="09.11.2026", commit="fix/befunde-rest", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Stab mit Gewinde, dessen Werkstoff f_y, aber keinen Wert f_u angibt",
+        betrifft=_schraubenstab_ohne_fu),
+    # Nebenbefund 16 b (09.11.2026): die geometrische Steifigkeit eines Stabes
+    # mit Versatz wirkte auf die Knoten statt auf die Stabenden - Druckstab
+    # 0,2 m neben der Knotenlinie alpha_cr 1,158 statt 2,000. Fehlerkorrektur
+    Merkmal(
+        name="theorie2_versatz", titel="Geometrische Steifigkeit an Stäben mit Versatz",
+        texte={"alt": "K_G an den Knoten, ohne den Versatz der Stabenden",
+               "neu": "K_G an den Stabenden, mit dem Versatz"},
+        wechsel=(Wechsel(stand=24, datum="09.11.2026", commit="fix/befunde-rest", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Stab mit Versatz der Stabenden, mit alpha_cr, Knicken oder Theorie II. Ordnung",
+        betrifft=_stab_mit_versatz, im_ergebnis=_alpha_cr_im_ergebnis),
+    # Nebenbefund 16 c (09.11.2026): der Feldanteil N w nach Theorie II.
+    # Ordnung liess die Schubdurchbiegung aus - Einfeldtraeger mit
+    # N_E/(G A_s) = 0,1 und Druck 0,6 N_cr in einem Element -12 %. Fehlerkorrektur
+    Merkmal(
+        name="theorie2_feld_schub", titel="Feldmoment nach Theorie II. Ordnung an schubweichen Balken",
+        texte={"alt": "Feldanteil N·w ohne die Schubdurchbiegung",
+               "neu": "Feldanteil N·w mit der Schubdurchbiegung"},
+        wechsel=(Wechsel(stand=25, datum="09.11.2026", commit="fix/befunde-rest", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Balken mit Schubfläche, nach Theorie II. Ordnung gerechnet",
+        betrifft=_balken_mit_schubflaeche, im_ergebnis=_theorie2_gerechnet_im_ergebnis),
+    # Nebenbefund 16 a (09.11.2026): Theorie III. Ordnung kondensierte die
+    # geometrische Steifigkeit an Stabendgelenken nicht (wie Theorie II.
+    # Ordnung vor A7) - mit einer Pendelstuetze als Balken mit Gelenken
+    # konvergierte die Rechnung ab 5/6 der Knicklast nicht. Die Tangente
+    # aendert den Weg der Iteration, nicht den konvergierten Zustand.
+    # Fehlerkorrektur
+    Merkmal(
+        name="theorie3_gelenke", titel="Tangente der Theorie III. Ordnung an Stabendgelenken",
+        texte={"alt": "geometrische Steifigkeit ohne Rücksicht auf die Gelenke",
+               "neu": "geometrische Steifigkeit an den Gelenken kondensiert"},
+        wechsel=(Wechsel(stand=26, datum="09.11.2026", commit="fix/befunde-rest", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Balken mit Stabendgelenk oder Federgelenk, nach Theorie III. Ordnung gerechnet",
+        betrifft=_balken_mit_gelenk, im_ergebnis=_theorie3_im_ergebnis),
+    # Nachstellung vom 11.11.2026, Entscheidung des Anwenders vom 12.11.2026
+    # („interne stabteilung sinnvoll vornehmen“): Theorie II./III. Ordnung
+    # teilen Balken intern, jeder Stab mindestens netz.stabteilung (10)
+    # Abschnitte, Theorie III. Ordnung doppelt so viele. Eingespannter
+    # Einfeldtraeger mit Gelenk, Druck 0,6 N_cr, q in einem Element: 22,5
+    # statt 44,2 kNm. Fehlerkorrektur
+    Merkmal(
+        name="stabteilung_theorie", titel="Interne Stabteilung nach Theorie II./III. Ordnung",
+        texte={"alt": "Balken in seinen Elementen gerechnet (ein Element je Stab: ohne N·w bei gehaltenen Enden)",
+               "neu": "Balken intern geteilt, jeder Stab mindestens in die Stabteilung der Netzeinstellungen"},
+        wechsel=(Wechsel(stand=29, datum="12.11.2026", commit="fix/befunde-rest", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Balken in weniger Elementen je Stab als die Stabteilung, nach Theorie II. oder III. "
+                      "Ordnung gerechnet",
+        betrifft=_balken_teilbar, im_ergebnis=_theorie2_oder_3_im_ergebnis),
+    # Nachstellung vom 11.11.2026: Theorie III. Ordnung gab am Stabendgelenk
+    # mit Streckenlast q L²/12 statt 0 aus (Festeinspannkraft nicht
+    # kondensiert, seit 05.09.2026); das Gleichgewicht der Knoten stimmte,
+    # die Stabendkraefte nicht. Fehlerkorrektur
+    Merkmal(
+        name="theorie3_gelenk_last", titel="Stabendkräfte nach Theorie III. Ordnung am Gelenk mit Stablast",
+        texte={"alt": "Stablast am Gelenk nicht kondensiert (Moment q L²/12 statt 0)",
+               "neu": "Stablast wie die Steifigkeit kondensiert"},
+        wechsel=(Wechsel(stand=30, datum="12.11.2026", commit="fix/befunde-rest", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Balken mit Stabendgelenk oder Federgelenk, nach Theorie III. Ordnung gerechnet",
+        betrifft=_balken_mit_gelenk, im_ergebnis=_theorie3_im_ergebnis),
+    # Befund A19 (09.11.2026): Schalenflaechen, die sich ohne gemeinsame Linie
+    # beruehren, waren im Netz nicht verbunden - Stoss mit ungeteilter Linie
+    # 0,742 statt 0,143 mm, Rippe auf ungeteilter Platte 33,1 statt 0,52 mm.
+    # Der Vernetzer teilt jetzt im Netz (Knoten auf Linie, Linie in Flaeche).
+    # Wirkt erst nach dem Neuvernetzen. Fehlerkorrektur
+    Merkmal(
+        name="flaechen_teilen", titel="Schalenflächen ohne gemeinsame Linie",
+        texte={"alt": "im Netz nicht verbunden (nur gemeinsame Linien)",
+               "neu": "im Netz geteilt und verbunden (Knoten auf Linie, Linie in Fläche); "
+                      "gilt nach dem Neuvernetzen"},
+        wechsel=(Wechsel(stand=27, datum="09.11.2026", commit="fix/befunde-rest", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Schalenflächen, die sich ohne gemeinsame Linie berühren",
+        betrifft=_flaechen_teilstellen),
+    # Befund A16 (09.11.2026): zwei Koerper mit je einer eigenen Trennflaeche
+    # ueber denselben Randlinien hingen ohne Kontaktbedingung nur ueber die
+    # Randlinien zusammen - zwei Wuerfel unter Zug 52 % zu weich. Der Vernetzer
+    # legt die Flaechen jetzt im Netz zusammen. Wirkt erst nach dem
+    # Neuvernetzen. Fehlerkorrektur
+    Merkmal(
+        name="trennflaechen_zusammenlegen", titel="Deckungsgleiche Trennflächen zweier Körper",
+        texte={"alt": "jede Fläche für sich vernetzt, Körper nur über die Randlinien verbunden",
+               "neu": "als eine gemeinsame Fläche vernetzt (ohne Kontaktbedingung); "
+                      "gilt nach dem Neuvernetzen"},
+        wechsel=(Wechsel(stand=28, datum="09.11.2026", commit="fix/befunde-rest", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="zwei Körper mit eigenen, deckungsgleichen Trennflächen ohne Kontaktbedingung, "
+                      "Netz dort getrennt",
+        betrifft=_trennflaechen_getrennt),
+    Merkmal(
         name="saitenform", titel="Geometrische Steifigkeit der Fachwerkstäbe",
         texte={"alt": "Balkenform 6/5 N/L auch für Fachwerkstab, Zug-/Druckstab und Seil",
                "neu": "Saitenform N/L für Fachwerkstab, Zug-/Druckstab und Seil"},
@@ -851,7 +1572,7 @@ MERKMALE: list = [
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 7
+VERFAHRENSSTAND = 30
 
 
 def merkmal(name: str) -> Optional[Merkmal]:
@@ -1010,10 +1731,12 @@ def aeltere(model, merkmale: dict) -> list:
     """[(Merkmal, Wert der Datei, Wert heute, Wechsel)] fuer jedes Merkmal (ohne die
     Korrekturen am Import), das dieses Modell hat (``betrifft``) und mit dem die
     Datei anders gerechnet ist als heute; ``Wechsel`` ist der erste seither (seine
-    ``art`` stuft ein). Ein unbekannter Wert (None) steht mit None darin."""
+    ``art`` stuft ein). Ein unbekannter Wert (None) steht mit None darin. Merkmale, die
+    erst mit neu erzeugten Kombinationen wirken (``im_modell``), stehen nicht darin:
+    ihren Status sagt das Modell selbst (:func:`modell_teile`), nicht das Alter der Datei."""
     aus = []
     for mk in MERKMALE:
-        if mk.import_korrektur or not _sicher(lambda: mk.betrifft(model)):
+        if mk.import_korrektur or mk.im_modell is not None or not _sicher(lambda: mk.betrifft(model)):
             continue
         wert = (merkmale or {}).get(mk.name)
         jetzt = _sicher(lambda: mk.aktuell(model))
@@ -1026,6 +1749,43 @@ def aeltere(model, merkmale: dict) -> list:
 
 def _seit(mk, jetzt, w) -> str:
     return next((x.datum for x in reversed(mk.wechsel) if x.neu == jetzt), w.datum)
+
+
+def modell_teile(model, analyse=None) -> list:
+    """Die Teile des Status aus Korrekturen, die erst mit neu erzeugten Kombinationen
+    wirken (``Merkmal.im_modell``, Befunde 41, 42, 44 vom 11.11.2026): solange das
+    Modell die alten Kombinationen traegt, gilt der Status fuer jede Ergebnisdatei
+    und fuer eine neue Rechnung. Mit ``analyse`` nur, wenn eine betroffene
+    Kombination gerechnet ist."""
+    teile = []
+    for mk in MERKMALE:
+        if mk.im_modell is None:
+            continue
+        wo = _sicher(lambda: mk.im_modell(model))
+        if not wo:
+            continue
+        if analyse is not None and mk.im_ergebnis is not None                 and _sicher(lambda: mk.im_ergebnis(model, analyse)) == "":
+            continue                    # keine betroffene Kombination gerechnet
+        teile.append(f"{mk.titel}: {wo}")
+    for mk in MERKMALE:
+        # Korrekturen am Modell, die nicht vom Import kommen (``modellgrund``, alte
+        # Windlasten, Befund 40): auch eine neue Rechnung traegt den Status, bis der
+        # Grund im Modell behoben ist - nicht erst nach dem erneuten Oeffnen
+        if not (mk.import_korrektur and mk.modellgrund) or not _sicher(lambda: mk.betrifft(model)):
+            continue
+        wo = (_sicher(lambda: mk.im_ergebnis(model, analyse))
+              if (mk.im_ergebnis is not None and analyse is not None) else None)
+        if wo == "":
+            continue
+        teile.append(f"{mk.titel}: {mk.modellgrund} ({mk.text('alt')}"
+                     + (f"; {wo}" if wo else "") + f") – {mk.vorschlag}, danach neu rechnen")
+    return teile
+
+
+def modell_betroffen(model, analyse=None) -> str:
+    """Der Status einer neuen Rechnung aus :func:`modell_teile` - oder ""."""
+    teile = _sicher(lambda: modell_teile(model, analyse)) or []
+    return BETROFFEN + ": " + "; ".join(teile) if teile else ""
 
 
 def bewerten(model, merkmale: dict, analyse=None) -> dict:
@@ -1054,14 +1814,16 @@ def bewerten(model, merkmale: dict, analyse=None) -> dict:
             betr.append(f"{mk.titel}: gerechnet mit „{mk.text(wert)}“" + (f" ({wo})" if wo else "")
                         + f", seit {_seit(mk, jetzt, w)} korrigiert: „{mk.text(jetzt)}“")
     for mk in MERKMALE:
-        if mk.import_korrektur and _sicher(lambda: mk.betrifft(model)):
+        if mk.import_korrektur and not mk.modellgrund and _sicher(lambda: mk.betrifft(model)):
             wo = (_sicher(lambda: mk.im_ergebnis(model, analyse))
                   if (mk.im_ergebnis is not None and analyse is not None) else None)
             if wo == "":
                 continue
             w = mk.wechsel[-1]
-            betr.append(f"{mk.titel}: Modell vor dem {w.datum} aus RFEM übernommen ({mk.text('alt')}"
+            grund = f"Modell vor dem {w.datum} aus RFEM übernommen"
+            betr.append(f"{mk.titel}: {grund} ({mk.text('alt')}"
                         + (f"; {wo}" if wo else "") + f") – {mk.vorschlag}, danach neu rechnen")
+    betr += _sicher(lambda: modell_teile(model, analyse)) or []
     return {"hinweis": ("gerechnet mit älterem Rechenverfahren: " + "; ".join(hinw)
                         + " – die Ergebnisse gelten, eine neue Rechnung liefert sie nach dem aktuellen Verfahren")
             if hinw else "",

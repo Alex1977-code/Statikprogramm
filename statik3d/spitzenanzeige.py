@@ -32,6 +32,12 @@ from __future__ import annotations
 
 import numpy as np
 
+
+def _fest(x, nk: int) -> str:
+    """Feste Nachkommastellen mit Dezimalkomma fuer die Zusammenfassung
+    (Befund C7, 09.11.2026: bis dahin mit Punkt)."""
+    return f"{float(x):.{int(nk)}f}".replace(".", ",")
+
 #: Vermerk an jedem Spitzenwert einer auffaelligen Stelle
 VERMERK = "netzabhängig, nicht für den Nachweis"
 #: Ueberschrift im Ergebnisbaum und im Bericht
@@ -300,14 +306,14 @@ def zusammenfassung_zeilen(model, res) -> list:
     z = []
     if u["sv"] is not None:
         v, k, b = u["sv"]
-        z.append(f"max. Vergleichsspannung : {v / 1e6:.2f} MPa außerhalb der netzabhängigen Stellen "
+        z.append(f"max. Vergleichsspannung : {_fest(v / 1e6, 2)} MPa außerhalb der netzabhängigen Stellen "
                  f"(Knoten {k}" + (f", {b})" if b else ")"))
     sp_ = u["spitze"]
     if sp_ is not None:
         a = sp_["stelle_sv"]
-        z.append(f"Netzabhängige Stellen   : {sp_['n']}, σ_v bis {sp_['sv'] / 1e6:.1f} MPa "
+        z.append(f"Netzabhängige Stellen   : {sp_['n']}, σ_v bis {_fest(sp_['sv'] / 1e6, 1)} MPa "
                  f"({bauteil(a)}, Integrationspunkte)"
-                 + (f", ε_p bis {sp_['eps_p'] * 100:.2f} % ({bauteil(sp_['stelle_eps'])})"
+                 + (f", ε_p bis {_fest(sp_['eps_p'] * 100, 2)} % ({bauteil(sp_['stelle_eps'])})"
                     if sp_["eps_p"] > 0 else "")
                  + f" – {VERMERK}")
     return z

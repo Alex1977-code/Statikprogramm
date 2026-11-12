@@ -300,37 +300,50 @@ def test_theorie3():
     m = _rahmen()
     F_t = solver.case_loads(m, {"T": 1.0})[0]
     F_m = solver.case_loads(m, {"M": 1.0})[0]
-    rechte = []
-    alt = theorie3.splu
-
-    class _Mit:
-        def __init__(self, A):
-            self._lu = alt(A)
-
-        def solve(self, b):
-            rechte.append(np.asarray(b, float).copy())
-            return self._lu.solve(b)
-    theorie3.splu = _Mit
-    try:
-        res, info = theorie3.solve_theorie3(m, {"LF1": 1.0}, "LF1", schritte=5, imperfektionen=False)
-    finally:
-        theorie3.splu = alt
-    check("Theorie III: gerechnet", info.gerechnet, info.fehler)
-    # Frei ist nur der Kopfknoten (FHG 6 bis 11). rechte[0] ist die
-    # Bezugsrechnung I. Ordnung mit der vollen Last, rechte[1] die erste
-    # Iteration der Stufe 1.
+    # Geprüft wird ohne und mit der internen Stabteilung (seit 12.11.2026
+    # Vorgabe). Mit Teilung hat das feine System 19 Zwischenknoten am Stab;
+    # deren Freiheitsgrade stehen hinter denen des Kopfknotens, sie tragen
+    # keine Last.
     fi = list(range(6, 12))
     F_ges = F_t + F_m
-    check("Theorie III: die Bezugsrechnung I. Ordnung löst mit der vollen Last am Kopf",
-          len(rechte[0]) == len(fi) and np.allclose(rechte[0], F_ges[fi], rtol=1e-12, atol=0.0))
-    soll = (F_t + F_m / 5.0)[fi]
-    bisher = (F_ges / 5.0)[fi]
-    abw = float(np.linalg.norm(rechte[1] - soll)) / float(np.linalg.norm(soll))
-    check("Theorie III: Stufe 1 rechnet mit voller Temperatur und 1/5 der Last",
-          abw <= 1e-9, f"Abweichung {abw:.2e}, gegen (F_T + F_M)/5 (bis 10.10.2026) "
-          f"{float(np.linalg.norm(rechte[1] - bisher)) / float(np.linalg.norm(bisher)):.2e}")
-    check(f"Theorie III: Hinweis „{SATZ} …“", any(h.startswith(SATZ) for h in info.hinweise),
-          str(info.hinweise)[:120])
+    for teilung in (False, True):
+        zus = " (interne Stabteilung)" if teilung else ""
+        rechte = []
+        alt = theorie3.splu
+
+        class _Mit:
+            def __init__(self, A):
+                self._lu = alt(A)
+
+            def solve(self, b):
+                rechte.append(np.asarray(b, float).copy())
+                return self._lu.solve(b)
+        theorie3.splu = _Mit
+        try:
+            res, info = theorie3.solve_theorie3(m, {"LF1": 1.0}, "LF1", schritte=5, imperfektionen=False,
+                                                stabteilung=teilung)
+        finally:
+            theorie3.splu = alt
+        check(f"Theorie III{zus}: gerechnet", info.gerechnet, info.fehler)
+        # Frei ist nur der Kopfknoten (FHG 6 bis 11), mit Teilung dazu die
+        # Zwischenknoten. rechte[0] ist die Bezugsrechnung I. Ordnung mit der
+        # vollen Last, rechte[1] die erste Iteration der Stufe 1.
+        n_frei = 6 + (6 * 19 if teilung else 0)
+        check(f"Theorie III{zus}: die Bezugsrechnung I. Ordnung löst mit der vollen Last am Kopf",
+              len(rechte[0]) == n_frei and np.allclose(rechte[0][:6], F_ges[fi], rtol=1e-12, atol=0.0)
+              and not np.any(rechte[0][6:]), f"{len(rechte[0])} Unbekannte")
+        soll = (F_t + F_m / 5.0)[fi]
+        bisher = (F_ges / 5.0)[fi]
+        ok_n = len(rechte[1]) == n_frei
+        abw = (float(np.linalg.norm(rechte[1][:6] - soll)) / float(np.linalg.norm(soll))) if ok_n else float("inf")
+        rest = float(np.abs(rechte[1][6:]).max()) if ok_n and len(rechte[1]) > 6 else 0.0
+        check(f"Theorie III{zus}: Stufe 1 rechnet mit voller Temperatur und 1/5 der Last",
+              ok_n and abw <= 1e-9 and rest == 0.0,
+              f"{len(rechte[1])} Unbekannte (soll {n_frei}), Abweichung {abw:.2e}, Zwischenknoten max {rest:.2e}, "
+              f"gegen (F_t + F_M)/5 (bis 10.10.2026) "
+              f"{float(np.linalg.norm(rechte[1][:6] - bisher)) / float(np.linalg.norm(bisher)):.2e}")
+        check(f"Theorie III{zus}: Hinweis „{SATZ} …“", any(h.startswith(SATZ) for h in info.hinweise),
+              str(info.hinweise)[:120])
 
 
 def main():

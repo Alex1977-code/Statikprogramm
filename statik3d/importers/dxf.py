@@ -8,7 +8,9 @@ Entitaeten:
     3DFACE                    -> shell3 / shell4 (4. Punkt == 3. Punkt -> Dreieck)
 
 Optionen:
-    unit_scale      Laengenfaktor Datei -> m (Standard 1e-3, DXF in mm)
+    unit_scale      Laengenfaktor Datei -> m. Ohne Angabe gilt die Einheit, die
+                    die Datei im Kopf nennt ($INSUNITS); nennt sie keine,
+                    wird Millimeter angenommen (1e-3) und das gemeldet
     element_type    'beam' oder 'truss' fuer Linien
     subdivide       jede Linie in n Elemente teilen
     layer_sections  {Layername: Querschnittsname / Profilbezeichnung}
@@ -17,6 +19,11 @@ Optionen:
     shell_prop      Name der Schalendicke fuer 3DFACE (Standard t10)
     tol             Knotentoleranz [m]
 Elemente werden nach Layer gruppiert (Element.group = Layer).
+
+Ebenen, deren Name mit ``STATIK3D_`` beginnt (:data:`HILFSEBENE`), traegt der
+eigene DXF-Export fuer Lagersymbole, Linien, Lastnamen und Beschriftung ein.
+Sie sind kein Tragwerk und werden nicht gelesen (Befund B5 der Pruefagenten,
+09.11.2026: die Lagersymbole kamen als Staebe zurueck).
 """
 from __future__ import annotations
 
@@ -27,6 +34,20 @@ from ..model import Model
 from . import _common as C
 
 DEFAULT_UNIT_SCALE = 1e-3
+
+#: Vorsatz der Ebenen, auf die der eigene Export seine Symbole legt
+HILFSEBENE = "STATIK3D_"
+
+#: $INSUNITS -> (Name, Faktor nach m). 0 heisst "ohne Einheit" und zaehlt wie
+#: eine fehlende Angabe.
+EINHEITEN = {1: ("Zoll", 0.0254), 2: ("Fuß", 0.3048), 4: ("Millimeter", 1e-3),
+             5: ("Zentimeter", 1e-2), 6: ("Meter", 1.0), 14: ("Dezimeter", 0.1)}
+
+
+def _de(x: float) -> str:
+    """Zahl fuer eine Meldung: Dezimalkomma, nie wissenschaftlich."""
+    t = f"{float(x):.6f}".rstrip("0").rstrip(".")
+    return t.replace(".", ",")
 
 
 # --------------------------------------------------------------------------
@@ -102,6 +123,45 @@ def parse_dxf_entities(path: str) -> list[dict]:
     return ents
 
 
+def insunits_der_datei(path: str) -> Optional[int]:
+    """Der Wert von $INSUNITS im Kopf einer DXF-Datei, wie er dasteht (None,
+    wenn die Angabe fehlt oder keine Zahl ist)."""
+    try:
+        pairs = _read_pairs(path)
+    except OSError:
+        return None
+    for k, (code, val) in enumerate(pairs):
+        if code == 2 and val.upper() == "ENTITIES" and k > 0 \
+                and pairs[k - 1] == (0, "SECTION"):
+            break                              # der Kopf ist vorbei
+        if code == 9 and val.upper() == "$INSUNITS" and k + 1 < len(pairs):
+            v = C.parse_number(pairs[k + 1][1])
+            return int(v) if v is not None else None
+    return None
+
+
+def einheit_der_datei(path: str) -> Optional[tuple]:
+    """Die Laengeneinheit, die eine DXF-Datei im Kopf nennt:
+    (Name, Faktor nach m, $INSUNITS) - oder None, wenn $INSUNITS fehlt, 0
+    ("ohne Einheit") ist oder eine Einheit nennt, die EINHEITEN nicht kennt
+    (den Wert selbst liefert :func:`insunits_der_datei`)."""
+    v = insunits_der_datei(path)
+    eintrag = EINHEITEN.get(v) if v is not None else None
+    return (eintrag[0], eintrag[1], v) if eintrag else None
+
+
+def _ohne_einheit(code: Optional[int]) -> str:
+    """Satz der Meldung, wenn einheit_der_datei None liefert: fehlt die
+    Angabe, ist sie 0 oder nennt sie eine Einheit, die der Import nicht kennt
+    (11.11.2026; bis dahin hiess es auch bei $INSUNITS = 7 „fehlt im Kopf
+    oder ist 0“)."""
+    if code is None or code == 0:
+        return "Die Datei nennt keine Längeneinheit ($INSUNITS fehlt im Kopf oder ist 0)."
+    bekannt = ", ".join(f"{k} = {n}" for k, (n, _f) in sorted(EINHEITEN.items()))
+    return (f"Die Datei nennt im Kopf $INSUNITS = {code}; diese Einheit kennt der Import "
+            f"nicht (er liest {bekannt}).")
+
+
 def _floats(ent: dict, codes: tuple) -> Optional[tuple]:
     """Erstes Vorkommen der Codes als Zahlen (fehlende -> 0.0)."""
     vals = []
@@ -148,7 +208,7 @@ def _lwpolyline_points(ent: dict) -> tuple[list, bool]:
 # Import
 # --------------------------------------------------------------------------
 def import_dxf(path: str, model: Model = None, log: list = None,
-               unit_scale: float = DEFAULT_UNIT_SCALE, element_type: str = "beam",
+               unit_scale: float = None, element_type: str = "beam",
                subdivide: int = 1, layer_sections: dict = None, section: str = None,
                material: str = None, shell_prop: str = None,
                tol: float = C.DEFAULT_TOL, **_ignored) -> Model:
@@ -158,7 +218,30 @@ def import_dxf(path: str, model: Model = None, log: list = None,
     if element_type not in ("beam", "truss"):
         raise ValueError("element_type muss 'beam' oder 'truss' sein")
     subdivide = max(1, int(subdivide or 1))
-    scale = float(unit_scale)
+    # Einheit (Befund B5, 09.11.2026): der eigene Export schreibt Meter und
+    # nennt das seitdem im Kopf; bis dahin las der Import jede Datei ohne
+    # Angabe als Millimeter - auch die eigene, die damit 1000fach zu klein
+    # zurueckkam.
+    datei = einheit_der_datei(path)
+    if unit_scale is None:
+        if datei is not None:
+            scale = float(datei[1])
+            C.say(log, f"DXF: Die Datei nennt im Kopf die Längeneinheit {datei[0]} "
+                       f"($INSUNITS = {datei[2]}); sie wird so gelesen.")
+        else:
+            scale = DEFAULT_UNIT_SCALE
+            C.warn(log, f"DXF: {_ohne_einheit(insunits_der_datei(path))} Angenommen wurde "
+                        "Millimeter (Faktor 0,001). Ist die Datei in einer anderen Einheit "
+                        "gezeichnet, die Einheit beim Import angeben.")
+    else:
+        scale = float(unit_scale)
+        if datei is not None and abs(datei[1] - scale) > 1e-9 * max(datei[1], scale):
+            C.warn(log, f"DXF: Die Datei nennt im Kopf die Längeneinheit {datei[0]} "
+                        f"($INSUNITS = {datei[2]}, Faktor {_de(datei[1])}); gelesen wurde "
+                        f"mit dem vorgegebenen Faktor {_de(scale)}.")
+        elif datei is None:
+            C.say(log, f"DXF: {_ohne_einheit(insunits_der_datei(path))} Gelesen wurde mit "
+                       f"dem vorgegebenen Faktor {_de(scale)} m je Zeicheneinheit.")
     layer_sections = dict(layer_sections or {})
     nodes = C.NodeIndex(model, tol)
 
@@ -211,13 +294,17 @@ def import_dxf(path: str, model: Model = None, log: list = None,
         count(layer, "Schalen", n)
 
     entities = parse_dxf_entities(path)
+    hilfe: dict[str, int] = {}
     i = 0
     while i < len(entities):
         ent = entities[i]
         typ = ent["type"]
         layer = ent["layer"]
         try:
-            if typ == "LINE":
+            if layer.upper().startswith(HILFSEBENE):
+                # Symbole des eigenen Exports: kein Tragwerk
+                hilfe[layer] = hilfe.get(layer, 0) + 1
+            elif typ == "LINE":
                 p1 = _floats(ent, (10, 20, 30))
                 p2 = _floats(ent, (11, 21, 31))
                 if p1 and p2:
@@ -294,6 +381,9 @@ def import_dxf(path: str, model: Model = None, log: list = None,
         C.say(log, f"Layer '{layer}': {parts}")
     for typ, n in sorted(skipped.items()):
         C.say(log, f"{n} x {typ} nicht importiert (nicht unterstuetzt)")
+    for layer in sorted(hilfe):
+        C.say(log, f"Ebene '{layer}': {hilfe[layer]} Zeichenelemente sind Symbole oder "
+                   "Beschriftungen des Statik3D-Exports und wurden nicht als Tragwerk gelesen.")
     C.say(log, f"DXF: {model.nn} Knoten, {len(model.elements)} Elemente "
                f"(Massstab {scale:g} m je Zeicheneinheit)")
     return model

@@ -296,22 +296,72 @@ def _flaechenknoten(model, name: str) -> set:
     return kn
 
 
-def _flaechennormale(model, name: str):
-    """Mittlere Aussennormale der Elemente einer Fläche (Knotenreihenfolge)."""
-    from .elements import shell as sh
+#: Rollen eines geschlossenen Gebaeudes - fuer sie gibt es eine Aussenseite
+ROLLEN_HUELLE = ("luv", "lee", "seite", "dach")
+
+
+def _flaechenvektor(X) -> np.ndarray:
+    """Flaechenvektor (Flaeche mal Normale) eines Vielecks aus seinen Ecken."""
+    X = np.asarray(X, float)
+    return 0.5 * sum((np.cross(X[i] - X[0], X[i + 1] - X[0]) for i in range(1, len(X) - 1)),
+                     np.zeros(3))
+
+
+def _ecken(el) -> list:
+    """Die Eckknoten eines Schalenelements (ohne Seitenmitten)."""
+    k = 4 if el.typ in ("shell4", "shell8", "shell9") else 3
+    return [int(x) for x in el.nodes[:k]]
+
+
+def _flaechennormale(model, name: str, mitte=None):
+    """Mittlere Aussennormale einer Fläche.
+
+    Schalen jeder Ordnung (shell3/4/6/8) ueber ihre Ecken; Randflaechen eines
+    Volumens ueber ihre Randseiten (dort ist die Normale schon die Aussennormale).
+    Eine Schale hat keine Aussenseite: ihre Normale folgt der Knotenreihenfolge.
+    Mit ``mitte`` (Mitte des Gebaeudes) wird sie nach aussen gedreht - so haengen
+    Luv und Lee nicht mehr davon ab, wie herum die Linien eingegeben sind (Befund
+    A1/A2 der Pruefagenten, 09.11.2026: bis dahin nur shell3/shell4, nach der
+    Knotenreihenfolge, Volumen und shell8 bekamen alle die Rolle „seite“)."""
+    from .elemente import SCHALEN_TYPEN
     f = model.flaechen.get(name)
     if f is None:
         return None
     n = np.zeros(3)
+    schale = False
+    pkt = []
     for e in f.elemente or []:
-        el = model.elements[int(e)]
-        if el.typ not in ("shell3", "shell4"):
+        if not 0 <= int(e) < len(model.elements):
             continue
-        X = model.nodes[[int(k) for k in el.nodes]]
-        T3, _xy, A = sh.shell_frame(X[0], X[1], X[2])
-        n += T3[2] * A
+        el = model.elements[int(e)]
+        if el.typ not in SCHALEN_TYPEN:
+            continue
+        ecken = _ecken(el)
+        n += _flaechenvektor(model.nodes[ecken])
+        pkt.extend(ecken)
+        schale = True
+    if not schale:
+        from .assemble import SOLID_FACES
+        for e, s in (f.randseiten or []):
+            if not 0 <= int(e) < len(model.elements):
+                continue
+            el = model.elements[int(e)]
+            seiten = SOLID_FACES.get(el.typ)
+            nn = model._seitennormale(int(e), int(s))
+            if not seiten or nn is None:
+                continue
+            idx = [int(el.nodes[j]) for j in seiten[int(s) % len(seiten)]]
+            ecken = idx[:4] if len(idx) in (4, 8, 9) else idx[:3]
+            n += nn * float(np.linalg.norm(_flaechenvektor(model.nodes[ecken])))
     L = float(np.linalg.norm(n))
-    return n / L if L > 0 else None
+    if L <= 0:
+        return None
+    n = n / L
+    if schale and mitte is not None and pkt:
+        c = model.nodes[sorted(set(pkt))].mean(axis=0)
+        if float(n @ (c - np.asarray(mitte, float))) < 0:
+            n = -n
+    return n
 
 
 def gebaeude(w: Wind, model) -> dict:
@@ -340,25 +390,286 @@ def gebaeude(w: Wind, model) -> dict:
             "t_max": float(t.max()), "richtung": d.tolist(), "quer": quer.tolist()}
 
 
-def rollen(w: Wind, model, geo: dict) -> dict:
-    """Je Fläche: luv, lee, seite, dach, freie_wand, schild - aus der Normalen."""
+def _flaechen_dreiecke(model, name: str) -> np.ndarray:
+    """Die Dreiecke einer Flaeche aus den Ecken ihrer Schalenelemente oder
+    Volumenrandseiten (Vierecke geteilt), Form (k, 3, 3)."""
+    from .assemble import SOLID_FACES
+    from .elemente import SCHALEN_TYPEN
+    f = model.flaechen.get(name)
+    if f is None:
+        return np.zeros((0, 3, 3))
+    ecken = []
+    for e in f.elemente or []:
+        if 0 <= int(e) < len(model.elements) and model.elements[int(e)].typ in SCHALEN_TYPEN:
+            ecken.append(_ecken(model.elements[int(e)]))
+    if not ecken:
+        for e, s in (f.randseiten or []):
+            if not 0 <= int(e) < len(model.elements):
+                continue
+            el = model.elements[int(e)]
+            seiten = SOLID_FACES.get(el.typ)
+            if seiten:
+                idx = [int(el.nodes[j]) for j in seiten[int(s) % len(seiten)]]
+                ecken.append(idx[:4] if len(idx) in (4, 8, 9) else idx[:3])
+    tris = []
+    for k in ecken:
+        tris.append(k[:3])
+        if len(k) == 4:
+            tris.append([k[0], k[2], k[3]])
+    if not tris:
+        return np.zeros((0, 3, 3))
+    return model.nodes[np.asarray(tris, int)]
+
+
+def _punkt_dreieck_abstand(P: np.ndarray, T: np.ndarray) -> float:
+    """Kleinster Abstand der Punkte P (n, 3) von den Dreiecken T (m, 3, 3)."""
+    if not len(P) or not len(T):
+        return float("inf")
+    Q = P[:, None, :]
+    A, B, C = T[None, :, 0], T[None, :, 1], T[None, :, 2]
+
+    def punkt(X, Y):
+        return np.einsum("...k,...k", X, Y)
+
+    def strecke(X, Y):
+        XY = Y - X
+        L2 = punkt(XY, XY)
+        t = np.clip(punkt(Q - X, XY) / np.where(L2 > 0, L2, 1.0), 0.0, 1.0)
+        return np.linalg.norm(Q - (X + t[..., None] * XY), axis=-1)
+    ab, ac, ap = B - A, C - A, Q - A
+    d00, d01, d11 = punkt(ab, ab), punkt(ab, ac), punkt(ac, ac)
+    d20, d21 = punkt(ap, ab), punkt(ap, ac)
+    nen = d00 * d11 - d01 * d01
+    ok = nen > 1e-24 * np.maximum(d00 * d11, 1e-300)
+    nen = np.where(ok, nen, 1.0)
+    v = (d11 * d20 - d01 * d21) / nen
+    w_ = (d00 * d21 - d01 * d20) / nen
+    innen = ok & (v >= 0) & (w_ >= 0) & (v + w_ <= 1)
+    nrm = np.cross(ab, ac)
+    nl = np.linalg.norm(nrm, axis=-1)
+    eben = np.abs(punkt(ap, nrm)) / np.where(nl > 0, nl, 1.0)
+    rand = np.minimum(np.minimum(strecke(A, B), strecke(B, C)), strecke(C, A))
+    return float(np.min(np.where(innen, eben, rand)))
+
+
+def _beruehren(PA, TA, PB, TB, tol: float) -> bool:
+    """Ob zwei Flaechen sich beruehren: ein Knoten der einen liegt hoechstens
+    ``tol`` von einem Dreieck der anderen - auch an einem Stoss ohne gemeinsame
+    Knoten (jede Wand fuer sich vernetzt, eine Wand unter einem anders
+    vernetzten Dach)."""
+    if not len(PA) or not len(PB):
+        return False
+    lo_a, hi_a = PA.min(axis=0) - tol, PA.max(axis=0) + tol
+    lo_b, hi_b = PB.min(axis=0) - tol, PB.max(axis=0) + tol
+    if np.any(hi_a < lo_b) or np.any(hi_b < lo_a):
+        return False
+    for P, T, lo, hi in ((PA, TB, lo_b, hi_b), (PB, TA, lo_a, hi_a)):
+        P = P[np.all((P >= lo) & (P <= hi), axis=1)]
+        if not len(P) or not len(T):
+            continue
+        T = T[np.all(T.max(axis=1) >= lo, axis=1) & np.all(T.min(axis=1) <= hi, axis=1)]
+        for i in range(0, len(P), 256):
+            for j in range(0, len(T), 512):
+                if _punkt_dreieck_abstand(P[i:i + 256], T[j:j + 512]) <= tol:
+                    return True
+    return False
+
+
+#: Toleranz der Beruehrung zweier Gebaeudeflaechen, bezogen auf die Diagonale aller
+BERUEHRUNG = 1e-3
+
+
+def baukoerper(model, namen) -> list:
+    """Die Gebaeudeflaechen ``namen`` in Baukoerper geteilt: Flaechen, die sich
+    beruehren (geometrisch, Toleranz :data:`BERUEHRUNG` mal die Diagonale
+    aller), gehoeren zu einem Koerper - auch Waende, die jede fuer sich
+    vernetzt sind und keine gemeinsamen Knoten haben. Bis zum 11.11.2026
+    zaehlten nur gemeinsame Knoten; zwei Baukoerper aus Einzelwaenden bekamen
+    eine Mitte zwischen sich, Leewand des vorderen und Luvwand des hinteren
+    Koerpers vertauschte Rollen (Befund 7 der Pruefagenten).
+    Rueckgabe [[Name, ...], ...]."""
+    namen = [n for n in namen if n in (getattr(model, "flaechen", None) or {})]
+    kn = {n: _flaechenknoten(model, n) for n in namen}
+    P = {n: model.nodes[sorted(kn[n])] if kn[n] else np.zeros((0, 3)) for n in namen}
+    T = {n: _flaechen_dreiecke(model, n) for n in namen}
+    alle = np.concatenate([P[n] for n in namen]) if namen else np.zeros((0, 3))
+    tol = max(BERUEHRUNG * float(np.linalg.norm(np.ptp(alle, axis=0))) if len(alle) else 0.0, 1e-9)
+    vater = {n: n for n in namen}
+
+    def wurzel(x):
+        while vater[x] != x:
+            vater[x] = vater[vater[x]]
+            x = vater[x]
+        return x
+    for i, a in enumerate(namen):
+        for b in namen[i + 1:]:
+            if wurzel(a) == wurzel(b):
+                continue
+            if (kn[a] & kn[b]) or _beruehren(P[a], T[a], P[b], T[b], tol):
+                vater[wurzel(a)] = wurzel(b)
+    gruppen: dict = {}
+    for n in namen:
+        gruppen.setdefault(wurzel(n), []).append(n)
+    return list(gruppen.values())
+
+
+def _koerpermitten(model, gruppen) -> dict:
+    """{Name: (Mitte, Diagonale)} je Baukoerper: Schwerpunkt der Knoten aller
+    seiner Flaechen und die Diagonale ihres Rahmens."""
+    out = {}
+    for gruppe in gruppen:
+        kn = set()
+        for n in gruppe:
+            kn |= _flaechenknoten(model, n)
+        if not kn:
+            continue
+        X = model.nodes[sorted(kn)]
+        mitte, diag = X.mean(axis=0).tolist(), float(np.linalg.norm(np.ptp(X, axis=0)))
+        for n in gruppe:
+            out[n] = (mitte, diag)
+    return out
+
+
+def huellenmitten(model, namen) -> dict:
+    """Je Flaeche die Mitte ihres Baukoerpers (:func:`baukoerper`): der
+    Schwerpunkt der Knoten aller Flaechen, die sich beruehren. ``namen`` sind
+    nur die Gebaeudeflaechen (Wind.flaechen): freie Waende und Schilder
+    gehoeren zu keiner Huelle. Bis zum 11.11.2026 bildete lasten_erzeugen die
+    Mitten mit ihnen, rollen ohne sie - eine entfernte freie Wand schob die
+    Mitte aus dem Gebaeude, und Luvdruck und Leesog wirkten gegen den Wind
+    (Befund 6 der Pruefagenten). Eine Flaeche allein ist ein Koerper fuer
+    sich; ihre Mitte liegt in ihr und sagt nichts ueber aussen
+    (:func:`aussenseiten`)."""
+    return {n: m for n, (m, _d) in _koerpermitten(model, baukoerper(model, namen)).items()}
+
+
+def _schalenmitte(model, name: str):
+    """Schwerpunkt der Eckknoten der Schalenelemente einer Flaeche - oder None
+    (keine Schale, etwa ein Volumenrand)."""
+    from .elemente import SCHALEN_TYPEN
+    f = model.flaechen.get(name)
+    pkt = set()
+    for e in (f.elemente or []) if f is not None else []:
+        if 0 <= int(e) < len(model.elements) and model.elements[int(e)].typ in SCHALEN_TYPEN:
+            pkt.update(_ecken(model.elements[int(e)]))
+    return model.nodes[sorted(pkt)].mean(axis=0) if pkt else None
+
+
+def _rolle_aus_normale(n, d) -> str:
+    if abs(n[2]) > 0.7:
+        return "dach"
+    c = float(n @ d)
+    return "luv" if c < -0.5 else ("lee" if c > 0.5 else "seite")
+
+
+def _aussen_nach_rolle(n, c, d, quer, X) -> np.ndarray:
+    """Aussenseite einer Schale, ueber die ihr Baukoerper nichts sagt (allein,
+    oder die Mitte liegt in ihrer Ebene): die Rolle gibt sie vor. Dach: oben.
+    Wand quer zum Wind: Luv, wenn sie naeher an der Luvkante aller
+    Gebaeudeflaechen ``X`` steht (allein: Luv), dann aussen zum Wind hin,
+    sonst Lee und aussen vom Wind weg. Wand laengs (Seite): aussen zur naeheren
+    Seitenkante, in der Mitte die Normale der Eingabe. So haengt die Rolle
+    nicht davon ab, wie herum die Linien eingegeben sind."""
+    if abs(n[2]) > 0.7:
+        return n if n[2] > 0 else -n
+    if abs(float(n @ d)) > 0.5:
+        s = X @ d
+        lee = float(c @ d) - float(s.min()) > float(s.max()) - float(c @ d)
+        return n if (float(n @ d) > 0) == lee else -n
+    t = X @ quer
+    zu_min, zu_max = float(c @ quer) - float(t.min()), float(t.max()) - float(c @ quer)
+    if abs(zu_min - zu_max) <= 1e-6 * max(float(np.ptp(t)), 1e-12):
+        return n
+    return n if (float(n @ quer) > 0) == (zu_max < zu_min) else -n
+
+
+def aussenseiten(w: Wind, model, geo: dict) -> dict:
+    """Je Gebaeudeflaeche (Rolle, Aussennormale oder None) - einmal je Flaeche.
+
+    Die Aussenseite einer Schale zeigt von der Mitte ihres Baukoerpers weg
+    (:func:`huellenmitten`). Besteht der Koerper nur aus dieser Flaeche, oder
+    liegt seine Mitte (nahezu: 1e-6 der Koerperdiagonale) in ihrer Ebene,
+    gibt die Rolle die Aussenseite vor (:func:`_aussen_nach_rolle`). Bis zum
+    11.11.2026 fiel die Entscheidung je Element ueber normale · (punkt −
+    mitte); bei Punkt und Mitte in derselben Ebene war das Rundungsrauschen,
+    und einzelne Elemente eines Daches bekamen Druck statt Sog (Befund 5 der
+    Pruefagenten). Volumenrandflaechen tragen ihre Aussennormale schon."""
     d = np.asarray(geo["richtung"], float)
+    quer = np.asarray(geo["quer"], float)
+    alle = set()
+    for name in w.flaechen:
+        alle |= _flaechenknoten(model, name)
+    X = model.nodes[sorted(alle)] if alle else np.zeros((1, 3))
+    gruppen = baukoerper(model, w.flaechen)
+    zahl = {n: len(g) for g in gruppen for n in g}
+    mitten = _koerpermitten(model, gruppen)
     out = {}
     for name in w.flaechen:
         n = _flaechennormale(model, name)
         if n is None:
-            out[name] = "seite"
+            out[name] = ("seite", None)
             continue
-        if abs(n[2]) > 0.7:
-            out[name] = "dach"
-        else:
-            c = float(n @ d)
-            out[name] = "luv" if c < -0.5 else ("lee" if c > 0.5 else "seite")
+        c = _schalenmitte(model, name)
+        entschieden = c is None                 # Volumenrand: schon aussen
+        if c is not None and zahl.get(name, 1) > 1 and name in mitten:
+            mitte, diag = mitten[name]
+            s = float(n @ (c - np.asarray(mitte, float)))
+            if abs(s) > 1e-6 * diag:
+                n = n if s > 0 else -n
+                entschieden = True
+        if not entschieden:
+            n = _aussen_nach_rolle(n, c, d, quer, X)
+        out[name] = (_rolle_aus_normale(n, d), n)
+    return out
+
+
+def rollen(w: Wind, model, geo: dict) -> dict:
+    """Je Fläche: luv, lee, seite, dach, freie_wand, schild - aus der Normalen."""
+    out = {name: rolle for name, (rolle, _n) in aussenseiten(w, model, geo).items()}
     for name in w.freie_waende:
         out[name] = "freie_wand"
     for name in w.schilder:
         out[name] = "schild"
     return out
+
+
+def alte_windlasten(model) -> list:
+    """[(Lastfall, Wind)] der Windlasten des Generators auf Gebaeudeflaechen, die
+    ohne Aussenseite (``verlauf["aussen"]``, seit dem 11.11.2026) erzeugt sind.
+    Sie wirken an Schalen weiter gegen den Wind, an Volumen und shell8 mit der
+    Rolle „seite“ (Befunde A1/A2 vom 09.11.2026) - Speichern, Oeffnen und
+    Neurechnen aendern daran nichts, erst das Neuerzeugen (Befund 40 der
+    Pruefagenten, 11.11.2026)."""
+    aus = []
+    for lf, lc in (getattr(model, "load_cases", None) or {}).items():
+        for gl in getattr(lc, "geometrielasten", None) or []:
+            v = getattr(gl, "verlauf", None) or {}
+            if (getattr(gl, "art", "flaeche") == "flaeche" and v.get("art") == "wind"
+                    and v.get("rolle") in ROLLEN_HUELLE and "aussen" not in v):
+                eintrag = (str(lf), str(v.get("name", "")))
+                if eintrag not in aus:
+                    aus.append(eintrag)
+    return aus
+
+
+#: Was der Anwender tut, damit eine aeltere Windlast richtig wirkt
+WIND_NEU_ERZEUGEN = "Lasten › Wind: den Wind öffnen und die Windlasten neu erzeugen"
+
+
+def alte_windlasten_text(model) -> str:
+    """„Wind W1 in LF2, …“ zu :func:`alte_windlasten` - oder ""."""
+    alt = alte_windlasten(model)
+    return ", ".join(f"Wind {w} in {lf}" for lf, w in alt[:5]) + (" …" if len(alt) > 5 else "")
+
+
+def windlasten_hinweis(model) -> list:
+    """Beim Oeffnen: die Zeile fuers Protokoll zu Windlasten, die neu zu
+    erzeugen sind (:func:`alte_windlasten`). Umgestellt wird nichts."""
+    if not alte_windlasten(model):
+        return []
+    return [f"Windlasten neu erzeugen: {alte_windlasten_text(model)} mit einem älteren Programmstand "
+            "erzeugt – an Schalen wirken Luvdruck, Leesog und Dachsog darin gegen den Wind, an Volumen "
+            f"und quadratischen Schalen fehlen die Rollen ({WIND_NEU_ERZEUGEN}, danach neu rechnen)."]
 
 
 # ==========================================================================
@@ -416,7 +727,22 @@ def druck_aus_verlauf(verlauf: dict, punkt, normale=None, beidseitig: bool = Fal
     Mit c_p-Feld des Windkanals (``verlauf["feld"]``) wird der Beiwert vor
     der Elementseite abgetastet (dünne Schale: netto aus beiden Seiten) und
     mit dem Böengeschwindigkeitsdruck q_p(z) der Norm skaliert; sonst die
-    Zonenbeiwerte der Norm."""
+    Zonenbeiwerte der Norm.
+
+    **Schale** (``beidseitig``): die Schalenlast wirkt positiv in Richtung der
+    Elementnormalen (assemble.shell_face_load), der Wind aber gegen die
+    Aussennormale. Bis zum 09.11.2026 fehlte dieser Wechsel: Luvdruck, Leesog
+    und Dachsog wirkten gegen den Wind (Befund A1 der Pruefagenten: Gebaeude
+    10 x 20 x 8 m, ΣF (−135; 0; −127) statt (+135; 0; +127) kN). Zurueck
+    kommt darum der Wert fuer die Schalenlast: −p, gezaehlt gegen die
+    Elementnormale ``normale``. Die Aussenseite steht seit dem 11.11.2026 je
+    Flaeche im Verlauf (``verlauf["aussen"]``, :func:`aussenseiten`); je
+    Element zaehlt nur, ob seine Normale zu ihr zeigt. Bis dahin entschied je
+    Element normale · (punkt − mitte) - im Rundungsrauschen, wenn die Mitte in
+    der Flaeche lag (Befund 5 der Pruefagenten). Eine Windlast ohne
+    ``aussen`` ist mit einem aelteren Programmstand erzeugt: sie rechnet wie
+    damals (p) und ist am Modell markiert, bis der Anwender die Windlasten neu
+    erzeugt (:func:`alte_windlasten`, Befund 40)."""
     from . import stroemung as st
     param = verlauf.get("param") or {}
     geo = verlauf.get("geometrie") or {}
@@ -425,9 +751,16 @@ def druck_aus_verlauf(verlauf: dict, punkt, normale=None, beidseitig: bool = Fal
     if verlauf.get("feld"):
         schnitt, cp, fluid, _block = _feld_aus_verlauf(verlauf)
         c = float(st.wert_am_punkt(cp, fluid, schnitt, punkt, normale, beidseitig)) - float(w.c_pi)
-        return w.c_scd * c * q_p(max(z, 0.0), w)
-    c, _zone = beiwert_am_punkt(param, geo, verlauf.get("rolle", ""), punkt)
-    return w.c_scd * c * q_p(max(z, 0.0), w)
+        p = w.c_scd * c * q_p(max(z, 0.0), w)
+        # Feld: p drueckt gegen ``normale``; die Schalenlast wirkt mit ihr
+        return -p if beidseitig else p
+    rolle = verlauf.get("rolle", "")
+    c, _zone = beiwert_am_punkt(param, geo, rolle, punkt)
+    p = w.c_scd * c * q_p(max(z, 0.0), w)
+    aussen = verlauf.get("aussen")
+    if beidseitig and rolle in ROLLEN_HUELLE and normale is not None and aussen is not None:
+        return -p if float(np.asarray(normale, float)[:3] @ np.asarray(aussen, float)) >= 0 else p
+    return p
 
 
 # ==========================================================================
@@ -707,6 +1040,31 @@ def stablasten_entfernen(model, w: Wind) -> int:
     return n
 
 
+def einzelflaechen_hinweise(model, w: Wind) -> list:
+    """Hinweise zu Gebaeudeflaechen, die allein stehen (ein Baukoerper aus
+    einer Schalenflaeche, :func:`baukoerper`). Sie rechnen als Huellflaeche
+    nach ihrer Lage (allein: Luv bzw. Dach). Nach DIN EN 1991-1-4 ist eine
+    einzeln stehende Wand aber eine freistehende Wand (7.4, c_p,net nach
+    Tab. 7.9 mit den Zonen A bis D) und ein einzelnes Dach ein freistehendes
+    Dach (7.3) - dort wirkt der Nettodruck beider Seiten. Die Rolle setzt der
+    Anwender; darum nur der Hinweis (Entscheidung vom 12.11.2026: „ja, es sei
+    denn die fachliteratur sagt etwas anderes“)."""
+    aus = []
+    for gruppe in baukoerper(model, list(w.flaechen)):
+        if len(gruppe) != 1:
+            continue
+        name = gruppe[0]
+        if _schalenmitte(model, name) is None:
+            continue                       # Volumenrand: gehoert zu einem Koerper
+        n = _flaechennormale(model, name)
+        dach = n is not None and abs(float(n[2])) > 0.7
+        aus.append(f"Wind {w.name}: Fläche {name} steht als Gebäudefläche allein (sie berührt keine andere) "
+                   f"und rechnet als {'Dach' if dach else 'Luv- bzw. Leewand nach ihrer Lage'}. Nach "
+                   f"DIN EN 1991-1-4 ist sie {'ein freistehendes Dach (7.3)' if dach else 'eine freistehende Wand (7.4, c_p,net nach Tab. 7.9)'}"
+                   f" – bitte {'die Last prüfen' if dach else 'als freie Wand einstufen'}.")
+    return aus
+
+
 def lasten_erzeugen(model, w: Wind, fortschritt=None) -> dict:
     """Objektlasten an Flächen und Linienlasten auf Stäbe schreiben (alte des
     Generierers entfernen), verteilen; Rückgabe: Kennwerte samt Zahlen. Mit
@@ -723,7 +1081,13 @@ def lasten_erzeugen(model, w: Wind, fortschritt=None) -> dict:
     if w.situation and w.situation not in model.situationsnamen():
         raise ValueError(f"Situation '{w.situation}' unbekannt")
     geo = gebaeude(w, model)
-    roll = rollen(w, model, geo)
+    # Rolle und Aussenseite einmal je Flaeche, mit denselben Mitten (nur die
+    # Gebaeudeflaechen, je Baukoerper) - bis zum 11.11.2026 nahm rollen() die
+    # Gebaeudeflaechen, die Last aber alle samt freier Waende (Befund 6)
+    seiten = aussenseiten(w, model, geo)
+    roll = {name: rolle for name, (rolle, _n) in seiten.items()}
+    roll.update({name: "freie_wand" for name in w.freie_waende})
+    roll.update({name: "schild" for name in w.schilder})
     kw = kennwerte(w, model, geo)
     wk = None
     feld = None
@@ -766,6 +1130,11 @@ def lasten_erzeugen(model, w: Wind, fortschritt=None) -> dict:
     aus_feld: list = []
     for name, rolle in roll.items():
         verlauf = {"art": "wind", "name": w.name, "param": param, "geometrie": geo, "rolle": rolle}
+        if name in seiten:
+            # Aussennormale der Flaeche (11.11.2026): an Schalen das Vorzeichen
+            # der Last; ihr Fehlen kennzeichnet eine aeltere Windlast (Befund 40)
+            n_a = seiten[name][1]
+            verlauf["aussen"] = [float(x) for x in n_a] if n_a is not None else None
         if feld is not None and _feld_passt(wk, _flaechennormale(model, name), geo["quer"]):
             verlauf["feld"] = feld
             aus_feld.append(name)
@@ -800,13 +1169,22 @@ def lasten_erzeugen(model, w: Wind, fortschritt=None) -> dict:
                "lastfall": w.lastfall, "lastfall_nr": int(getattr(lc, "nummer", 0) or 0),
                "aus_feld": aus_feld, "verfahren": "windkanal" if wk is not None else "norm"})
     kw["kontrolle"] = kontrollsumme(model, w)
+    kw["hinweise"] = einzelflaechen_hinweise(model, w)
     st._melden(fortschritt, 1.0, f"Wind {w.name}: {n_elem} Elementlasten")
     return kw
 
 
 def kontrollsumme(model, w: Wind) -> dict:
-    """Summe der erzeugten Flächen-Elementlasten (Kraftvektor) und der Stablasten."""
-    from .elements import shell as sh
+    """Summe der erzeugten Flächen-Elementlasten (Kraftvektor) und der Stablasten.
+
+    Gezaehlt wird, wie die Last wirkt: an einer Schale p in Richtung ihrer
+    Elementnormalen, an einer Volumenseite p gegen deren Aussennormale (in den
+    Koerper). Bis zum 09.11.2026 zaehlte die Summe an Schalen gegen die Normale
+    - umgekehrt wie die Last, darum passte sie zur Norm, waehrend die Last
+    verkehrt wirkte (A1) - und nur shell3/shell4 (A2: an Volumen und shell8
+    „0,00 kN“)."""
+    from .assemble import SOLID_FACES
+    from .elemente import SCHALEN_TYPEN
     F = np.zeros(3)
     n = 0
     lc = model.load_cases.get(w.lastfall)
@@ -815,17 +1193,28 @@ def kontrollsumme(model, w: Wind) -> dict:
     for fl in lc.face_loads:
         if not getattr(fl, "_geo", False):
             continue
-        e = model.elements[int(fl.elem)]
-        if e.typ not in ("shell3", "shell4"):
+        if not 0 <= int(fl.elem) < len(model.elements):
             continue
-        X = model.nodes[[int(k) for k in e.nodes]]
-        tris = [(0, 1, 2)] if e.typ == "shell3" else [(0, 1, 2), (0, 2, 3)]
-        A, nrm = 0.0, None
-        for t in tris:
-            T3, _xy, At = sh.shell_frame(X[t[0]], X[t[1]], X[t[2]])
-            A += At
-            nrm = T3[2]
-        F += fl.p * A * (-nrm)          # p positiv drueckt gegen die Normale
+        e = model.elements[int(fl.elem)]
+        if e.typ in SCHALEN_TYPEN:
+            av = _flaechenvektor(model.nodes[_ecken(e)])
+            if fl.direction is not None:
+                F += fl.p * float(np.linalg.norm(av)) * np.asarray(fl.direction, float)[:3]
+            else:
+                F += fl.p * av                  # mit der Elementnormalen
+            n += 1
+            continue
+        seiten = SOLID_FACES.get(e.typ)
+        nn = model._seitennormale(int(fl.elem), int(fl.face))
+        if not seiten or nn is None:
+            continue
+        idx = [int(e.nodes[j]) for j in seiten[int(fl.face) % len(seiten)]]
+        ecken = idx[:4] if len(idx) in (4, 8, 9) else idx[:3]
+        A = float(np.linalg.norm(_flaechenvektor(model.nodes[ecken])))
+        if fl.direction is not None:
+            F += fl.p * A * np.asarray(fl.direction, float)[:3]
+        else:
+            F += fl.p * A * (-nn)               # in den Koerper
         n += 1
     F_st = 0.0
     for bl in lc.beam_loads:
@@ -888,6 +1277,7 @@ def erlaeuterung(w: Wind, kw: dict) -> list:
                    f"Wirbelablösung und Verschattung kommen aus der Rechnung; die Reynolds-Zahl ist die des "
                    f"Modells, nicht die des Bauwerks - die Beiwerte sind qualitativ und gegen die Norm zu "
                    f"prüfen.")
+    z.extend("Hinweis: " + h for h in kw.get("hinweise", []) or [])
     return z
 
 

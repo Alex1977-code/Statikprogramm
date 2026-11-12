@@ -71,6 +71,10 @@ NDOF = 6
 #: die Bezeichnung - eine aeltere Datei wird beim Laden umgestellt
 #: (Model._namen_umstellen), eine Datei der Fassung 9 nie.
 FORMAT_VERSION = 9
+#: Kennung der Modelldatei (seit 11.11.2026, Befund 34): „gelenk“ - ein
+#: Federgelenk mit k = 0 steht schon als Gelenk an den Elementen (apply_hinge
+#: seit 09.11.2026, A10); fehlt sie, zieht from_dict es nach
+FEDERGELENK_NULL = "federgelenk_null"
 
 # Einwirkungskategorien (DIN EN 1990/NA Tabelle A.1.1) -> (psi0, psi1, psi2)
 ACTION_CATEGORIES = {
@@ -118,6 +122,17 @@ ACTION_CATEGORIES = {
     "MONT":   ("Montage- und Revisionszustand", (1.0, 1.0, 1.0)),
     "ERD":    ("Erdbeben (DIN EN 1998)", (1.0, 1.0, 1.0)),
 }
+
+#: Einwirkungen der DIN 19704, fuer die der Generator nach DIN EN 1990 keine
+#: Kombination bildet (Erdbeben 6.12b und Montagezustaende sind dort nicht
+#: gebaut): er lehnt solche Lastfaelle ab, statt sie still wegzulassen
+#: (Befund A5, 09.11.2026). Der Generator „DIN 19704“ fuehrt sie in der
+#: Lastfallklasse LF3.
+KATEGORIEN_OHNE_EN1990 = ("ERD", "MONT")
+#: Einwirkungen der DIN 19704, die der Generator nach DIN EN 1990 bis zum
+#: 09.11.2026 still wegliess (rechenverfahren: kategorien_din19704)
+KATEGORIEN_DIN19704_EN1990 = ("G_A", "W_S", "W_V", "WIND_B", "EIS", "SCHWALL", "A_M", "A_MG",
+                              "ANPRALL", "KLEMM")
 
 #: Schluessel der Kategorie „nicht zugeordnet“ in ACTION_CATEGORIES
 KATEGORIE_OFFEN = "NZ"
@@ -215,6 +230,43 @@ def stahlsorte_normiert(text) -> str:
     sonst unveraendert (der Anwender darf eine eigene Sorte mit eigenem f_y
     eintragen)."""
     return stahlsorte_schluessel(text) or str(text or "").strip()
+
+
+def schalennetz_hinweis(model) -> list:
+    """Beim **Oeffnen**: ein Schalennetz, dessen Flaechen an gemeinsamen
+    Randlinien nicht dieselben Knoten haben (mesher.unverbundene_schalenlinien)
+    - so vernetzte das Programm bis zum 09.11.2026 jede Flaeche fuer sich; die
+    Flaechen hingen nur an den Linienenden zusammen (Platte aus zwei Flaechen:
+    8,07 statt 6,49 mm nach Navier). Das Netz steht in der Datei und rechnet
+    unveraendert falsch weiter, bis neu vernetzt wird. Entscheidung des
+    Anwenders vom 09.11.2026 („10 ja“): erkennen und zum Neuvernetzen
+    auffordern. Umgestellt wird nichts. Rueckgabe die Zeilen."""
+    try:
+        from .mesher import unverbundene_schalenlinien
+        lose = unverbundene_schalenlinien(model)
+    except Exception:                       # noqa: BLE001 - ein Hinweis sperrt kein Oeffnen
+        return []
+    if not lose:
+        # neu vernetzt: ein gespeicherter Hinweis ist erledigt
+        for h in getattr(model, "importhinweise", None) or []:
+            if h.get("art") == "schalennetz":
+                h["erledigt"] = True
+        return []
+    linien = sorted({x[0] for x in lose})
+    paare = sorted({tuple(sorted((x[1], x[2]))) for x in lose})
+    beispiel = ", ".join(f"{a}/{b}" for a, b in paare[:3]) + (" …" if len(paare) > 3 else "")
+    text = (f"Schalennetz nicht verbunden: {len(paare)} Flächenpaar(e) an {len(linien)} gemeinsamen "
+            f"Linie(n) haben verschiedene Netzknoten (z. B. {beispiel}). So vernetzte das Programm bis "
+            "zum 09.11.2026 – die Flächen hängen nur an den Linienenden zusammen, das Ergebnis ist zu "
+            "weich. Bitte neu vernetzen.")
+    vorschlag = "Netz › Vernetzen (alle Flächen)"
+    hinweise = getattr(model, "importhinweise", None)
+    if hinweise is None:
+        hinweise = model.importhinweise = []
+    if not any(h.get("art") == "schalennetz" and not h.get("erledigt") for h in hinweise):
+        hinweise.append({"art": "schalennetz", "text": text, "objekte": [n for p in paare for n in p],
+                         "vorschlag": vorschlag, "erledigt": False, "datei": ""})
+    return [text + " (" + vorschlag + ")"]
 
 
 def zugstab_hinweis(model) -> list:
@@ -571,6 +623,23 @@ class Material:
         if not self.fu and not self.fy and sorte:
             return STEEL_GRADES[sorte][1]
         return self.fu or (1.3 * self.fy if self.fy else 0.0)
+
+    def zugfestigkeit_angegeben(self, t: float = 0.0) -> Optional[float]:
+        """f_u, wie es im Werkstoff steht - aus der Dickentabelle, dem Wert f_u
+        oder der Stahlsorte -, sonst None. Kein Ersatzwert 1,3 f_y: nach der
+        Festlegung des Anwenders gibt es ohne f_u eine Meldung, keinen
+        Vorgabewert (Anschlussnachweis seit 09.11.2026, Befund A23)."""
+        wert = self._nach_dicke(self.fu_dicke, t)
+        if wert is not None:
+            return wert
+        sorte = self._sorte()
+        if sorte and t > 0.040:
+            return STEEL_GRADES[sorte][3]
+        if self.fu:
+            return self.fu
+        if sorte:
+            return STEEL_GRADES[sorte][1]
+        return None
 
 
 @dataclass
@@ -1177,6 +1246,14 @@ class SurfaceSupport:
     #: Je Normalenrichtung eine Gruppe [Achse 0..2, Vorzeichen, Knoten,
     #: Einflussflaechen] - von lager_auf_netz gefuellt, nur mit ``lokal``.
     gruppen: list = field(default_factory=list)
+    #: So viele Elemente aus ``elements`` sind beim Loeschen oder Neuvernetzen
+    #: entfallen (Model.elemente_loeschen, 09.11.2026) - das Lager liegt nur
+    #: noch auf dem Rest, seine Bettungsflaeche ist kleiner geworden. Die
+    #: Modellpruefung meldet „Netz geändert – Lager prüfen“, solange
+    #: ``elements`` noch der Rest von damals ist (``entfallen_rest``); gibt
+    #: der Anwender dem Lager seine Elemente neu, endet die Meldung von selbst.
+    entfallen: int = 0
+    entfallen_rest: list[int] = field(default_factory=list)
 
     def dof_behaviour(self, dof: int) -> DofBehaviour:
         b = self.behaviour.get(dof) or self.behaviour.get(str(dof))
@@ -1237,8 +1314,14 @@ class MemberHinge:
     elemente: list[int] = field(default_factory=list)
 
     def released(self) -> list[int]:
-        """Lokale Element-FHG (0..11), die gelenkig sind (fuer die Kondensation)."""
-        return [d + 6 * self.end for d, t in enumerate(self.typ) if t == "free"]
+        """Lokale Element-FHG (0..11), die gelenkig sind (fuer die Kondensation).
+
+        Ein Federgelenk mit k = 0 ist ein Gelenk (Befund A10 der
+        Pruefagenten, 09.11.2026): bis dahin fiel die Feder mit k = 0 aus der
+        Liste der Federn und der FHG blieb biegesteif - im Skript und ueber die
+        Web-Schnittstelle (die Maske laesst k = 0 nicht zu)."""
+        return [d + 6 * self.end for d, t in enumerate(self.typ)
+                if t == "free" or (t == "spring" and not float(self.stiffness[d]) > 0)]
 
     def springs(self) -> list[tuple[int, float]]:
         return [(d + 6 * self.end, float(k)) for d, (t, k) in enumerate(zip(self.typ, self.stiffness))
@@ -1247,7 +1330,7 @@ class MemberHinge:
     def describe(self) -> str:
         parts = []
         for d, t in enumerate(self.typ):
-            if t == "free":
+            if t == "free" or (t == "spring" and not float(self.stiffness[d]) > 0):
                 parts.append(HINGE_DOF_NAMES[d])
             elif t == "spring" and self.stiffness[d] > 0:
                 parts.append(f"{HINGE_DOF_NAMES[d]}={self.stiffness[d]:g}")
@@ -1963,17 +2046,25 @@ class LoadCase:
         Bemessungslastfall (``faktorisiert``), dessen Beiwerte feststehen."""
         return self.kategorie_offen and not self.faktorisiert
 
+    # Die Einwirkungen der DIN 19704 gehoeren seit dem 09.11.2026 in dieselben
+    # drei Klassen (Befund A5 der Pruefagenten, Entscheidung des Anwenders):
+    # bis dahin fiel ein Lastfall „Eigengewicht Ausruestung“ oder „Wasserdruck
+    # staendig“ still aus jeder Kombination nach DIN EN 1990, weil er weder
+    # staendig noch veraenderlich noch aussergewoehnlich war. Ohne Klasse
+    # bleiben ERD und MONT (KATEGORIEN_OHNE_EN1990: der Generator lehnt sie
+    # ab), FAT (nur Ermuedung) und „nicht zugeordnet“ (gesperrt).
     @property
     def is_permanent(self) -> bool:
-        return self.category in ("G", "P", "SET")
+        return self.category in ("G", "P", "SET", "G_A", "W_S")
 
     @property
     def is_variable(self) -> bool:
-        return self.category.startswith("Q") or self.category in ("S", "S_H", "W", "T", "H")
+        return self.category.startswith("Q") or self.category in (
+            "S", "S_H", "W", "T", "H", "W_V", "WIND_B", "EIS", "SCHWALL", "A_M", "A_MG")
 
     @property
     def is_accidental(self) -> bool:
-        return self.category == "A"
+        return self.category in ("A", "ANPRALL", "KLEMM")
 
     def lasten_je_art(self) -> dict:
         """{Lastart: [Lasten]} - nur die eingegebenen, nicht die aus Objektlasten
@@ -3465,7 +3556,11 @@ def zylinderachsen_je_seite(mitte, a0, x):
     if L <= 0:
         return None
     z = r / L
-    return x, np.cross(x, z), z
+    # ausgeschrieben statt np.cross (dieselben Rechenschritte, bitgleich): am
+    # Drehlager 782 000 Aufrufe je Laden, np.cross kostet je Dreivektor mehr
+    # Python als die Rechnung selbst (wie in Model._seitennormale, 10.11.2026)
+    y = np.array([x[1] * z[2] - x[2] * z[1], x[2] * z[0] - x[0] * z[2], x[0] * z[1] - x[1] * z[0]])
+    return x, y, z
 
 
 def _randstuecke(model, linien: list[str]) -> list:
@@ -3720,12 +3815,61 @@ class Kontaktbedingung:
             return "in der Quelldatei deaktiviert"
         if model is not None and self.wartet_auf_netz(model):
             return "wird beim Vernetzen getrennt"
+        v = self.fugenverbindung(model) if model is not None else None
+        if v is not None and v["knoten"] == 0:
+            # Eigene, aufeinanderliegende Flaechen: ohne die Fuge verbindet die
+            # Bauteile nichts - das ist zu weich, nicht zu steif (Befund C4).
+            return "nicht ausgeführt - hier ohne Verbindung (zu weich)"
+        if v is not None and v["weich"]:
+            # Nur die Knoten des gemeinsamen Randes, dazwischen offen (Befund 37)
+            return "nicht ausgeführt - hier nur an einzelnen Knoten verbunden (zu weich)"
         return "nicht ausgeführt - hier zu steif"
 
+    def zu_weich(self, model) -> bool:
+        """Nicht ausgefuehrt und im Netz ohne durchgehende Verbindung (keine oder
+        nur einzelne gemeinsame Knoten, fugen.fugenverbindung): zu weich."""
+        v = self.fugenverbindung(model)
+        return v is not None and bool(v["weich"])
+
+    def verbindung(self, model):
+        """Gemeinsame Netzknoten der beiden Seiten, solange die Fuge nicht
+        ausgefuehrt ist (fugen.verbindung_ohne_fuge): 0 = nichts verbindet,
+        None = nicht feststellbar."""
+        v = self.fugenverbindung(model)
+        return None if v is None else v["knoten"]
+
+    def fugenverbindung(self, model):
+        """fugen.fugenverbindung, je Netz und Bedingung einmal gerechnet.
+
+        Der Schluessel umfasst die Seiten der Bedingung (geloeste Koerper,
+        Gegenkoerper, Flaechen, Gegenflaechen) und das Netz selbst: das erste,
+        mittlere und letzte Element als Objekt - ein neues Netz hat neue
+        Elemente, auch wenn Element- und Knotenzahl gleich bleiben. Die drei
+        Elemente haelt der Merker fest, damit ihre Kennung nicht an ein neues
+        Objekt vergeben wird. Bis zum 11.11.2026 waren es nur Element- und
+        Knotenzahl: nach einer Aenderung der Bedingung in der Maske und auch
+        nach neuem Vernetzen derselben Geometrie blieb die Folge der alten
+        Bedingung stehen (Befund 27)."""
+        el = model.elements
+        proben = (el[0], el[len(el) // 2], el[-1]) if el else ()
+        stand = (len(el), int(model.nn), tuple(id(x) for x in proben),
+                 tuple(str(x) for x in (self.koerpernamen or [])),
+                 tuple(str(x) for x in (getattr(self, "gegenkoerper", None) or [])),
+                 tuple(str(x) for x in (self.flaechennamen or [])),
+                 tuple(str(x) for x in (self.gegenflaechen or [])))
+        merk = getattr(self, "_verbindung", None)
+        if merk is None or len(merk) != 3 or merk[0] != stand:
+            from .fugen import fugenverbindung
+            merk = (stand, fugenverbindung(model, self) if el else None, proben)
+            self._verbindung = merk
+        return merk[1]
+
     def zu_steif(self, model) -> bool:
-        """Netz da, Fuge nicht ausgefuehrt: das Modell rechnet hier zu steif.
-        Eine Naht (starr an gemeinsamer Flaeche) ist nie zu steif - sie soll
-        es sein."""
+        """Netz da, Fuge nicht ausgefuehrt: ein Mangel, der Merker fuer das
+        Warnzeichen. Meist rechnet das Modell dort zu steif (durchverbunden);
+        haben die Seiten keinen gemeinsamen Knoten, ist es zu weich - das
+        unterscheidet :meth:`zustand`. Eine Naht (starr an gemeinsamer
+        Flaeche) ist nie zu steif - sie soll es sein."""
         return (not self.ausgefuehrt and not self.aus and not self.wartet_auf_netz(model)
                 and not self.verschweisst(model))
 
@@ -7433,6 +7577,31 @@ class Model:
             sit.deaktiviert = um(sit.deaktiviert)
         for h in self.hinges.values():
             h.elemente = um(getattr(h, "elemente", []) or [])
+        # Elementbezogene Flaechenlager (Bettung auf ``elements``): bis zum
+        # 09.11.2026 blieben ihre Nummern stehen - nach dem Loeschen des
+        # Elements 0 einer Platte aus 8 Elementen nannte die Bettung der
+        # rechten Haelfte weiter 4-7 statt 3-6, das letzte gab es nicht mehr:
+        # 0,75 statt 1,00 m2 Bettungsflaeche, ohne Meldung (Befund A22). Die
+        # Nummern ruecken jetzt mit wie bei Lasten und Kontaktpaaren. Entfaellt
+        # ein Element des Lagers selbst, ist nicht eindeutig, was der Anwender
+        # will (Bettung kleiner oder auf die neuen Elemente) - das Lager merkt
+        # es sich, die Modellpruefung meldet „Netz geändert – Lager prüfen“.
+        for ss in (getattr(self, "surface_supports", None) or []):
+            alt = [int(i) for i in (ss.elements or [])]
+            if not alt:
+                continue
+            offen = (int(getattr(ss, "entfallen", 0) or 0) > 0
+                     and alt == [int(i) for i in (getattr(ss, "entfallen_rest", None) or [])])
+            neu = um(alt)
+            weg = len(alt) - len(neu)
+            if weg > 0:
+                ss.entfallen = (int(ss.entfallen) if offen else 0) + weg
+                ss.entfallen_rest = list(neu)
+            elif offen:
+                ss.entfallen_rest = list(neu)
+            else:
+                ss.entfallen, ss.entfallen_rest = 0, []
+            ss.elements = neu
         return len(wegmenge)
 
     def koerperflaechen(self) -> set:
@@ -8036,7 +8205,9 @@ class Model:
         if not seiten:
             return self.nodes[[int(x) for x in e.nodes]].mean(axis=0)
         s = seiten[int(seite) % len(seiten)]
-        return self.nodes[[int(e.nodes[j]) for j in s]].mean(axis=0)
+        # Summe durch Anzahl wie ndarray.mean, ohne dessen Umweg (bitgleich;
+        # am Drehlager eine Million Aufrufe je Laden, 10.11.2026)
+        return np.add.reduce(self.nodes[[int(e.nodes[j]) for j in s]], axis=0) / len(s)
 
     def _seitennormale_oder_schale(self, elem: int, seite: int):
         """Aussennormale einer Volumenseite - oder die Normale einer Schale
@@ -8123,6 +8294,13 @@ class Model:
         if gl.projiziert and richtung:
             d = np.asarray(richtung, float)
             d = d / (np.linalg.norm(d) or 1.0)
+            # Der Windschatten gehoert zur **Kraft** p d, nicht zur Achse: bei
+            # p < 0 kommt die Last von der Gegenseite. Bis zum 09.11.2026 traf
+            # „global Z, p = −5 kN/m²“ (Schnee) die Unterseite eines Koerpers
+            # statt das Dach - Summe richtig, Angriffspunkt falsch (Befund A3).
+            # Der Betrag p |n.d| bleibt; Schalen nehmen ohnehin |n.d|.
+            if float(gl.p) < 0.0:
+                d = -d
 
         def nimm(e: int, seite: int, flaeche=None):
             if not 0 <= int(e) < len(self.elements):
@@ -8404,16 +8582,46 @@ class Model:
         return elems, a, (V / L if L > 0 else 0.0)
 
     def zwang_ohne_lager(self, case: str = None) -> list:
-        """Vorgegebene Freiheitsgrade, an denen kein Lager haelt - unwirksam."""
+        """Vorgegebene Freiheitsgrade, an denen **gar kein** Lager sitzt (weder
+        Knoten-, Linien- noch Flaechenlager) - [(Knoten, FHG)]. Die Oberflaeche
+        setzt dort auf Wunsch ein starres Knotenlager. Bis zum 09.11.2026 zaehlten
+        nur Knotenlager; ein starres Linienlager galt als „ohne Lager“ (Befund C1)."""
+        return [(n, d) for n, d, grund in self.zwang_unwirksam(case) if grund == "ohne Lager"]
+
+    def zwang_unwirksam(self, case: str = None) -> list:
+        """Vorgegebene Freiheitsgrade, an denen die Zwangsverformung nicht wirkt -
+        [(Knoten, FHG, Grund)]. Sie wirkt an einem starren linearen Lager (der FHG
+        steht auf dem Wert) und an einer linearen Feder (der Fusspunkt der Feder
+        verschiebt sich, seit 09.11.2026, Befund A11). Unwirksam ist sie ohne Lager,
+        an einem freien FHG und an einem Lager mit Ausfall, Reibung, Schlupf oder
+        Grenzkraft - dort wird sie gemeldet, nicht still verworfen."""
         lc = self.case(case)
-        gehalten: dict = {}
+        if not lc.zwangsverformungen:
+            return []
+        from . import supports as sup
+        art: dict = {}
+        for e in sup.expand(self):
+            alt = art.get(e.index)
+            if e.nonlinear:
+                art.setdefault(e.index, "Lager mit Ausfall oder nichtlinear")
+            elif e.typ == "rigid" or alt is None or alt.startswith("Lager mit"):
+                art[e.index] = "wirkt"
+        frei_gesetzt = set()
         for s in self.supports:
-            gehalten.setdefault(int(s.node), set()).update(int(d) for d in (s.dofs or []))
+            for d in range(NDOF):
+                b = s.dof_behaviour(d)
+                if not b.acts and (d in (s.dofs or []) or b.typ == "free"):
+                    frei_gesetzt.add(NDOF * int(s.node) + d)
         out = []
         for zv in lc.zwangsverformungen:
             for d in zv.dofs:
-                if d not in gehalten.get(int(zv.node), set()):
-                    out.append((int(zv.node), int(d)))
+                i = NDOF * int(zv.node) + int(d)
+                grund = art.get(i)
+                if grund == "wirkt":
+                    continue
+                if grund is None:
+                    grund = "Lager frei" if i in frei_gesetzt else "ohne Lager"
+                out.append((int(zv.node), int(d), grund))
         return out
 
     def add_kontaktbedingung(self, name: str, **kw) -> Kontaktbedingung:
@@ -10125,7 +10333,8 @@ class Model:
         for c in self.combinations.values():
             for k in c.lastfaelle():
                 if k not in self.load_cases:
-                    msgs.append(f"FEHLER: Kombination '{c.name}': Lastfall '{k}' unbekannt")
+                    from .diagnose import lastfall_fehlt_text
+                    msgs.append("FEHLER: " + lastfall_fehlt_text(c.name, k))
         # Lastfaelle ohne Einwirkung halten ihre Kombinationen auf (13.10.2026):
         # nur eine Warnung - einzelne Lastfaelle rechnen weiter
         gesperrt = self.gesperrte_kombinationen()
@@ -10275,6 +10484,18 @@ class Model:
                 if str(u.ziel) not in fugen:
                     msgs.append(f"FEHLER: Lastfall '{lc.name}': Übermaß auf „{u.ziel}“ - eine Kontaktbedingung "
                                 "oder ein Kontaktpaar dieses Namens gibt es nicht, das Übermaß wirkt nirgends")
+        # Flaechenlager in Flaechenachsen wirken je Flaeche entlang einer
+        # globalen Achse: schraege, gekruemmte und beidseitige Flaechen sperren
+        # die Rechnung (A12, A13 - Entscheidung des Anwenders vom 09.11.2026)
+        if len(self.elements) and any(getattr(ss, "lokal", False) for ss in (self.surface_supports or [])):
+            from .supports import lokale_lager_schraeg
+            msgs += ["FEHLER: " + z for z in lokale_lager_schraeg(self)]
+        # Eingaben, mit denen sich nicht oder nur falsch rechnen laesst (seit
+        # 09.11.2026): E-Modul, Querdehnzahl, Querschnitt und Dicke null oder
+        # negativ, Flaeche ohne Dicke, Last oder Lager auf ein Ziel, das es
+        # nicht gibt - mit Namen und Wert (diagnose.eingabepruefung)
+        from .diagnose import eingabepruefung
+        msgs += [f"{b.stufe}: {b.text}" for b in eingabepruefung(self)]
         # Rechenbarkeit: unvernetzte Geometrie (WARNUNG) und Teiltragwerke ohne
         # Lager (FEHLER - das Gleichungssystem waere singulaer)
         if self.elements:
@@ -10324,7 +10545,8 @@ class Model:
             "shells": {k: asdict(v) for k, v in self.shells.items()},
             "supports": [_support_dict(s) for s in self.supports],
             "line_supports": [_beh_dict(asdict(x)) for x in self.line_supports],
-            "surface_supports": [_beh_dict(asdict(x)) for x in self.surface_supports],
+            "surface_supports": [_ohne_vorgabe("surface_supports", _beh_dict(asdict(x)))
+                                 for x in self.surface_supports],
             "lines": [asdict(x) for x in self.lines.values()],
             "hinges": [asdict(x) for x in self.hinges.values()],
             "load_cases": lastfaelle,
@@ -10397,6 +10619,10 @@ class Model:
             # eigene Koordinatensysteme (08.11.2026): nur, wenn es welche gibt
             **({"koordinatensysteme": [asdict(x) for x in self.koordinatensysteme.values()]}
                if getattr(self, "koordinatensysteme", None) else {}),
+            # Federgelenk k = 0 steht als Gelenk an den Elementen (A10, seit
+            # 09.11.2026): from_dict zieht dann nichts nach (Befund 34) - nur,
+            # wenn es ein solches Gelenk gibt
+            **({FEDERGELENK_NULL: "gelenk"} if self._hat_federgelenk_null() else {}),
         }
 
     def save(self, path: str, fortschritt=None):
@@ -10641,8 +10867,71 @@ class Model:
         if m.elements and any(lc.geometrielasten or lc.linienlasten
                               for lc in m.load_cases.values()):
             m.lasten_verteilen()
+        # nur eine Datei von vor dem 09.11.2026 (ohne die Kennung, Befund 34)
+        if d.get(FEDERGELENK_NULL) != "gelenk":
+            m._gelenke_feder_null_nachziehen()
         _melde(fortschritt, 1.0, "Modell gelesen")
         return m
+
+    def _hat_federgelenk_null(self) -> bool:
+        """Ein Gelenk mit einem Federgelenk-FHG der Steifigkeit 0 (A10)."""
+        return any(t == "spring" and not float(k) > 0
+                   for h in self.hinges.values() for t, k in zip(h.typ, h.stiffness))
+
+    def _gelenke_feder_null_nachziehen(self) -> None:
+        """Federgelenk mit k = 0 auf den Elementen einer aelteren Datei als
+        Gelenk eintragen (Befund A10, 09.11.2026): bis dahin trug apply_hinge
+        einen solchen FHG weder als Gelenk noch als Feder ein - er blieb
+        biegesteif. Das Stabende ist das des Gelenks, ausser die uebrigen FHG
+        des Gelenks stehen am Element am anderen Ende. Jede Aenderung kommt
+        als Ladehinweis ins Protokoll.
+
+        Seit dem 11.11.2026 (Befunde 34 und 43 der Pruefagenten) nur fuer eine
+        Datei ohne die Kennung ``federgelenk_null`` (from_dict): to_dict
+        schreibt sie, sobald ein Gelenk einen solchen FHG hat. Bis dahin lief
+        der Nachzug bei jedem Oeffnen, auch Kopie und Rueckgaengig, und trug
+        in eine aktuelle Datei ein Gelenk ein, das der Anwender wieder
+        entfernt oder mit apply_hinge(end=1) ans andere Ende gelegt hatte -
+        das Einspannmoment fiel auf 0. Hat das Gelenk weitere FHG und steht
+        keiner davon mehr am Element, hat der Anwender es dort entfernt: dann
+        bleibt das Element, wie es ist. Was der Nachzug aendert, haelt
+        ``_gelenke_vor_nachzug`` fest {Element: (vorher, nachher)}: die alte
+        Ergebnisdatei passt gegen den Stand davor (ergebnisse.lesen) und
+        bekommt den Status der Fehlerkorrektur (Stand 17), statt als
+        „seit der Rechnung geändert: Elementeigenschaften“ verworfen zu werden."""
+        vor = getattr(self, "_gelenke_vor_nachzug", None) or {}
+        for h in self.hinges.values():
+            null = [d for d, (t, k) in enumerate(zip(h.typ, h.stiffness))
+                    if t == "spring" and not float(k) > 0]
+            if not null:
+                continue
+            uebrig = [d for d, t in enumerate(h.typ) if t in ("free", "spring") and d not in null]
+            for i in getattr(h, "elemente", None) or []:
+                if not (0 <= int(i) < len(self.elements)):
+                    continue
+                e = self.elements[int(i)]
+                ende = h.end
+                if uebrig:
+                    federn = {int(dd) for dd, _k in (e.hinge_springs or [])}
+                    vorhanden = set(int(x) for x in e.hinges) | federn
+                    ende = None
+                    for kand in (h.end, 1 - h.end):
+                        if all(d + 6 * kand in vorhanden for d in uebrig):
+                            ende = kand
+                            break
+                    if ende is None:
+                        continue                # am Element entfernt: nichts nachziehen
+                neu = sorted({d + 6 * ende for d in null} - set(int(x) for x in e.hinges))
+                if neu:
+                    alt = list(e.hinges)
+                    e.hinges = sorted(set(int(x) for x in e.hinges) | set(neu))
+                    vor[int(i)] = (vor.get(int(i), (alt, None))[0], list(e.hinges))
+                    # Elementnummer ab 0 wie in Tabellen und Modellbaum (C13, Befund 13/35)
+                    self._ladehinweise.append(
+                        f"Gelenk {h.name}: Federsteifigkeit 0 an Element {int(i)} jetzt als Gelenk "
+                        f"({', '.join(HINGE_DOF_NAMES[d] for d in null)}; bis 09.11.2026 biegesteif gerechnet)")
+        if vor:
+            self._gelenke_vor_nachzug = vor
 
     @staticmethod
     def load(path: str, fortschritt=None, umstellen: bool = True) -> "Model":
@@ -10708,8 +10997,13 @@ class Model:
         nur ein Hinweis, umgestellt wird nichts)."""
         m._ladehinweise.extend(werkstoffe_alter_datei_nachziehen(m))
         m._ladehinweise.extend(zugstab_hinweis(m))
+        # Schalennetz von vor dem 09.11.2026 mit unverbundenen Flaechen: nur ein Hinweis
+        m._ladehinweise.extend(schalennetz_hinweis(m))
         # Reibung an Lagern aus RFEM ohne Reibungsart (15.10.2026): nur ein Hinweis
         m._ladehinweise.extend(lagerreibung_hinweis(m))
+        # Windlasten eines aelteren Programmstands (Befund 40, 11.11.2026): nur ein Hinweis
+        from .wind import windlasten_hinweis
+        m._ladehinweise.extend(windlasten_hinweis(m))
         # Werkstoffe, die wie Spannstahl aussehen, aber keine Art tragen
         # (13.10.2026, Drehlager vor diesem Tag importiert): nur ein Hinweis
         from .ec3.spannstahl import ladehinweise
@@ -10990,6 +11284,8 @@ NEUE_FELDER = {
     # (gespeicherte Ansichten, 14.10.2026 - zaehlen ohnehin nicht fuer die
     # Rechnung: ergebnisse.MODELLTEILE)
     # vorspannung/je-anker (Definitionen der Vorspannung je Anker, 16.10.2026)
+    # gruppe5/robustheit (Flaechenlager merkt sich entfallene Elemente, 09.11.2026)
+    "surface_supports": {"entfallen": 0, "entfallen_rest": []},
     "": {"stabeinleitung": asdict(Stabeinleitung()), "ansichten": [], "vorspann_definitionen": [],
          # ui/paket-b (eigene Koordinatensysteme, 08.11.2026)
          "koordinatensysteme": []},

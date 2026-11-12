@@ -96,7 +96,7 @@ def test_projiziert_schale():
     m2.add_geometrielast("W", 800.0, richtung=[0, 1, 0], projiziert=False, case="LF1")
     check("Verfahrenstabelle: „projiziert_schale“ Fehlerkorrektur Stand 7, betrifft nur projizierte Schalenlast",
           mk is not None and mk.wechsel[-1].art == rv.FEHLERKORREKTUR and mk.wechsel[-1].stand == 7
-          and rv.VERFAHRENSSTAND == 7 and mk.betrifft(m) and not mk.betrifft(m2))
+          and rv.VERFAHRENSSTAND >= 7 and mk.betrifft(m) and not mk.betrifft(m2))
 
 
 def test_um_x_drehen():

@@ -435,7 +435,7 @@ def test_residuum_stufe_mit_kontakt():
     kn.zonen = _ZonenAttrappe([6 * 10, 6 * 11])
     z2, ok2 = kn.residuum_stufe(F, "1/1", r=r, bezug=b)
     check("dasselbe Residuum nur in ausgenommenen Zonen: außerhalb erfüllt, Zonen getrennt ausgewiesen",
-          ok2 and "in den ausgenommenen Zonen 2.8e-02" in z2, z2[:220])
+          ok2 and "in den ausgenommenen Zonen 0,028" in z2, z2[:220])
     kn.zonen = None
     r_klein = r * 1e-3
     z3, ok3 = kn.residuum_stufe(F, "1/1", r=r_klein, bezug=b)
@@ -445,7 +445,7 @@ def test_residuum_stufe_mit_kontakt():
     mk = TP._gequetschter_block()
     rk = solver.solve_static(mk, workers=1)
     zeilen = [z for z in (rk.info.get("plastizitaet") or {}).get("log") or [] if "Residuum am Ende" in z]
-    werte = [float(x) for z in zeilen for x in _re_inner(z)]
+    werte = [float(x.replace(",", ".")) for z in zeilen for x in _re_inner(z)]
     check("Kontaktfall (gequetschter Block): jede Laststufe meldet das innere Gleichgewicht",
           zeilen and all("inneres Gleichgewicht" in z for z in zeilen), f"{len(zeilen)} Zeilen")
     check("… und es liegt unter der Toleranz 1e-3, konvergiert",
@@ -455,7 +455,7 @@ def test_residuum_stufe_mit_kontakt():
 
 def _re_inner(z):
     import re
-    m = re.search(r"inneres Gleichgewicht .*? = ([0-9.e+-]+) der Lasten", z)
+    m = re.search(r"inneres Gleichgewicht .*? = ([0-9,]+) der Lasten", z)
     return [m.group(1)] if m else []
 
 

@@ -12,7 +12,7 @@ Geprueft wird mit dem echten Hauptfenster offscreen:
 * die Rueckfrage Speichern / Verwerfen / Abbrechen vor Neu, Oeffnen,
   Beispiel, Import und Beenden - mit dem Testschalter STATIK3D_UNGESPEICHERT;
 * Beenden waehrend einer Rechnung;
-* „Beispiel öffnen ▾“, „Modell leeren (Eigenschaften behalten)…“ (mit und
+* die Beispielbibliothek (bis 09.11.2026 „Beispiel öffnen ▾“), „Modell leeren (Eigenschaften behalten)…“ (mit und
   ohne Rueckgaengig), „Alle Kontakte löschen…“;
 * die Befehlssuche (Wortanfang, Synonyme, Trefferliste, nichts
   Modellersetzendes oder Loeschendes direkt);
@@ -428,22 +428,93 @@ def test_beenden_waehrend_rechnung():
     w.deleteLater()
 
 
+def _bibliothek_bedienen(app, schritte, protokoll, versuche=200):
+    """Sobald die Beispielbibliothek modal offen ist: ``schritte(dlg)`` ausfuehren
+    (waehlt, traegt ein, klickt) - wie am Desktop."""
+    from PySide6 import QtCore, QtWidgets
+
+    def los(rest=versuche):
+        d = QtWidgets.QApplication.activeModalWidget()
+        if d is None or d.objectName() != "beispielbibliothek":
+            if rest > 0:
+                QtCore.QTimer.singleShot(30, lambda: los(rest - 1))
+            return
+        try:
+            schritte(d)
+        except Exception as ex:          # noqa: BLE001
+            protokoll.append(f"Ausnahme {ex}")
+            d.reject()
+    QtCore.QTimer.singleShot(30, los)
+
+
 def test_beispiel_knopf():
+    """Beispielbibliothek (09.11.2026) statt „Beispiel öffnen ▾“ mit acht
+    festen Beispielen: ein Knopf, Dialog mit Gruppen und Parametertabelle,
+    Grenzen sperren „Übernehmen“, eigene Dateien erscheinen."""
     w, app = _fenster()
     from PySide6 import QtWidgets
     bsp = [b for b in w.ribbon.befehle if b.gruppe == "Beispiele"]
-    check("acht Beispiele als Befehle (die Suche findet sie)", len(bsp) == 8, str([b.text for b in bsp]))
-    knoepfe = [k for k in w.ribbon.findChildren(QtWidgets.QToolButton)
-               if k.defaultAction() in [b.aktion for b in bsp]]
-    check("… kein Beispiel hat mehr einen eigenen Knopf im Ribbon", not knoepfe, str(len(knoepfe)))
-    menue = [k for k in w.ribbon.findChildren(QtWidgets.QToolButton) if k.text() == "Beispiel öffnen ▾"]
-    aktionen = menue[0].menu().actions() if menue and menue[0].menu() else []
-    check("ein Knopf „Beispiel öffnen ▾“ mit den acht Beispielen im Menü",
-          len(menue) == 1 and [a.text() for a in aktionen] == [b.text for b in bsp],
-          str([a.text() for a in aktionen]))
+    knopf = [k for k in w.ribbon.findChildren(QtWidgets.QToolButton)
+             if bsp and k.defaultAction() is bsp[0].aktion]
+    check("Gruppe Beispiele: ein Befehl „Beispielbibliothek…“ mit großem Knopf",
+          [b.text for b in bsp] == ["Beispielbibliothek…"] and len(knopf) == 1
+          and knopf[0].objectName() == "ribbongross", str([b.text for b in bsp]))
+    check("… kein Menü „Beispiel öffnen ▾“ mehr",
+          not [k for k in w.ribbon.findChildren(QtWidgets.QToolButton) if k.text() == "Beispiel öffnen ▾"])
+    ordner = tempfile.mkdtemp(prefix="statik3d_eigene_beispiele_")
+    with open(os.path.join(ordner, "kragarm.py"), "w", encoding="utf-8") as f:
+        f.write('TITEL = "Mein Kragarm"\nGRUPPE = "Stabwerk"\nPARAMETER = [("L", "Länge", 3.0, "m", 0.5, 10.0)]\n'
+                "def bauen(werte):\n    from statik3d.examples_lib import frame_example\n"
+                "    return frame_example(L=werte['L'])\n")
+    alt_ordner = os.environ.get("STATIK3D_BEISPIELE")
+    os.environ["STATIK3D_BEISPIELE"] = ordner
     w.new_model(); app.processEvents()
-    aktionen[0].trigger(); app.processEvents()
-    check("… ein Eintrag lädt das Beispiel", w.model.nn > 0, str(w.model.nn))
+    proto, gesehen = [], {}
+
+    def schritte(d):
+        gesehen["eintraege"] = [it.text(0) for it in d._eintraege]
+        gesehen["gruppen"] = [d.baum.topLevelItem(i).text(0) for i in range(d.baum.topLevelItemCount())]
+        d.beispiel_waehlen("hubtor")
+        gesehen["tabelle"] = [d.tabelle.item(r, c).text() for r in range(d.tabelle.rowCount()) for c in (0, 1, 2)]
+        d.wert_setzen("stuetzweite", "100")
+        gesehen["gesperrt"] = (not d.b_ok.isEnabled(), d.fehler.text())
+        d.wert_setzen("stuetzweite", "10")
+        gesehen["frei"] = d.b_ok.isEnabled()
+        d.b_ok.click()
+    _bibliothek_bedienen(app, schritte, proto)
+    try:
+        w.act_beispielbibliothek.trigger(); app.processEvents()
+    finally:
+        if alt_ordner is None:
+            os.environ.pop("STATIK3D_BEISPIELE", None)
+        else:
+            os.environ["STATIK3D_BEISPIELE"] = alt_ordner
+    ein = gesehen.get("eintraege", [])
+    check("Dialog: drei Gruppen, 14 eingebaute Beispiele und die eigene Datei",
+          gesehen.get("gruppen") == ["Stabwerk", "Flächentragwerk", "Volumen"] and len(ein) == 15
+          and "Mein Kragarm  (eigene Datei)" in ein, f"{gesehen.get('gruppen')} {len(ein)} {proto}")
+    tab = gesehen.get("tabelle", [])
+    check("… Hubtor: Parametertabelle mit Wert und Einheit („Stützweite“ 12 m)",
+          tab[:3] == ["Stützweite", "12", "m"], str(tab[:6]))
+    gs = gesehen.get("gesperrt", (False, ""))
+    check("… Stützweite 100 m: „Übernehmen“ gesperrt, Grund steht da", gs[0] and "außerhalb" in gs[1], gs[1])
+    check("… 10 m: wieder frei", gesehen.get("frei") is True)
+    m = w.model
+    check("„Übernehmen“ baut das Hubtor mit 10 m Stützweite (Modell, meta)",
+          m.name == "Hubtor" and abs(float(m.nodes[:, 0].max()) - 10.0) < 1e-9
+          and m.meta.get("beispiel", {}).get("werte", {}).get("stuetzweite") == 10.0,
+          f"{m.name} {m.nn}")
+    # geaendertes Modell: die uebliche Rueckfrage, Abbrechen laesst alles stehen
+    w.model.add_node(50.0, 0.0, 0.0); w.refresh_all(); app.processEvents()
+    nn = w.model.nn
+    from statik3d import beispiele as bib
+    with _Fragen(w, "abbrechen") as f:
+        w.beispiel_uebernehmen(bib.finden("frame"), {}); app.processEvents()
+        check("geändertes Modell, „Übernehmen“: gefragt (Beispiel öffnen), Abbrechen lässt das Modell",
+              len(f.gefragt) == 1 and "Beispiel" in f.gefragt[0][0] and w.model.nn == nn, str(f.gefragt))
+    w.new_model(); app.processEvents()
+    w.load_example("truss"); app.processEvents()
+    check("load_example (Vorgabewerte) bleibt: lädt das Beispiel", w.model.nn > 0, str(w.model.nn))
 
 
 def test_modell_leeren():
@@ -653,13 +724,15 @@ def test_befehlssuche():
     fp = _fingerabdruck(w.model)
     _knopf_fragen(w, True)
     try:
-        for text in ("Neu", "Modell leeren", "Alle Kontakte löschen…", "Rahmen"):
+        # „Rahmen“ (ein Beispiel) stand hier bis zur Beispielbibliothek
+        # (09.11.2026); sie ersetzt das Modell nie direkt, erst „Übernehmen“
+        for text in ("Neu", "Modell leeren", "Alle Kontakte löschen…"):
             rb.suche.setText(text)
             rb._suche_ausfuehren(); app.processEvents()
             rb._vervollstaendigung.popup().hide()
     finally:
         w.__dict__.pop("_fragen_knoepfe", None)
-    check("„Neu“, „Modell leeren“, „Alle Kontakte löschen…“, Beispiel: nie direkt aus der Suche",
+    check("„Neu“, „Modell leeren“, „Alle Kontakte löschen…“: nie direkt aus der Suche",
           ausgeloest == [] and _fingerabdruck(w.model) == fp, str(ausgeloest))
     check("… das Register des Befehls steht vorn, die Statuszeile sagt warum",
           "Suche" in w.statusBar().currentMessage(), w.statusBar().currentMessage()[:90])

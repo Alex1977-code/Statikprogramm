@@ -126,13 +126,15 @@ def test_nullkoerper_und_fehler():
     m2.elements[3].nodes = [kn[0], kn[1], kn[2], kn[2], kn[4], kn[5], kn[6], kn[7]]
     z = [x for x in diagnose.meldungen(m2) if x.startswith("FEHLER") and "zusammenfallenden" in x]
     check("Sechsflächner mit einer zusammengezogenen Kante (Volumen > 0): FEHLER mit Elementnummer",
-          len(z) == 1 and "Element 4 (hex8)" in z[0], z[0][:100] if z else "")
+          # das veraenderte Element ist m2.elements[3]: Zaehlung ab 0 wie in
+          # Tabellen und Modellbaum (Befund C13, 09.11.2026; davor „Element 4“)
+          len(z) == 1 and "Element 3 (hex8)" in z[0], z[0][:100] if z else "")
     try:
         w_max(m2)
         hielt = False
         text = "die Rechnung lief"
     except Exception as ex:                      # noqa: BLE001
-        hielt = "Element 4 (hex8)" in str(ex)
+        hielt = "Element 3 (hex8)" in str(ex)
         text = str(ex)[:100]
     check("… und die Rechnung hält dort an, statt es still wegzulassen", hielt, text)
 

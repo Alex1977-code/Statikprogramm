@@ -42,7 +42,11 @@ def stab_nachweis(model, member, results: dict, n: int, mc, sec, mat):
     if gewinde_hinweis(sec):
         mc.warnings.append(gewinde_hinweis(sec))
     d = SIZES[g][0] * 1e-3
-    fub = float(mat.ultimate_strength(d) or 0.0)
+    # f_ub ist das f_u, das im Werkstoff steht (Wert, Dickentabelle oder Sorte).
+    # Bis zum 09.11.2026 nahm der Nachweis bei einem Werkstoff mit f_y ohne f_u
+    # still 1,3 f_y (Material.ultimate_strength): 640 -> 832 statt Meldung
+    # (Nebenbefund 15)
+    fub = float(mat.zugfestigkeit_angegeben(d) or 0.0)
     gM2 = float(getattr(model.design, "gamma_M2", 1.25) or 1.25)
     if fub <= 0:
         mc.fehler = f"Werkstoff {mat.name} ohne Zugfestigkeit f_u"

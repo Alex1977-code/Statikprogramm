@@ -1403,7 +1403,7 @@ def _randfeld_dazu(feld, rand: np.ndarray, randkante: np.ndarray, h: float):
 
 
 def _dreiecke_2d(ringe: list, h: float, fest: list = None, feld=None,
-                 dreiecksgitter: bool = False) -> tuple:
+                 dreiecksgitter: bool = False, zwang: dict = None) -> tuple:
     """Ebenes Vieleck mit Loechern in Dreiecke teilen.
 
     Randpunkte sind vorgegeben (sie sind mit den Nachbarflaechen gemeinsam).
@@ -1423,15 +1423,44 @@ def _dreiecke_2d(ringe: list, h: float, fest: list = None, feld=None,
     verdichtet (:func:`_verdichten_2d`) und auf die Feldweite ausgeduennt;
     mit ``dreiecksgitter`` (Fein) im Dreiecksgitter
     (:func:`_verdichten_2d_dreieck`).
+
+    ``zwang`` (Schalen, 09.11.2026, Befund A19): Zwangsstrecken **im Innern**
+    - die Linie einer anderen Flaeche, die in dieser liegt (Rippe auf der
+    Platte). ``zwang["punkte"]`` sind ihre Punkte, soweit sie nicht schon
+    Randpunkte sind, ``zwang["strecken"]`` Indexpaare in (Randpunkte,
+    Zwangspunkte), ``zwang["fest"]`` je Strecke wie ``fest``. Die Punkte
+    stehen fest wie der Rand, Innenpunkte halten von den Strecken denselben
+    Abstand wie vom Rand, und jede Strecke muss Kante des Netzes sein - sonst
+    weichen wie am Rand die Innenpunkte, die sie verdraengen. Was danach noch
+    fehlt, steht in ``zwang["fehlt"]``. Ohne ``zwang`` bleibt alles, wie es war.
     """
     from scipy.spatial import Delaunay, cKDTree
     rand = np.vstack([np.asarray(R, float) for R in ringe])
     lo, hi = rand.min(axis=0), rand.max(axis=0)
+    zstrecken, zringe, zfest = [], [], []
+    if zwang:
+        zp = np.asarray(zwang.get("punkte", []), float).reshape(-1, 2)
+        n_ring = len(rand)
+        if len(zp):
+            rand = np.vstack([rand, zp])
+        zstrecken = [(int(a), int(b)) for a, b in zwang.get("strecken", [])]
+        zringe = [rand[[a, b]] for a, b in zstrecken]
+        marken = list(zwang.get("fest", []) or [])
+        zfest = [np.array([bool(marken[i]) if i < len(marken) else False] * 2)
+                 for i in range(len(zstrecken))]
+        zwang["fehlt"] = []
     # Erst die Kraenze um die Oeffnungen (feiner Uebergang), dann das
     # gleichmaessige Gitter fuer das Feld. Was zu nah an schon Gesetztem
     # steht, faellt weg - naeher als RANDABSTAND mal der dort geltenden
     # Weite gaebe Splitter.
     randkante = _randkantenlaengen(ringe)
+    if zwang:
+        # je Punkt die laengere seiner Strecken - auch der Zwangsstrecken
+        randkante = np.concatenate([randkante, np.zeros(len(rand) - n_ring)])
+        for (a, b), zr in zip(zstrecken, zringe):
+            ell = float(np.linalg.norm(zr[1] - zr[0]))
+            randkante[a] = max(randkante[a], ell)
+            randkante[b] = max(randkante[b], ell)
     # Das Innennetz folgt dem **lokal feinen Rand** (siehe RANDFELD). Es
     # genuegt nicht, Innenpunkte vom feinen Rand fernzuhalten - dort muessen
     # welche **hin**, sonst klafft zwischen 3-mm-Randstrecken und 50-mm-Feld
@@ -1447,7 +1476,7 @@ def _dreiecke_2d(ringe: list, h: float, fest: list = None, feld=None,
         # verschieden fein geteilten Bohrungen sind das zwei Werte. Gemessen
         # wird zur Rand**strecke**, nicht zum Randpunkt.
         d, i = cKDTree(rand).query(kranz)
-        ds = randstreckenabstand(kranz, ringe)
+        ds = randstreckenabstand(kranz, ringe + zringe)
         kranz = kranz[np.minimum(d, ds)
                       > RANDABSTAND * np.minimum(h, randkante[i] + WACHSTUM_FLAECHE * d)]
     gesetzt = np.vstack([rand, kranz]) if len(kranz) else rand
@@ -1486,12 +1515,12 @@ def _dreiecke_2d(ringe: list, h: float, fest: list = None, feld=None,
                 # ein Quadrat mit vier 1-m-Strecken haette dann 650 mm
                 # Sperrzone und bliebe innen leer.
                 nah = cKDTree(gesetzt).query(K)[0]
-                ds = randstreckenabstand(K, ringe)
+                ds = randstreckenabstand(K, ringe + zringe)
                 # Neben einer festgelegten, groben Randstrecke gilt deren
                 # eigene Laenge als Sollweite - sowohl fuer den Abstand zum
                 # Rand als auch untereinander. Ohne festgelegte Strecken ist
                 # die Sollweite ueberall h, und beides ist ein Nullschritt.
-                soll = (_sollweite(K, ringe, fest, h) if fest is not None
+                soll = (_sollweite(K, ringe + zringe, list(fest) + zfest, h) if fest is not None
                         else np.full(len(K), h))
                 if feld is not None:
                     # Das Feld kann nur feiner machen; groeber neben einer
@@ -1541,9 +1570,22 @@ def _dreiecke_2d(ringe: list, h: float, fest: list = None, feld=None,
     # kann nur Innenpunkte entfernen, nie Randpunkte. Bleibt danach eine
     # Strecke offen, liegt es an der Geometrie selbst (ein entarteter Rand) -
     # und **das** wird gemeldet, statt es dem Zufall zu ueberlassen.
+    def zwang_fehlt(T):
+        """Zwangsstrecken, die im Netz keine Kante sind."""
+        if not zstrecken:
+            return []
+        if not len(T):
+            return list(zstrecken)
+        da = set()
+        for i, j in ((0, 1), (1, 2), (2, 0)):
+            for a, b in zip(T[:, i], T[:, j]):
+                da.add((int(min(a, b)), int(max(a, b))))
+        return [(a, b) for a, b in zstrecken if (min(a, b), max(a, b)) not in da]
+
     T = zerlegen(P2)
     for _runde in range(MAX_RANDRUNDEN):
         fehlt = _fehlende_randstrecken(ringe, T) if len(T) else _randstrecken(ringe)
+        fehlt = fehlt + zwang_fehlt(T)
         if not fehlt:
             break
         if len(P2) <= n_rand:
@@ -1560,6 +1602,8 @@ def _dreiecke_2d(ringe: list, h: float, fest: list = None, feld=None,
             break                           # kein Innenpunkt schuld
         P2 = np.vstack([P2[:n_rand], innen[~stoert]])
         T = zerlegen(P2)
+    if zwang:
+        zwang["fehlt"] = zwang_fehlt(T)
     return P2, T, _fehlende_randstrecken(ringe, T) if len(T) else _randstrecken(ringe)
 
 
@@ -1661,7 +1705,7 @@ def _vorgabe_passt(model: Model, flaeche, vorgabe) -> bool:
     return True
 
 
-def flaechennetz(model: Model, flaeche, teilung: "Linienteilung") -> tuple:
+def flaechennetz(model: Model, flaeche, teilung: "Linienteilung", zwang: list = None) -> tuple:
     """Dreiecksnetz einer Randflaeche.
 
     Rueckgabe (Punkte, Dreiecke, Meldung, Linien-die-feiner-muessen, Kennung).
@@ -1669,6 +1713,13 @@ def flaechennetz(model: Model, flaeche, teilung: "Linienteilung") -> tuple:
     (siehe :func:`punktkennung`); Innenpunkte stehen als ``None``. Darueber
     setzt :func:`randschale` die Huelle zusammen, ohne auf Koordinaten zu
     vertrauen.
+
+    ``zwang`` (Schalen, 09.11.2026, Befund A19): Namen von Linien, die **in**
+    der ebenen Flaeche liegen und im Netz Kanten sein muessen (die Linie einer
+    anderen Flaeche: Linie in Flaeche). Ihre Punkte kommen aus derselben
+    Linienteilung und tragen dieselbe Kennung wie in der Flaeche, der die
+    Linie gehoert - so teilen beide die Knoten. Eine Zwangslinie, deren
+    Strecken im Netz fehlen, steht bei den Linien, die feiner muessen.
     """
     # Ein Netz, das ein gesweepter Koerper fuer diese Flaeche schon gelegt hat
     # (statik3d.sweep, model.flaechennetze), gilt fuer alle: nur so treffen
@@ -1698,6 +1749,9 @@ def flaechennetz(model: Model, flaeche, teilung: "Linienteilung") -> tuple:
     c, e1, e2, n, abw = ausgleichsebene(alle)
     gr = float(np.linalg.norm(alle - c, axis=1).max())
     eben = gr > 0 and abw <= EBENHEIT * gr
+    if zwang and not eben:
+        return (np.zeros((0, 3)), np.zeros((0, 3), int),
+                "Zwangslinie in einer nicht ebenen Fläche", [], [])
     if not eben:
         if len(ringe3) == 1:
             P, T, meldung, kenn = _coons_netz(model, flaeche, teilung)
@@ -1717,11 +1771,51 @@ def flaechennetz(model: Model, flaeche, teilung: "Linienteilung") -> tuple:
     fest = [np.array([q in teilung.gem_linien for q in qs], bool) for qs in quellen]
     feld2 = _feld_in_ebene(getattr(teilung, "feld", None),
                            lambda K: c + K[:, 0:1] * e1 + K[:, 1:2] * e2, ringe, hf)
-    P2, T, fehlt = _dreiecke_2d(ringe, hf, fest, feld2, dreiecksgitter=bool(
-        getattr(getattr(teilung, "feld", None), "dreiecksgitter", False)))
+    zw, zw_linie = None, {}
+    if zwang:
+        # Punkte der Zwangslinien: was schon Randpunkt ist (gleiche Kennung),
+        # wird nicht noch einmal gesetzt
+        nummer = {k: i for i, k in enumerate(kennungen) if k is not None}
+        zp, strecken, marken = [], [], []
+        for name in zwang:
+            ln = model.lines.get(name)
+            pts = teilung.punkte(name) if ln is not None else []
+            if ln is None or len(pts) < 2:
+                continue
+            p0 = model.nodes[int(ln.nodes[0])]
+            gedreht = bool(np.linalg.norm(pts[0] - p0) > np.linalg.norm(pts[-1] - p0))
+            if gedreht:
+                pts = pts[::-1]
+            idx = []
+            for k, pkt in zip(punktkennung(name, ln.nodes, len(pts), gedreht), pts):
+                if k not in nummer:
+                    nummer[k] = len(alle) + len(zp)
+                    zp.append(pkt)
+                    kennungen.append(k)
+                idx.append(nummer[k])
+            for a, b in zip(idx[:-1], idx[1:]):
+                strecken.append((a, b))
+                marken.append(name in teilung.gem_linien)
+                zw_linie[(min(a, b), max(a, b))] = name
+        if strecken:
+            Z = np.asarray(zp, float).reshape(-1, 3)
+            zw = {"punkte": (np.stack([(Z - c) @ e1, (Z - c) @ e2], axis=1)
+                             if len(Z) else np.zeros((0, 2))),
+                  "strecken": strecken, "fest": marken}
+    if zw is None:
+        P2, T, fehlt = _dreiecke_2d(ringe, hf, fest, feld2, dreiecksgitter=bool(
+            getattr(getattr(teilung, "feld", None), "dreiecksgitter", False)))
+    else:
+        P2, T, fehlt = _dreiecke_2d(ringe, hf, fest, feld2, dreiecksgitter=bool(
+            getattr(getattr(teilung, "feld", None), "dreiecksgitter", False)), zwang=zw)
     if not len(T):
         return (np.zeros((0, 3)), np.zeros((0, 3), int),
                 "Netz in der Ebene misslungen", _linien_zu(fehlt, ringe3, quellen), [])
+    if zw is not None:
+        offen = sorted({zw_linie[(min(a, b), max(a, b))] for a, b in zw.get("fehlt", [])})
+        kennungen = kennungen + [None] * (len(P2) - len(kennungen))
+        return (c + P2[:, 0:1] * e1 + P2[:, 1:2] * e2, T, "",
+                _linien_zu(fehlt, ringe3, quellen) + offen, kennungen)
     if eben:
         P = c + P2[:, 0:1] * e1 + P2[:, 1:2] * e2
     else:

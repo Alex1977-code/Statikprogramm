@@ -446,7 +446,9 @@ def _dreiecke_der_fuge(model: Model, flaechen: list) -> list:
     Die Aussennormale zeigt **aus dem Element heraus**. Sie wird nicht aus der
     Knotenreihenfolge geraten, sondern am gegenueberliegenden Knoten geprueft:
     die Normale zeigt von ihm weg. Ohne diese Probe waere ihr Vorzeichen
-    beliebig - und das Spaltelement traege dann Zug statt Druck.
+    beliebig - und das Spaltelement traege dann Zug statt Druck. Schalen
+    haben keinen gegenueberliegenden Knoten: ihre Normale ist die lokale
+    z-Achse aus der Knotenreihenfolge.
 
     Gerechnet wird im Block je (Elementtyp, Seite): hunderttausend Randseiten
     einzeln durch numpy zu schicken kostete zwoelf Sekunden je Durchgang.
@@ -475,9 +477,23 @@ def _dreiecke_der_fuge(model: Model, flaechen: list) -> list:
         vorn = list(SOLID_FACES[typ][seite])
         rest = [j for j in range(K.shape[1]) if j not in vorn]
         out.extend(_aussennormalen_block(model, elems, K[:, vorn], K[:, rest] if rest else None))
+    from .assemble import SHELL_TYPES
     for _k, elems in schalen.items():
         K = np.array([[int(x) for x in model.elements[e].nodes] for e in elems], dtype=int)
-        out.extend(_aussennormalen_block(model, elems, K, K[:, 3:] if K.shape[1] > 3 else None))
+        # Schalen: die Normale aus der Knotenreihenfolge (lokale z-Achse des
+        # Elements). Die uebrigen Knoten - vierter Eckknoten, Seitenmitten -
+        # liegen in der Ebene des Elements; an ihnen gemessen war das
+        # Vorzeichen Rundungsrauschen und abseits von z = 0 Zufall (Befund 4
+        # vom 11.11.2026: falscher FEHLER „Facetten nach beiden Seiten“ beim
+        # Flaechenlager in Flaechenachsen).
+        schale = np.array([model.elements[e].typ in SHELL_TYPES for e in elems], dtype=bool)
+        for maske, rest in ((schale, None), (~schale, K[:, 3:] if K.shape[1] > 3 else None)):
+            if maske.all():
+                out.extend(_aussennormalen_block(model, elems, K, rest))
+            elif maske.any():
+                idx = np.flatnonzero(maske)
+                out.extend(_aussennormalen_block(model, [elems[i] for i in idx], K[idx],
+                                                 rest[idx] if rest is not None else None))
     return out
 
 
@@ -921,6 +937,36 @@ def gruppen_je_knoten(model: Model) -> dict:
 
 def kontaktfuge_ausfuehren(model: Model, kb, log: list = None,
                            knotengruppen: dict = None, cache: dict = None) -> dict:
+    """Eine einzelne Kontaktbedingung im Netz umsetzen (siehe
+    :func:`_kontaktfuge_ausfuehren`).
+
+    Nennt die Bedingung nur Koerper - geloester Koerper und Gegenkoerper, keine
+    Flaechen -, sind die Flaechen der Gegenkoerper die Gegenseite: die Fuge sind
+    die Randseiten des geloesten Koerpers, die auf ihnen liegen, wie bei einer
+    RFEM-Freigabe ohne freigegebene Flaechen. Bis zum 09.11.2026 blieb so eine
+    Bedingung unausgefuehrt („weder freigegebene Flaechen noch zugeordnete
+    Gegenflaechen“), mit einer zweiten Halterung still ohne Kontakt (Befund A17).
+    Die Gegenflaechen gelten nur fuer das Ausfuehren; die Bedingung selbst bleibt,
+    wie sie eingegeben ist."""
+    if (not kb.flaechennamen and not kb.gegenflaechen and kb.koerpernamen
+            and getattr(kb, "gegenkoerper", None)):
+        koerper = getattr(model, "koerper", {}) or {}
+        gegen = [f for name in kb.gegenkoerper if name in koerper and name not in kb.koerpernamen
+                 for f in koerper[name].flaechen]
+        if gegen:
+            alt = kb.gegenflaechen
+            kb.gegenflaechen = list(dict.fromkeys(gegen))
+            try:
+                bericht = _kontaktfuge_ausfuehren(model, kb, log, knotengruppen, cache)
+            finally:
+                kb.gegenflaechen = alt
+            bericht["gegenseite_aus_koerpern"] = list(kb.gegenkoerper)
+            return bericht
+    return _kontaktfuge_ausfuehren(model, kb, log, knotengruppen, cache)
+
+
+def _kontaktfuge_ausfuehren(model: Model, kb, log: list = None,
+                            knotengruppen: dict = None, cache: dict = None) -> dict:
     """Eine einzelne Kontaktbedingung im Netz umsetzen.
 
     Rueckgabe ein Bericht: verdoppelte Knoten (``knoten``: die Ecken; an
@@ -1696,6 +1742,239 @@ def _gegenseite_suchen(model: Model, cp, kb) -> list:
     return aus
 
 
+def verbindung_ohne_fuge(model: Model, kb):
+    """Wie viele Netzknoten die beiden Seiten einer **nicht ausgefuehrten**
+    Kontaktbedingung teilen (:func:`fugenverbindung`); ``None``: nicht
+    feststellbar."""
+    v = fugenverbindung(model, kb)
+    return None if v is None else v["knoten"]
+
+
+def _fugenseiten(model: Model, knoten: set, seite: dict) -> tuple:
+    """(Flaeche der offenen, Flaeche der verbundenen Elementseiten) an den
+    gemeinsamen Knoten ``knoten`` zweier Seiten - ``seite`` ordnet jedem
+    beteiligten Volumenelement seine Seite zu.
+
+    Verbunden ist eine Randseite (Ecken nach assemble.SOLID_FACES), deren
+    Ecken alle gemeinsame Knoten sind: dort ist das Netz ueber eine Flaeche
+    durchgehend (auch wo ein Hexaeder an zwei Tetraederseiten stoesst). Offen
+    ist eine Randseite mit einer Ecke, die nur zu ihrer Seite gehoert, und
+    die an einem gemeinsamen Knoten einer Randseite der anderen Seite
+    gegenueberliegt - Aussennormalen entgegen (Skalarprodukt unter -0,95) und
+    in einer Ebene (Schwerpunktabstand hoechstens ein Zehntel der Wurzel der
+    Seitenflaeche): die beiden Flaechen liegen aufeinander, haben dazwischen
+    aber keinen gemeinsamen Knoten. So sieht
+    es bei eigenen, aufeinanderliegenden Flaechen ueber denselben Randlinien
+    aus (Befund 37, 11.11.2026): die Seiten teilen nur die Knoten des Randes,
+    die Flaeche dazwischen ist offen. Seitenflaechen, die am Rand der Fuge
+    weiterlaufen, zeigen in dieselbe Richtung oder quer und zaehlen nicht.
+    """
+    from .assemble import SOLID_FACES
+    if not knoten or not seite:
+        return 0.0, 0.0
+    X = np.asarray(model.nodes, float)
+    zahl: dict = {}                       # (Seite, Knotenmenge) -> Anzahl Elemente
+    form: dict = {}                       # (Seite, Knotenmenge) -> (Normale, Flaeche)
+    for i, s in seite.items():
+        el = model.elements[i]
+        ecken = SOLID_FACES.get(el.typ)
+        if not ecken:
+            continue
+        kn = [int(n) for n in el.nodes]
+        mitte = X[kn].mean(axis=0)
+        for f in ecken:
+            nd = [kn[c] for c in f]
+            if knoten.isdisjoint(nd):
+                continue
+            schl = (s, frozenset(nd))
+            zahl[schl] = zahl.get(schl, 0) + 1
+            if schl in form:
+                continue
+            P = X[nd]
+            nv = np.zeros(3)
+            for a in range(len(nd)):          # Newell: |nv| = doppelte Flaeche
+                nv += np.cross(P[a], P[(a + 1) % len(nd)])
+            betrag = float(np.linalg.norm(nv))
+            if betrag <= 0.0:
+                continue
+            nv = nv / betrag
+            if float(nv @ (P.mean(axis=0) - mitte)) < 0.0:
+                nv = -nv
+            form[schl] = (nv, 0.5 * betrag)
+    rand = [schl for schl, z in zahl.items() if z == 1 and schl in form]
+    an_knoten: dict = {}                  # gemeinsamer Knoten -> Randseiten daran
+    for schl in rand:
+        for n in schl[1] & knoten:
+            an_knoten.setdefault(n, []).append(schl)
+
+    def gegenueber(x, y) -> bool:
+        # entgegen gerichtet und in einer Ebene: die Seiten liegen aufeinander
+        nx, ax = form[x]
+        ny, _ay = form[y]
+        if float(nx @ ny) >= -0.95:
+            return False
+        cx = X[list(x[1])].mean(axis=0)
+        cy = X[list(y[1])].mean(axis=0)
+        return abs(float((cy - cx) @ nx)) <= 0.1 * np.sqrt(ax)
+
+    a_offen = a_verb = 0.0
+    for schl in rand:
+        if schl[1] <= knoten:
+            a_verb += form[schl][1]       # alle Ecken gemeinsam: durchgehend
+        elif any(y[0] != schl[0] and gegenueber(schl, y)
+                 for n in schl[1] & knoten for y in an_knoten.get(n, ())):
+            a_offen += form[schl][1]
+    return a_offen, a_verb
+
+
+def fugenverbindung(model: Model, kb) -> "dict | None":
+    """Wie die beiden Seiten einer **nicht ausgefuehrten** Kontaktbedingung im
+    Netz zusammenhaengen: daran haengt die Folge.
+
+    Rueckgabe {"knoten": gemeinsame Knoten, "offen": Flaeche der offenen,
+    "verbunden": Flaeche der verbundenen Elementseiten an diesen Knoten
+    (:func:`_fugenseiten`), "weich": bool} oder ``None`` (nicht feststellbar,
+    nichts davon im Netz).
+
+    * Kein gemeinsamer Knoten - eigene, aufeinanderliegende Flaechen mit
+      eigenen Linien -: die Bauteile verbindet dort nichts, ueber die Fuge
+      geht keine Kraft (zu weich). Bis zum 09.11.2026 hiess das „hier zu
+      steif“ (Befund C4).
+    * Gemeinsame Knoten, aber die Fuge dazwischen offen (mehr offene als
+      verbundene Elementseiten) - eigene Flaechen ueber denselben Randlinien:
+      die Seiten haengen nur an den Knoten des Randes zusammen. Druck geht nur
+      dort ueber die Fuge, das Modell rechnet zu weich (am Wuerfel 53 %
+      weicher als der durchgehende Block, Befund 37, 11.11.2026; bis dahin
+      „durchverbunden, zu steif“). An diesen Knoten uebertraegt es auch Zug.
+    * Sonst rechnet das Modell dort durchverbunden: zu steif, es uebertraegt
+      auch Zug.
+
+    Seiten: der geloeste Koerper gegen die anderen Koerper - die Gegenkoerper,
+    wenn welche genannt sind -, an den zugeordneten Gegenflaechen, wenn welche
+    genannt sind; deren eigene Elemente (Schalen) gehoeren dann zur
+    Gegenseite. Staebe, Federn und Schalen, die nur am geloesten Koerper
+    haengen, verbinden die beiden Seiten nicht und zaehlen nicht (Befund 28,
+    11.11.2026: ein Balken auf der Oberseite machte aus „zu weich“ „zu
+    steif“). Ohne Koerper: die Knoten der genannten Flaechen, an denen mehr
+    als ein Bauteil haengt.
+    """
+    from .assemble import SOLID_FACES
+    ne = len(model.elements)
+
+    def gruppe(el) -> str:
+        return str(getattr(el, "group", "") or "")
+
+    def knoten_der(flaechen) -> tuple:
+        ks, eigen = set(), set()
+        for f in flaechen:
+            for e, seite in (f.randseiten or []):
+                e, seite = int(e), int(seite)
+                if 0 <= e < ne:
+                    el = model.elements[e]
+                    seiten = SOLID_FACES.get(el.typ)
+                    if seiten and seite < len(seiten):
+                        ks.update(int(el.nodes[c]) for c in seiten[seite])
+            for e in (f.elemente or []):
+                if 0 <= int(e) < ne:
+                    eigen.add(int(e))
+                    ks.update(int(n) for n in model.elements[int(e)].nodes)
+        return ks, eigen
+
+    def ergebnis(gemeinsam: set, seite: dict) -> dict:
+        offen, verb = _fugenseiten(model, gemeinsam, seite)
+        return {"knoten": len(gemeinsam), "offen": offen, "verbunden": verb,
+                "weich": not gemeinsam or offen > verb}
+
+    koerper = getattr(model, "koerper", {}) or {}
+    geloest = {str(x) for x in (kb.koerpernamen or [])
+               if x in koerper and koerper[x].elemente}
+    if geloest:
+        ort = None
+        gegen_el: set = set()
+        if kb.gegenflaechen:
+            ort, gegen_el = knoten_der(_seiten_flaechen(model, kb.gegenflaechen))
+            if not ort:
+                return None
+        gegen = {str(x) for x in (getattr(kb, "gegenkoerper", None) or [])} - geloest
+        hier: set = set()
+        for el in model.elements:
+            if gruppe(el) in geloest:
+                hier.update(int(n) for n in el.nodes)
+        if ort is not None:
+            hier &= ort
+        gemeinsam: set = set()
+        andere: list = []
+        for i, el in enumerate(model.elements):
+            g = gruppe(el)
+            if g in geloest:
+                continue
+            # Die Gegenseite: ein anderer Koerper (ein genannter Gegenkoerper)
+            # oder ein Element der genannten Gegenflaechen - nicht jedes
+            # Element, das am geloesten Koerper haengt (Befund 28).
+            if (g in koerper and (not gegen or g in gegen)) or i in gegen_el:
+                treffer = hier.intersection(int(n) for n in el.nodes)
+                if treffer:
+                    gemeinsam |= treffer
+                    andere.append(i)
+        seite = {i: "gegen" for i in andere}
+        if gemeinsam:
+            for i, el in enumerate(model.elements):
+                if gruppe(el) in geloest and not gemeinsam.isdisjoint(int(n) for n in el.nodes):
+                    seite[i] = "geloest"
+        return ergebnis(gemeinsam, seite)
+    ks, eigen = knoten_der(_seiten_flaechen(model, kb.flaechennamen)
+                           or _seiten_flaechen(model, kb.gegenflaechen))
+    if not ks:
+        return None
+    parteien: dict = {}
+    beteiligt: list = []
+    for i, el in enumerate(model.elements):
+        treffer = ks.intersection(int(n) for n in el.nodes)
+        if treffer:
+            partei = ("Fläche", "") if i in eigen else ("Bauteil", gruppe(el))
+            beteiligt.append((i, partei, treffer))
+            for n in treffer:
+                parteien.setdefault(n, set()).add(partei)
+    gemeinsam = {n for n, s in parteien.items() if len(s) > 1}
+    seite = {i: partei for i, partei, treffer in beteiligt if not gemeinsam.isdisjoint(treffer)}
+    return ergebnis(gemeinsam, seite)
+
+
+def _wer(kb) -> str:
+    """Woran die Bedingung haengt, mit Namen - fuer die Warnung."""
+    def liste(wort, mehrzahl, namen):
+        namen = [str(x) for x in (namen or [])]
+        if not namen:
+            return ""
+        return ((wort if len(namen) == 1 else mehrzahl) + " " + ", ".join(namen[:4])
+                + (f" und {len(namen) - 4} weitere" if len(namen) > 4 else ""))
+    teile = [liste("gelöster Körper", "gelöste Körper", kb.koerpernamen),
+             liste("Gegenkörper", "Gegenkörper", getattr(kb, "gegenkoerper", None)),
+             liste("Fläche", "Flächen", kb.flaechennamen),
+             liste("Gegenfläche", "Gegenflächen", kb.gegenflaechen)]
+    return "; ".join(t for t in teile if t) or "ohne Körper und Flächen"
+
+
+def folge_ohne_fuge(model: Model, kb) -> str:
+    """Die Folge einer nicht ausgefuehrten Kontaktbedingung als ganzer Satz."""
+    v = kb.fugenverbindung(model)
+    if v is None:
+        return ("Die Bedingung wirkt nicht; ob die Bauteile dort verbunden sind, lässt sich ohne "
+                "ihre Körper oder Flächen im Netz nicht feststellen.")
+    n = v["knoten"]
+    if n == 0:
+        return ("Die beiden Seiten haben im Netz keinen gemeinsamen Knoten: ohne die Fuge sind die "
+                "Bauteile dort nicht verbunden, über die Fuge geht keine Kraft (zu weich).")
+    if v["weich"]:
+        # Eigene Flaechen ueber denselben Randlinien (Befund 37, 11.11.2026):
+        # bis dahin „durchverbunden … (zu steif)“
+        return (f"Die beiden Seiten teilen im Netz nur {n} Knoten, etwa den gemeinsamen Rand "
+                "eigener, aufeinanderliegender Flächen; dazwischen ist die Fuge offen. Über die Fuge "
+                "geht Druck nur an diesen Knoten (zu weich); dort überträgt das Modell auch Zug.")
+    return (f"Die beiden Seiten teilen im Netz {n} Knoten: das Modell rechnet dort durchverbunden "
+            "und überträgt auch Zug (zu steif).")
+
+
 def kontaktfugen_ausfuehren(model: Model, log: list = None) -> dict:
     """Alle noch offenen Kontaktbedingungen ausfuehren.
 
@@ -1730,7 +2009,9 @@ def kontaktfugen_ausfuehren(model: Model, log: list = None) -> dict:
         else:
             gesamt["offen"] += 1
             if b["grund"] and b["grund"] != "schon ausgeführt":
-                gruende[b["grund"]] = gruende.get(b["grund"], 0) + 1
+                # Mit Namen, Bezug, Grund und Folge (Befund C4, 09.11.2026):
+                # bis dahin stand nur die Zahl je Grund da.
+                gruende.setdefault((b["grund"], folge_ohne_fuge(model, kb)), []).append(kb)
     if log is not None and zeiten:
         zeiten.sort(reverse=True)
         C.say(log, "Kontaktfugen - die zeitaufwendigsten: "
@@ -1744,8 +2025,14 @@ def kontaktfugen_ausfuehren(model: Model, log: list = None) -> dict:
                        + f"{gesamt['spalt']} Spaltelemente, "
                        f"{gesamt['kopplung']} Kopplungen, "
                        f"{gesamt['kontaktpaar']} Kontaktpaare")
-        for grund, n in sorted(gruende.items()):
-            C.warn(log, f"  {n} Kontaktbedingung(en) nicht ausgeführt: {grund}")
+        for (grund, folge), kbs in sorted(gruende.items(), key=lambda x: x[0]):
+            namen = [f"„{kb.name}“ ({_wer(kb)})" for kb in kbs[:8]]
+            if len(kbs) == 1:
+                C.warn(log, f"  Kontaktbedingung {namen[0]} nicht ausgeführt: {grund}. {folge}")
+            else:
+                C.warn(log, f"  {len(kbs)} Kontaktbedingungen nicht ausgeführt: {grund}. {folge} "
+                            "Betroffen: " + ", ".join(namen)
+                            + (f" und {len(kbs) - 8} weitere" if len(kbs) > 8 else "") + ".")
     return gesamt
 
 
