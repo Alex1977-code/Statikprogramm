@@ -779,7 +779,11 @@ def test_nastran_import():
         m.add_shell_prop(ShellProp("PID 1 umgekehrt", 0.010, lagen=[dict(x) for x in reversed(UNSYM)]))
         fall = next(n for n in m.load_cases if n.startswith("SID"))
         for i, el in enumerate(m.elements):
-            umgekehrt = (i + 1) in g
+            # Gespiegelt ist ein Element, dessen Normale nach dem Import nach
+            # -z zeigt. Seit dem 12.11.2026 richtet schon der Import jedes
+            # Stueck aus; die Liste der Datei (g) gilt dann nicht mehr.
+            x = m.nodes[el.nodes[:3]]
+            umgekehrt = float(np.cross(x[1] - x[0], x[2] - x[0])[2]) < 0.0
             if umgekehrt:
                 el.sec = "PID 1 umgekehrt"
             m.load_temp(i, 0.0, (-30.0 if umgekehrt else 30.0), case=fall)

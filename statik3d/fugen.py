@@ -1098,6 +1098,16 @@ def _kontaktfuge_ausfuehren(model: Model, kb, log: list = None,
             knoten |= {n for x in _dreiecke_der_fuge(model, gegen) for n in x[1]}
         quadratische_seiten_sperren(model, knoten, f"Kontaktbedingung {kb.name}", q)
 
+    # Schalen haben zwei Seiten: ihre Facetten zeigen zur Gegenseite, nicht
+    # nach der Knotenfolge (12.11.2026, statik3d.schalenlage) - sonst kehrte
+    # ein gespiegeltes Blech das Spaltelement um (Ausfall bei Druck statt Zug)
+    if passend and _hat_schalen(model, seite_b):
+        gegen_alle = _mit_schalen_gewendet(
+            model, [(e, nd, n) for e, nd, n, g in _randseiten_aller(model, cache) if g not in geloest])
+        seite_b = _schalenseiten_richten(model, seite_b, gegen_alle,
+                                         suchweite(model, seite_b, gegen_alle,
+                                                   float(getattr(kb, "suchweite", 0.0) or 0.0)))
+
     # ---- 3) Normalen und Einflussflaechen ------------------------------
     # Die Richtung des Spaltelements zeigt vom bleibenden Knoten zum geloesten,
     # also **in den geloesten Koerper hinein** - das Gegenteil seiner
@@ -1479,6 +1489,47 @@ def _passungsdaten(seite_b: list, paare: dict, flaechen_b, reihen: int) -> tuple
     return knotenflaechen, alle
 
 
+def _hat_schalen(model: Model, facetten: list) -> bool:
+    from .assemble import SHELL_TYPES
+    ne = len(model.elements)
+    return any(0 <= int(f[0]) < ne and model.elements[int(f[0])].typ in SHELL_TYPES for f in facetten)
+
+
+def _mit_schalen_gewendet(model: Model, facetten: list) -> list:
+    """Die Facetten, dazu jede Schalenfacette ein zweites Mal mit
+    umgekehrtem Umlauf und Gegennormale: eine Schale hat zwei Seiten, und
+    welche die Knotenfolge "aussen" nennt, legt der Anwender fest."""
+    from .assemble import SHELL_TYPES
+    ne = len(model.elements)
+    out = list(facetten)
+    for f in facetten:
+        if 0 <= int(f[0]) < ne and model.elements[int(f[0])].typ in SHELL_TYPES:
+            out.append((f[0], [int(x) for x in f[1]][::-1], -np.asarray(f[2], float)) + tuple(f[3:]))
+    return out
+
+
+def _schalenseiten_richten(model: Model, seite: list, gegen: list, weite: float) -> list:
+    """Die Schalenfacetten der Kontaktseite zur naechsten Gegenflaeche
+    richten: je Facette wird mit beiden Normalen gesucht
+    (:func:`gegenseite_finden`), es gilt die mit dem kleineren Betrag des
+    Spalts. Ohne Gegenflaeche auf beiden Seiten bleibt die Facette, wie sie
+    ist. Volumenseiten haben eine Aussenseite und bleiben."""
+    from .assemble import SHELL_TYPES
+    ne = len(model.elements)
+    schale = [i for i, f in enumerate(seite)
+              if 0 <= int(f[0]) < ne and model.elements[int(f[0])].typ in SHELL_TYPES]
+    if not schale or not gegen:
+        return seite
+    gewendet = [(seite[i][0], [int(x) for x in seite[i][1]][::-1], -np.asarray(seite[i][2], float))
+                for i in schale]
+    _p, ab = gegenseite_finden(model, list(seite) + gewendet, gegen, weite)
+    out = list(seite)
+    for k, i in enumerate(schale):
+        if abs(float(ab[len(seite) + k])) < abs(float(ab[i])):
+            out[i] = gewendet[k]
+    return out
+
+
 def _fuge_ueber_kontaktpaar(model: Model, kb, seite_b: list, geloest: set,
                             bericht: dict, log: list = None, cache: dict = None) -> dict:
     """Zwei getrennte, aufeinanderliegende Netze ueber ein Kontaktpaar verbinden.
@@ -1533,9 +1584,16 @@ def _fuge_ueber_kontaktpaar(model: Model, kb, seite_b: list, geloest: set,
     if not alle:
         bericht["grund"] = "keine Gegenfläche eines anderen Bauteils gefunden"
         return bericht
-    gegen = [(e, nd, n) for e, nd, n, _g in alle]
+    # Schalen auf der Gegenseite gelten von beiden Seiten (zwei Facetten mit
+    # entgegengesetztem Umlauf); Schalen der Kontaktseite zeigen zur naechsten
+    # Gegenflaeche - die Lage der Schalenelemente aendert die Fuge nicht
+    # (12.11.2026). Bis dahin suchte ein Blech, dessen Normale vom Block weg
+    # zeigte, in diese Richtung und band sich an die 200 mm entfernte
+    # Unterseite des Blocks („0 % aufliegend, 16 durchdringend“).
+    gegen = _mit_schalen_gewendet(model, [(e, nd, n) for e, nd, n, _g in alle])
     vorgabe = float(getattr(kb, "suchweite", 0.0) or 0.0)
     weite = suchweite(model, seite_b, gegen, vorgabe)
+    seite_b = _schalenseiten_richten(model, seite_b, gegen, weite)
     paare, abstand = gegenseite_finden(model, seite_b, gegen, weite)
     if paare and not vorgabe:
         # ``gegen`` sind die Randseiten **aller anderen Bauteile**; ihr Median

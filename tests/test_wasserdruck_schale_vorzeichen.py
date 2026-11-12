@@ -259,12 +259,16 @@ def test_verfahrenstabelle():
     check("… betroffen: Schale ohne globale Richtung ja, mit globaler Richtung nein, ohne Wasserdruck nein",
           mk.betrifft(m1) and not mk.betrifft(m2) and not mk.betrifft(m3))
     # numerisch mit globaler Richtung: betroffen nur, wenn die Elemente der
-    # Oberwasser-Referenzflaeche gegen ihren Randumlauf zeigen
+    # Oberwasser-Referenzflaeche gegen ihren Randumlauf zeigen. Seit dem
+    # 12.11.2026 (statik3d.schalenlage) richten Vernetzer und Generator die
+    # Elemente zur Flaeche aus; den Zustand einer alten Datei stellt darum
+    # erst das Spiegeln nach dem Erzeugen her (so lag er im gespeicherten
+    # Modell, solange niemand neu gerechnet hat)
     m4 = _wand(ECKEN_A)
+    _last(m4, verfahren="numerisch", richtung=[0, 1, 0], ow_flaeche="W", ow_seite="Oberseite")
     for e in m4.elements:
         if e.typ == "shell4":
             e.nodes = [e.nodes[0], e.nodes[3], e.nodes[2], e.nodes[1]]
-    _last(m4, verfahren="numerisch", richtung=[0, 1, 0], ow_flaeche="W", ow_seite="Oberseite")
     m5 = _wand(ECKEN_A)
     _last(m5, verfahren="numerisch", richtung=[0, 1, 0], ow_flaeche="W", ow_seite="Oberseite")
     check("… numerisch mit globaler Richtung: Referenzfläche gegen ihren Umlauf vernetzt ja, sonst nein",
