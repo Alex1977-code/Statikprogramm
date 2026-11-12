@@ -473,6 +473,26 @@ def _flaechen_teilstellen(model) -> bool:
         return False
 
 
+def _doppelte_randlinien(model) -> bool:
+    """Schalenflaechen mit eigenen Randlinien zwischen denselben Knoten (Befund 39)."""
+    try:
+        from . import mesher
+        return bool(mesher.doppelte_randlinien(model))
+    except Exception:                       # noqa: BLE001
+        return False
+
+
+def _elementbezogene_flaechenlager(model) -> bool:
+    """Ein Flaechenlager mit Elementliste (ohne Flaechenbezug), das auf Elementen
+    einer Flaeche oder eines Koerpers liegt - nur deren Netz wird neu vernetzt
+    (Befund 11)."""
+    netz = {int(e) for o in list((getattr(model, "flaechen", None) or {}).values())
+            + list((getattr(model, "koerper", None) or {}).values()) for e in (o.elemente or [])}
+    return any(ss.elements and not getattr(ss, "flaechen", None)
+               and any(int(e) in netz for e in ss.elements)
+               for ss in (getattr(model, "surface_supports", None) or []))
+
+
 def _trennflaechen_getrennt(model) -> bool:
     """Zwei Koerper mit je einer eigenen Trennflaeche ueber denselben Randlinien, ohne
     Kontaktbedingung, und ein vorhandenes Netz, das dort getrennt ist (Befund A16)."""
@@ -1460,6 +1480,35 @@ MERKMALE: list = [
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Balken mit Stabendgelenk oder Federgelenk, nach Theorie III. Ordnung gerechnet",
         betrifft=_balken_mit_gelenk, im_ergebnis=_theorie3_im_ergebnis),
+    # Befund 11 der Pruefagenten (11.11.2026): das Neuvernetzen in der
+    # Oberflaeche (und das Loeschen ueber die Web-Schnittstelle) zog
+    # elementbezogene Flaechenlager nicht nach - nach dem Neuvernetzen der
+    # Nachbarflaeche lag die Bettung still auf deren Elementen. Jetzt ziehen
+    # alle Wege nach; ein Lager auf einer ganzen Flaeche folgt ihrem neuen Netz,
+    # sonst Meldung. Wirkt beim naechsten Neuvernetzen. Fehlerkorrektur
+    Merkmal(
+        name="flaechenlager_neuvernetzen", titel="Flächenlager mit Elementliste beim Neuvernetzen",
+        texte={"alt": "Elementnummern in der Oberfläche nicht nachgezogen (Lager konnte auf andere Elemente "
+                      "rücken)",
+               "neu": "Elementnummern nachgezogen; auf einer ganzen Fläche folgt das Lager dem neuen Netz, "
+                      "sonst Meldung „Netz geändert – Lager prüfen“"},
+        wechsel=(Wechsel(stand=37, datum="12.11.2026", commit="fix/k2-netz", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Flächenlager mit Elementliste auf vernetzten Flächen oder Körpern",
+        betrifft=_elementbezogene_flaechenlager),
+    # Befund 39 der Pruefagenten (11.11.2026): zwei Randlinien verschiedener
+    # Schalenflaechen zwischen denselben Knoten (Rippe mit eigener Linie auf
+    # dem Plattenrand) wurden nur verbunden, wenn ein fremder Knoten darauf lag
+    # - Platte 4 m aus zwei Flaechen mit doppelter Mittellinie 397,7 statt
+    # 149,6 mm. Wirkt erst nach dem Neuvernetzen. Fehlerkorrektur
+    Merkmal(
+        name="doppelte_randlinien", titel="Doppelte Randlinien zwischen denselben Knoten",
+        texte={"alt": "im Netz nur an den Linienenden verbunden (ohne fremden Knoten darauf)",
+               "neu": "im Netz eine Linie, gemeinsame Netzknoten; gilt nach dem Neuvernetzen"},
+        wechsel=(Wechsel(stand=37, datum="12.11.2026", commit="fix/k2-netz", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Schalenflächen mit eigenen Randlinien zwischen denselben Knoten",
+        betrifft=_doppelte_randlinien),
     # Befund A19 (09.11.2026): Schalenflaechen, die sich ohne gemeinsame Linie
     # beruehren, waren im Netz nicht verbunden - Stoss mit ungeteilter Linie
     # 0,742 statt 0,143 mm, Rippe auf ungeteilter Platte 33,1 statt 0,52 mm.
@@ -1572,7 +1621,7 @@ MERKMALE: list = [
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 30
+VERFAHRENSSTAND = 37
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

@@ -1254,6 +1254,13 @@ class SurfaceSupport:
     #: der Anwender dem Lager seine Elemente neu, endet die Meldung von selbst.
     entfallen: int = 0
     entfallen_rest: list[int] = field(default_factory=list)
+    #: Ganze Flaechen und Koerper, deren Netz dabei entfallen ist, waehrend das
+    #: Lager auf **allen** ihren Elementen lag: [[Art "flaeche"/"koerper", Name,
+    #: Anzahl der entfallenen Elemente], ...]. Ihr Ort ist eindeutig - die ganze
+    #: Flaeche; sobald sie wieder ein Netz hat, legt supports.lager_auf_netz das
+    #: Lager auf dessen Elemente (Befund 11 vom 11.11.2026). Gilt nur, solange
+    #: das Lager noch der Rest von damals ist (wie die Meldung oben).
+    folgt: list = field(default_factory=list)
 
     def dof_behaviour(self, dof: int) -> DofBehaviour:
         b = self.behaviour.get(dof) or self.behaviour.get(str(dof))
@@ -7530,6 +7537,14 @@ class Model:
         wegmenge = {int(e) for e in (elemente or []) if 0 <= int(e) < len(self.elements)}
         if not wegmenge:
             return 0
+        # Flaechen und Koerper, deren Netz hier ganz entfaellt (vor dem
+        # Umnummerieren, in den alten Nummern) - fuer die Flaechenlager unten
+        ganz_weg = []
+        for art, objekte in (("flaeche", self.flaechen), ("koerper", self.koerper)):
+            for name, o in (objekte or {}).items():
+                els = {int(e) for e in (o.elemente or [])}
+                if els and els <= wegmenge:
+                    ganz_weg.append((art, name, els))
         neu_nr = {}
         k = 0
         for i in range(len(self.elements)):
@@ -7586,6 +7601,13 @@ class Model:
         # ein Element des Lagers selbst, ist nicht eindeutig, was der Anwender
         # will (Bettung kleiner oder auf die neuen Elemente) - das Lager merkt
         # es sich, die Modellpruefung meldet „Netz geändert – Lager prüfen“.
+        # Ausnahme (Befund 11 vom 11.11.2026): lag das Lager auf ALLEN
+        # Elementen einer Flaeche - oder eines Koerpers mit allen
+        # Aussenflaechen (face = -1) -, ist sein Ort eindeutig die ganze
+        # Flaeche. Das Lager merkt sie sich (``folgt``) und legt sich auf ihr
+        # neues Netz, sobald es eines gibt (supports.lager_auf_netz). Ein Teil
+        # einer Flaeche oder eine einzelne Elementseite hat im neuen Netz keinen
+        # eindeutigen Ort - dort bleibt es bei der Meldung.
         for ss in (getattr(self, "surface_supports", None) or []):
             alt = [int(i) for i in (ss.elements or [])]
             if not alt:
@@ -7594,13 +7616,17 @@ class Model:
                      and alt == [int(i) for i in (getattr(ss, "entfallen_rest", None) or [])])
             neu = um(alt)
             weg = len(alt) - len(neu)
+            alle_seiten = int(ss.face if ss.face is not None else -1) < 0
+            dazu = [[art, name, len(els)] for art, name, els in ganz_weg
+                    if els <= set(alt) and (art == "flaeche" or alle_seiten)]
             if weg > 0:
                 ss.entfallen = (int(ss.entfallen) if offen else 0) + weg
                 ss.entfallen_rest = list(neu)
+                ss.folgt = (list(getattr(ss, "folgt", None) or []) if offen else []) + dazu
             elif offen:
                 ss.entfallen_rest = list(neu)
             else:
-                ss.entfallen, ss.entfallen_rest = 0, []
+                ss.entfallen, ss.entfallen_rest, ss.folgt = 0, [], []
             ss.elements = neu
         return len(wegmenge)
 
@@ -11285,7 +11311,8 @@ NEUE_FELDER = {
     # Rechnung: ergebnisse.MODELLTEILE)
     # vorspannung/je-anker (Definitionen der Vorspannung je Anker, 16.10.2026)
     # gruppe5/robustheit (Flaechenlager merkt sich entfallene Elemente, 09.11.2026)
-    "surface_supports": {"entfallen": 0, "entfallen_rest": []},
+    # netz/altbefunde (Flaechenlager folgt dem neuen Netz einer ganzen Flaeche, 12.11.2026)
+    "surface_supports": {"entfallen": 0, "entfallen_rest": [], "folgt": []},
     "": {"stabeinleitung": asdict(Stabeinleitung()), "ansichten": [], "vorspann_definitionen": [],
          # ui/paket-b (eigene Koordinatensysteme, 08.11.2026)
          "koordinatensysteme": []},
