@@ -636,6 +636,7 @@ def mesh_flaeche(model: Model, flaeche, log: list = None, dreiecke: bool = None,
                 els.extend(_flaechenelemente(model, [a, b, c, d], mat, prop,
                                              flaeche.name, dreiecke, ordnung, kanten))
         flaeche.elemente = els
+        _ausrichten(model, flaeche, log)
         C.say(log, f"Fläche {flaeche.name}: {len(els)} "
                    + ("Dreieckelemente" if dreiecke else "Viereckelemente")
                    + (" (quadratisch)" if ordnung >= 2 else "") + f" ({nu} x {nv})")
@@ -654,6 +655,17 @@ def mesh_flaeche(model: Model, flaeche, log: list = None, dreiecke: bool = None,
 # ---------------------------------------------------------------------------
 # Schalenflaechen mit gemeinsamen Randlinien (09.11.2026)
 # ---------------------------------------------------------------------------
+def _ausrichten(model: Model, flaeche, log: list = None) -> None:
+    """Die neuen Elemente einer Flaeche zur Flaechennormalen ausrichten
+    (statik3d.schalenlage, 12.11.2026). Der Vernetzer legt sie schon im
+    Randumlauf an; frei vernetzte Dreiecke einer gewoelbten Flaeche richtet er
+    je Dreieck an der Normalen des Umlaufs aus, und die steht dort nicht
+    senkrecht auf jedem Dreieck - das Ausrichten verbindet sie ueber die
+    Kanten."""
+    from .schalenlage import schalen_ausrichten
+    schalen_ausrichten(model, log, nur_flaeche=flaeche)
+
+
 def _ist_schale(model: Model, f) -> bool:
     """Bekommt die Flaeche ein eigenes Schalennetz (Dicke, eigene Steifigkeit)?"""
     if getattr(f, "steifigkeit", ""):
@@ -1422,6 +1434,7 @@ def schalen_gemeinsam_vernetzen(model: Model, flaechen, hs: dict = None, log: li
                 C.warn(log, f"Fläche {f.name}: die Zwangslinie {x} ist im Netz nicht durchgehend "
                             "Elementkante – dort nicht verbunden.")
         f.elemente = els
+        _ausrichten(model, f, log)
         out[f.name] = els
     C.say(log, f"{len(out)} Flächen mit gemeinsamen Randlinien zusammenhängend vernetzt "
                f"({n_vier} abgebildet, {n_drei} frei)")

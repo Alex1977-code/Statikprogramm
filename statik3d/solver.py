@@ -2228,6 +2228,21 @@ def shell_derived(model: Model, i: int, r: np.ndarray) -> dict:
             "vM": max(vm(sig_top), vm(sig_bot)), "T3": T3}
 
 
+def _schalen_ausrichten(model, progress=None) -> list:
+    """Schalenelemente vor der Rechnung einheitlich ausrichten
+    (statik3d.schalenlage, 12.11.2026): die Lage eines Elements aendert die
+    Rechnung nicht. Rueckgabe die Meldungen (auch ueber ``progress``)."""
+    from . import schalenlage
+    return schalenlage.vor_rechnung(model, progress)
+
+
+def _schalenlage_eintragen(res, meldungen: list) -> None:
+    """Die Meldungen des Ausrichtens ins Ergebnis (info["schalenlage"])."""
+    info = getattr(res, "info", None)
+    if meldungen and isinstance(info, dict):
+        info["schalenlage"] = list(meldungen)
+
+
 # ==========================================================================
 # Statisches System
 # ==========================================================================
@@ -2750,6 +2765,10 @@ class StaticSystem:
     def __init__(self, model: Model, workers: int = None, progress=None,
                  aktiv=None, situation: str = ""):
         t0 = time.time()
+        # Die Lage der Schalenelemente aendert die Rechnung nicht (12.11.2026);
+        # die Einstiege (solve_static, solve_all, ...) richten schon vor dem
+        # Prozesspool aus - hier fuer jeden, der ein System direkt baut
+        _schalen_ausrichten(model, progress)
         self.model = model
         #: Situation: Maske der wirksamen Elemente (None = alle) und ihr Name
         self.aktiv = None if aktiv is None else np.asarray(aktiv, bool)
@@ -7190,8 +7209,12 @@ def solve_static(model: Model, progress=None, case: str = None,
     warum die Kontaktkraefte es nicht tun, ist nicht geklaert. Wer aus einem
     Probelauf etwas anderes als ein Netzmass liest, liest falsch.
     """
+    # vor dem Pool: die Arbeiter bekommen das ausgerichtete Modell
+    schalenlage = _schalen_ausrichten(model, progress)
     with parallel.arbeiter(model, workers):
-        return _solve_static_innen(model, progress, case, workers, system, probelauf)
+        res = _solve_static_innen(model, progress, case, workers, system, probelauf)
+    _schalenlage_eintragen(res, schalenlage)
+    return res
 
 
 def _solve_static_innen(model: Model, progress=None, case: str = None,
@@ -7361,8 +7384,12 @@ def _referenzgruppen(folge: list, referenzen: dict) -> list:
 def solve_cases(model: Model, *args, **kwargs):
     """Mehrere Lastfaelle - im stehenden Prozesspool (parallel.arbeiter);
     Einzelheiten in _solve_cases_innen."""
+    schalenlage = _schalen_ausrichten(model, kwargs.get("progress"))
     with parallel.arbeiter(model, kwargs.get("workers")):
-        return _solve_cases_innen(model, *args, **kwargs)
+        out = _solve_cases_innen(model, *args, **kwargs)
+    for res in (out or {}).values():
+        _schalenlage_eintragen(res, schalenlage)
+    return out
 
 
 def _solve_cases_innen(model: Model, cases: list = None, workers: int = None,
@@ -10812,6 +10839,8 @@ class Analysis:
         # rechenverfahren, 16.10.2026): „Ergebnis möglicherweise betroffen – neu rechnen“
         if self.info.get("verfahren_betroffen"):
             s.append(f"WARNUNG: {self.info['verfahren_betroffen']}")
+        # vor der Rechnung umgedrehte Schalenelemente (statik3d.schalenlage, 12.11.2026)
+        s += [f"Hinweis: {z}" for z in (self.info.get("schalenlage") or [])]
         # die Iteration „gemeinsam“ ist ein Versuch (Fehlerliste F12, 06.10.2026)
         s += [f"WARNUNG: {z}" for z in gemeinsam_gebuendelt(self.all_results().items())]
         # verteilend eingeleitete Stabenden: eine Zeile ueber alle Ergebnisse (13.10.2026)
@@ -11052,8 +11081,11 @@ def solve_all(model: Model, workers: int = None, progress=None, combinations: bo
         gesperrt = model.gesperrte_kombinationen()
         if gesperrt:
             raise KombinationGesperrt(model.sperrhinweis(gesperrt), gesperrt)
+    schalenlage = _schalen_ausrichten(model, progress)
     with parallel.arbeiter(model, workers):
-        return _solve_all_innen(model, workers, progress, combinations, envelopes, design, fatigue)
+        an = _solve_all_innen(model, workers, progress, combinations, envelopes, design, fatigue)
+    _schalenlage_eintragen(an, schalenlage)
+    return an
 
 
 def _teilanalyse(ex, an: Analysis, model: Model, systeme: dict, t0: float) -> None:
@@ -11363,6 +11395,7 @@ def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = Non
     """
     from scipy.sparse.linalg import LinearOperator
     t0 = time.time()
+    schalenlage = _schalen_ausrichten(model, progress)
     with parallel.arbeiter(model, workers):
         K = asm.stiffness(model, workers, aktiv)
         M = asm.mass(model, workers, aktiv)
@@ -11445,6 +11478,7 @@ def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = Non
                 "kontakt": kontakt_text, "kontakt_aktiv": n_kontakt,
                 "loeser": loeser.backend}
     res.info.update(_ausweich_eintraege([(loeser.ausweichgrund, loeser.backend)]))
+    _schalenlage_eintragen(res, schalenlage)
     return res
 
 
@@ -11583,6 +11617,7 @@ def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = Non
     (negativ: Knicken bei umgekehrter Last), aufsteigend nach Betrag - siehe
     :func:`_verzweigung`, warum mit K als Metrik geloest wird."""
     t0 = time.time()
+    schalenlage = _schalen_ausrichten(model, progress)
     if combination:
         sit = _kombination_pruefen(model, model.combinations[combination])
     else:
@@ -11626,4 +11661,5 @@ def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = Non
     res.buckling_factors = vals_
     res.buckling_modes = modes[:, :model.nn * NDOF].reshape(k, model.nn, NDOF)
     res.info["time"] = time.time() - t0
+    _schalenlage_eintragen(res, schalenlage)
     return res
