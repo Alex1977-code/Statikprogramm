@@ -8290,7 +8290,7 @@ class Model:
             richtung = [float(x) for x in r_b]
         elif bezug == "lokal":
             richtung = None
-        d = None
+        d = d_achse = None
         if gl.projiziert and richtung:
             d = np.asarray(richtung, float)
             d = d / (np.linalg.norm(d) or 1.0)
@@ -8299,8 +8299,15 @@ class Model:
             # „global Z, p = −5 kN/m²“ (Schnee) die Unterseite eines Koerpers
             # statt das Dach - Summe richtig, Angriffspunkt falsch (Befund A3).
             # Der Betrag p |n.d| bleibt; Schalen nehmen ohnehin |n.d|.
+            d_achse = d
             if float(gl.p) < 0.0:
                 d = -d
+            # Mit Verlauf (linear von A nach B) wirkt nicht gl.p - das ist nur
+            # der Wert bei A -, sondern der Wert an der Seite: je Seite richtet
+            # er den Windschatten (nimm). Bis zum 12.11.2026 galt auch dort das
+            # Vorzeichen von gl.p; A = 0, B = −5 kN/m² global Z traf die
+            # Unterseite eines Koerpers statt das Dach (Befund 9 der
+            # Pruefagenten vom 11.11.2026, Korrektur A3 unvollstaendig).
 
         def nimm(e: int, seite: int, flaeche=None):
             if not 0 <= int(e) < len(self.elements):
@@ -8317,12 +8324,26 @@ class Model:
             # Zuerst also der Windschatten: er braucht nur die Normale und
             # wirft die Haelfte der Seiten weg.
             c = None
-            if d is not None:
+            mitte = None
+            p = None
+            d_seite = d
+            if d is not None and gl.verlauf:
+                # der wirkende Wert vor dem Windschatten (Befund 9): sein
+                # Vorzeichen sagt, von welcher Seite die Kraft p d kommt
+                mitte = self._seitenmitte(e, seite)
+                if gl.bereich and not gl.trifft(mitte):
+                    return
+                p = gl.wert(mitte, normale=self._seitennormale_oder_schale(e, seite),
+                            beidseitig=(seite == 0 and self.elements[int(e)].typ in _EL.SCHALEN_TYPEN))
+                if p == 0.0:
+                    return
+                d_seite = -d_achse if p < 0.0 else d_achse
+            if d_seite is not None:
                 schale = self.elements[int(e)].typ in _EL.SCHALEN_TYPEN
                 n = self._seitennormale_oder_schale(e, seite) if schale else self._seitennormale(e, seite)
                 if n is None:
                     return
-                c = float(n @ d)
+                c = float(n @ d_seite)
                 if schale:
                     # Eine Schale hat keine Aussenseite: die Last trifft sie von
                     # der Seite, von der sie kommt, mit p A |n.d|. Bis zum
@@ -8332,13 +8353,15 @@ class Model:
                     c = -abs(c)
                 if c >= 0:
                     return          # diese Seite liegt im Windschatten der Last
-            # Dann die Seitenmitte - aber nur, wenn jemand sie liest.
-            mitte = None
-            if gl.bereich or gl.verlauf:
+            # Dann die Seitenmitte - aber nur, wenn jemand sie liest (mit
+            # Verlauf und Projektion ist der Wert schon oben bestimmt).
+            if p is None and (gl.bereich or gl.verlauf):
                 mitte = self._seitenmitte(e, seite)
                 if gl.bereich and not gl.trifft(mitte):
                     return
-            if gl.verlauf:
+            if p is not None:
+                pass
+            elif gl.verlauf:
                 p = gl.wert(mitte, normale=self._seitennormale_oder_schale(e, seite),
                             beidseitig=(seite == 0 and self.elements[int(e)].typ in _EL.SCHALEN_TYPEN))
                 if p == 0.0:
