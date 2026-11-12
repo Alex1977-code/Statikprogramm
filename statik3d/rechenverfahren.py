@@ -225,6 +225,79 @@ def _projiziert_negativ_an_volumen(model) -> bool:
     return False
 
 
+def _projiziert_verlauf_vorzeichen(model) -> bool:
+    """Eine Flaechenlast „auf die Projektion“ mit Verlauf an einem Koerper oder
+    einer Koerperrandflaeche, deren Wert an einer Seite ein anderes Vorzeichen
+    hat als gl.p (der Wert bei A) - dort traf sie bis zum 12.11.2026 die der
+    Kraft abgewandte Seite (Befund 9 der Pruefagenten). Gezaehlt am Netz (die
+    Seitenmitten, wie die Last verteilt wird); Schalen sind nicht betroffen."""
+    flaechen = getattr(model, "flaechen", None) or {}
+    koerper = getattr(model, "koerper", None) or {}
+    for lc in (getattr(model, "load_cases", None) or {}).values():
+        for gl in getattr(lc, "geometrielasten", None) or []:
+            v = getattr(gl, "verlauf", None) or {}
+            if not getattr(gl, "projiziert", False) or v.get("art") != "linear":
+                continue
+            if not (getattr(gl, "richtung", None) or getattr(gl, "lastbezug", "") in ("global", "ks")):
+                continue
+            if getattr(gl, "art", "flaeche") == "flaeche":
+                ziele = [flaechen.get(str(gl.ziel))]
+            else:
+                k = koerper.get(str(gl.ziel))
+                ziele = [flaechen.get(n) for n in (getattr(k, "flaechen", None) or [])] if k is not None else []
+            negativ = float(getattr(gl, "p", 0.0) or 0.0) < 0.0
+            for f in ziele:
+                for e, seite in (getattr(f, "randseiten", None) or []) if f is not None else []:
+                    if not 0 <= int(e) < len(model.elements):
+                        continue
+                    wert = gl.wert(model._seitenmitte(int(e), int(seite)))
+                    if wert != 0.0 and (wert < 0.0) != negativ:
+                        return True
+    return False
+
+
+def _wind_netto_gegen_normale(model) -> bool:
+    """Eine Windlast des Generators auf einer freien Wand oder Anzeigetafel
+    (Normverfahren), an der die Last bis zum 12.11.2026 gegen den Wind wirkte:
+    ein Schalenelement mit der Normalen gegen die Windrichtung, eine
+    Volumenseite auf der Leeseite (Befund 8 der Pruefagenten)."""
+    from .elemente import SCHALEN_TYPEN
+    from .wind import ROLLEN_NETTO
+    flaechen = getattr(model, "flaechen", None) or {}
+    for lc in (getattr(model, "load_cases", None) or {}).values():
+        for gl in getattr(lc, "geometrielasten", None) or []:
+            v = getattr(gl, "verlauf", None) or {}
+            if v.get("art") != "wind" or v.get("rolle") not in ROLLEN_NETTO or v.get("feld"):
+                continue
+            r = v.get("netto") or (v.get("geometrie") or {}).get("richtung")
+            f = flaechen.get(str(gl.ziel))
+            if r is None or f is None:
+                continue
+            for e in f.elemente or []:
+                if 0 <= int(e) < len(model.elements) and model.elements[int(e)].typ in SCHALEN_TYPEN:
+                    n = model._seitennormale_oder_schale(int(e), 0)
+                    if n is not None and float(n @ r) < 0.0:
+                        return True
+            for e, seite in f.randseiten or []:
+                if 0 <= int(e) < len(model.elements):
+                    n = model._seitennormale(int(e), int(seite))
+                    if n is not None and float(n @ r) > 0.0:
+                        return True
+    return False
+
+
+def _wind_abmessungen_alt(model) -> bool:
+    """Windlasten des Generators mit Abmessungen eines aelteren Programmstands,
+    die sich heute anders ergeben (wind.alte_abmessungen, Befund 13)."""
+    from .wind import alte_abmessungen
+    return bool(alte_abmessungen(model))
+
+
+def _wind_abmessungen_im_ergebnis(model, _analyse) -> str:
+    from .wind import alte_abmessungen_text
+    return alte_abmessungen_text(model)
+
+
 def _temperaturunterschied_schale(model) -> bool:
     """Ein Temperaturunterschied dT_z (oben − unten) auf einer Schale - als Last
     auf eine Flaeche mit Dicke oder als Elementlast auf ein Schalenelement. Bis
@@ -1231,6 +1304,34 @@ MERKMALE: list = [
         modellgrund="Windlasten mit einem älteren Programmstand erzeugt",
         vorschlag="Lasten › Wind: den Wind öffnen und die Windlasten neu erzeugen"),
     Merkmal(
+        # Befund 8 der Pruefagenten (11.11.2026): an freier Wand und Tafel wirkte die Last
+        # mit der Elementnormalen, je nach Umlauf der Linien gegen den Wind (Wand 10 x 3 m
+        # ΣF_x −26,01 statt +26,01 kN). Wirkt beim Neurechnen, auch fuer gespeicherte
+        # Lasten. Fehlerkorrektur
+        name="wind_netto_richtung", titel="Windlast auf freistehende Wand und Anzeigetafel",
+        texte={"alt": "Last in Richtung der Elementnormalen (je nach Umlauf gegen den Wind)",
+               "neu": "Last in Windrichtung (c_p,net, c_f), unabhängig vom Umlauf"},
+        wechsel=(Wechsel(stand=33, datum="12.11.2026", commit="fix/k2-wind", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Windlast auf einer freien Wand oder Tafel, deren Elementnormale gegen den Wind "
+                      "zeigt (Volumen: Leeseite gewählt)",
+        betrifft=_wind_netto_gegen_normale),
+    Merkmal(
+        # Befund 13 der Pruefagenten (11.11.2026): h, b, d des Gebaeudes enthielten freie
+        # Waende, Tafeln und Staebe; die Zonen einer freien Wand zaehlten ab den Enden aller
+        # Objekte. Die Abmessungen stehen im Verlauf der Last - wie bei wind_flaechen eine
+        # Korrektur am Modell, die erst das Neuerzeugen behebt
+        name="wind_abmessungen", titel="Abmessungen des Gebäudes für Wind",
+        texte={"alt": "h, b, d samt freier Wände, Tafeln und Stäbe",
+               "neu": "h, b, d nur aus den Gebäudeflächen, freie Wand und Tafel mit eigenen Abmessungen"},
+        wechsel=(Wechsel(stand=33, datum="12.11.2026", commit="fix/k2-wind", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Windlast des Generators mit Abmessungen eines älteren Programmstands, die sich "
+                      "heute anders ergeben",
+        betrifft=_wind_abmessungen_alt, import_korrektur=True, im_ergebnis=_wind_abmessungen_im_ergebnis,
+        modellgrund="Windlasten mit einem älteren Programmstand erzeugt",
+        vorschlag="Lasten › Wind: den Wind öffnen und die Windlasten neu erzeugen"),
+    Merkmal(
         # Befund A3 der Pruefagenten (09.11.2026): der Windschatten der projizierten Last nahm
         # die Achse ohne das Vorzeichen von p - „global Z, p = −5 kN/m²“ traf am Block die
         # Unterseite statt das Dach. Summe gleich, Angriffspunkt falsch. Fehlerkorrektur
@@ -1241,6 +1342,20 @@ MERKMALE: list = [
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Flächenlast auf die Projektion mit negativem Wert an einem Körper",
         betrifft=_projiziert_negativ_an_volumen),
+    Merkmal(
+        # Befund 9 der Pruefagenten (11.11.2026): mit linearem Verlauf richtete sich der
+        # Windschatten weiter nach gl.p, dem Wert bei A - A = 0, B = −5 kN/m² global Z traf
+        # am Block die Unterseite statt das Dach. Jetzt nach dem Wert an der Seite.
+        # Fehlerkorrektur
+        name="projiziert_verlauf_vorzeichen",
+        titel="Projizierte Flächenlast mit Verlauf und Vorzeichenwechsel an Volumen",
+        texte={"alt": "Seite nach dem Vorzeichen des Werts bei A gewählt",
+               "neu": "Seite nach dem Vorzeichen des Werts an der Seite gewählt"},
+        wechsel=(Wechsel(stand=33, datum="12.11.2026", commit="fix/k2-wind", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Flächenlast auf die Projektion mit linearem Verlauf an einem Körper, deren Wert "
+                      "auf der Fläche ein anderes Vorzeichen hat als bei A",
+        betrifft=_projiziert_verlauf_vorzeichen),
     Merkmal(
         # Befund A4 der Pruefagenten (09.11.2026): die Schale trug nur den gleichmaessigen
         # Anteil ΔT, ΔT_z wurde still verworfen (Kragstreifen 0 statt 12 mm). Jetzt die
@@ -1572,7 +1687,7 @@ MERKMALE: list = [
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 30
+VERFAHRENSSTAND = 33
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

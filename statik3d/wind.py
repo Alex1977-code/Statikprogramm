@@ -298,6 +298,8 @@ def _flaechenknoten(model, name: str) -> set:
 
 #: Rollen eines geschlossenen Gebaeudes - fuer sie gibt es eine Aussenseite
 ROLLEN_HUELLE = ("luv", "lee", "seite", "dach")
+#: Rollen mit Nettobeiwert in Windrichtung (freistehende Wand, Anzeigetafel)
+ROLLEN_NETTO = ("freie_wand", "schild")
 
 
 def _flaechenvektor(X) -> np.ndarray:
@@ -364,30 +366,112 @@ def _flaechennormale(model, name: str, mitte=None):
     return n
 
 
-def gebaeude(w: Wind, model) -> dict:
-    """Abmessungen des Gebäudes aus den Flächen: Höhe h, Breite b (quer),
-    Tiefe d (längs), Geländeoberkante z_0, Luvkante x_0."""
-    d = _richtung(w)
-    quer = np.array([-d[1], d[0], 0.0])
+#: Kennung im Verlauf einer Windlast (geometrie["abmessungen"]): seit dem
+#: 12.11.2026 kommen h, b, d des Gebaeudes nur aus seinen Flaechen, freie
+#: Waende und Tafeln haben eigene (Befund 13). Ohne sie ist die Last mit
+#: einem aelteren Programmstand erzeugt (:func:`alte_abmessungen`).
+ABMESSUNGEN_BAU, ABMESSUNGEN_OBJEKT, ABMESSUNGEN_ALLE = "baukoerper", "objekt", "alle"
+
+
+def _knoten_der_objekte(model, flaechen, staebe=()) -> set:
     kn = set()
-    for name in list(w.flaechen) + list(w.freie_waende) + list(w.schilder):
+    for name in flaechen:
         kn |= _flaechenknoten(model, name)
-    for name in w.staebe:
+    for name in staebe:
         mem = model.members.get(name)
         if mem is not None:
             for e in mem.elements:
                 if 0 <= int(e) < len(model.elements):
                     kn.update(int(n) for n in model.elements[int(e)].nodes)
-    if not kn:
-        raise ValueError("Keine Flächen oder Stäbe gewählt")
+    return kn
+
+
+def _abmessungen(model, kn, d, quer, z_boden: float) -> dict:
     P = model.nodes[sorted(kn)]
     s = P @ d                       # Koordinate in Windrichtung
     t = P @ quer                    # quer
-    z_boden = float(P[:, 2].min()) if w.z_boden is None else float(w.z_boden)
     h = float(P[:, 2].max()) - z_boden
     return {"h": max(h, 1e-6), "b": float(np.ptp(t)) or 1e-6, "d": float(np.ptp(s)) or 1e-6,
             "z_boden": z_boden, "x_luv": float(s.min()), "t_min": float(t.min()),
             "t_max": float(t.max()), "richtung": d.tolist(), "quer": quer.tolist()}
+
+
+def gebaeude(w: Wind, model, alle: bool = False) -> dict:
+    """Abmessungen des Gebäudes aus seinen Flächen (Wind.flaechen): Höhe h,
+    Breite b (quer), Tiefe d (längs), Geländeoberkante z_0, Luvkante x_0.
+
+    Freie Wände, Anzeigetafeln und Stäbe gehören nicht zum Baukörper; sie
+    zählen nur zur Geländeoberkante (Unterkante aller Objekte, wenn z_boden
+    nicht vorgegeben ist) und - ohne Gebäudeflächen - zu den Abmessungen.
+    Bis zum 12.11.2026 gingen sie immer in h, b, d ein: Quader 10 × 10 × 10 m
+    mit einer freien Wand 30 m daneben bekam b = 45 m, d = 30 m (e, h/d, die
+    Zonen und c_pe,D/E falsch; Befund 13 der Pruefagenten). ``alle``: die
+    Abmessungen aller Objekte (Groesse des Windkanals)."""
+    d = _richtung(w)
+    quer = np.array([-d[1], d[0], 0.0])
+    kn = _knoten_der_objekte(model, list(w.flaechen) + list(w.freie_waende) + list(w.schilder), w.staebe)
+    if not kn:
+        raise ValueError("Keine Flächen oder Stäbe gewählt")
+    z_boden = float(model.nodes[sorted(kn)][:, 2].min()) if w.z_boden is None else float(w.z_boden)
+    bau = set() if alle else _knoten_der_objekte(model, w.flaechen)
+    geo = _abmessungen(model, bau or kn, d, quer, z_boden)
+    geo["abmessungen"] = ABMESSUNGEN_BAU if bau else ABMESSUNGEN_ALLE
+    return geo
+
+
+def objekt_geometrie(model, name: str, geo: dict) -> dict:
+    """Die Abmessungen einer freien Wand oder Anzeigetafel für sich (Höhe über
+    Gelände, Länge quer, freie Enden t_min/t_max): die Zonen A–D der Tab. 7.9
+    zählen ab ihren eigenen Enden, nicht ab denen des Gebäudes (Befund 13).
+    Geländeoberkante und Richtung wie ``geo``."""
+    kn = _flaechenknoten(model, name)
+    if not kn:
+        return dict(geo)
+    out = _abmessungen(model, kn, np.asarray(geo["richtung"], float), np.asarray(geo["quer"], float),
+                       float(geo["z_boden"]))
+    out["abmessungen"] = ABMESSUNGEN_OBJEKT
+    return out
+
+
+def netto_richtung(model, name: str, d) -> Optional[np.ndarray]:
+    """Richtung der Nettokraft einer freien Wand oder Anzeigetafel: die
+    Normale der Fläche, zur Leeseite gedreht (n · d ≥ 0). c_p,net (Tab. 7.9)
+    und c_f (7.4.3) gelten in Windrichtung - unabhängig vom Umlauf der Linien
+    und von der Knotenreihenfolge der Elemente: jedes Schalenelement zählt mit
+    seiner Normalen zur Leeseite gedreht (längs zum Wind: zur Normalen des
+    ersten Elements). Eine Volumenrandfläche trägt ihre Außennormale."""
+    from .elemente import SCHALEN_TYPEN
+    f = model.flaechen.get(name)
+    if f is None:
+        return None
+    d = np.asarray(d, float)
+    n = np.zeros(3)
+    ref = None
+    for e in f.elemente or []:
+        if not 0 <= int(e) < len(model.elements):
+            continue
+        el = model.elements[int(e)]
+        if el.typ not in SCHALEN_TYPEN:
+            continue
+        a = _flaechenvektor(model.nodes[_ecken(el)])
+        L = float(np.linalg.norm(a))
+        if L <= 0:
+            continue
+        if ref is None:
+            ref = a / L
+        s = float(a @ d)
+        if abs(s) <= 1e-9 * L:
+            s = float(a @ ref)
+        n += a if s >= 0 else -a
+    if not n.any():
+        n = _flaechennormale(model, name)
+        if n is None:
+            return None
+    L = float(np.linalg.norm(n))
+    if L <= 0:
+        return None
+    n = n / L
+    return -n if float(n @ d) < 0 else n
 
 
 def _flaechen_dreiecke(model, name: str) -> np.ndarray:
@@ -662,14 +746,65 @@ def alte_windlasten_text(model) -> str:
     return ", ".join(f"Wind {w} in {lf}" for lf, w in alt[:5]) + (" …" if len(alt) > 5 else "")
 
 
+def alte_abmessungen(model) -> list:
+    """[(Lastfall, Wind)] der Windlasten des Generators (Normverfahren), deren
+    Abmessungen ein aelterer Programmstand gebildet hat (ohne
+    ``geometrie["abmessungen"]``, vor dem 12.11.2026) und die sich heute
+    anders ergeben: h, b, d des Gebaeudes samt freier Waende, Tafeln und
+    Staebe, die Zonen einer freien Wand ab den Enden aller Objekte (Befund 13
+    der Pruefagenten). Die Abmessungen stehen im Verlauf der Last; erst das
+    Neuerzeugen aendert sie."""
+    aus = []
+    neu: dict = {}
+    for lf, lc in (getattr(model, "load_cases", None) or {}).items():
+        for gl in getattr(lc, "geometrielasten", None) or []:
+            v = getattr(gl, "verlauf", None) or {}
+            g = v.get("geometrie") or {}
+            if v.get("art") != "wind" or v.get("feld") or not g or "abmessungen" in g:
+                continue
+            eintrag = (str(lf), str(v.get("name", "")))
+            if eintrag in aus:
+                continue
+            schluessel = (eintrag, str(gl.ziel) if v.get("rolle") in ROLLEN_NETTO else "")
+            if schluessel not in neu:
+                try:
+                    w = _param(v.get("param") or {})
+                    geo = gebaeude(w, model)
+                    neu[schluessel] = (objekt_geometrie(model, str(gl.ziel), geo)
+                                       if v.get("rolle") in ROLLEN_NETTO else geo)
+                except Exception:                    # noqa: BLE001
+                    neu[schluessel] = None
+            h = neu[schluessel]
+            if h is None:
+                continue
+            for k in ("h", "b", "d", "x_luv", "t_min", "t_max"):
+                a, b = float(g.get(k, h[k])), float(h[k])
+                if abs(a - b) > 1e-6 * max(1.0, abs(a), abs(b)):
+                    aus.append(eintrag)
+                    break
+    return aus
+
+
+def alte_abmessungen_text(model) -> str:
+    alt = alte_abmessungen(model)
+    return ", ".join(f"Wind {w} in {lf}" for lf, w in alt[:5]) + (" …" if len(alt) > 5 else "")
+
+
 def windlasten_hinweis(model) -> list:
-    """Beim Oeffnen: die Zeile fuers Protokoll zu Windlasten, die neu zu
-    erzeugen sind (:func:`alte_windlasten`). Umgestellt wird nichts."""
-    if not alte_windlasten(model):
-        return []
-    return [f"Windlasten neu erzeugen: {alte_windlasten_text(model)} mit einem älteren Programmstand "
-            "erzeugt – an Schalen wirken Luvdruck, Leesog und Dachsog darin gegen den Wind, an Volumen "
-            f"und quadratischen Schalen fehlen die Rollen ({WIND_NEU_ERZEUGEN}, danach neu rechnen)."]
+    """Beim Oeffnen: die Zeilen fuers Protokoll zu Windlasten, die neu zu
+    erzeugen sind (:func:`alte_windlasten`, :func:`alte_abmessungen`).
+    Umgestellt wird nichts."""
+    aus = []
+    if alte_windlasten(model):
+        aus.append(f"Windlasten neu erzeugen: {alte_windlasten_text(model)} mit einem älteren Programmstand "
+                   "erzeugt – an Schalen wirken Luvdruck, Leesog und Dachsog darin gegen den Wind, an Volumen "
+                   f"und quadratischen Schalen fehlen die Rollen ({WIND_NEU_ERZEUGEN}, danach neu rechnen).")
+    if alte_abmessungen(model):
+        aus.append(f"Windlasten neu erzeugen: {alte_abmessungen_text(model)} mit einem älteren Programmstand "
+                   "erzeugt – die Abmessungen h, b, d des Gebäudes enthalten darin freie Wände, Tafeln "
+                   "oder Stäbe, die Zonen einer freien Wand zählen ab den Enden aller Objekte "
+                   f"({WIND_NEU_ERZEUGEN}, danach neu rechnen).")
+    return aus
 
 
 # ==========================================================================
@@ -760,6 +895,20 @@ def druck_aus_verlauf(verlauf: dict, punkt, normale=None, beidseitig: bool = Fal
     aussen = verlauf.get("aussen")
     if beidseitig and rolle in ROLLEN_HUELLE and normale is not None and aussen is not None:
         return -p if float(np.asarray(normale, float)[:3] @ np.asarray(aussen, float)) >= 0 else p
+    if rolle in ROLLEN_NETTO and normale is not None:
+        # Freie Wand und Tafel: c_p,net bzw. c_f wirkt in Windrichtung
+        # (``verlauf["netto"]``, :func:`netto_richtung`; aeltere Lasten ohne
+        # sie: die Windrichtung). Bis zum 12.11.2026 kam p unveraendert
+        # zurueck und wirkte an der Schale mit der Elementnormalen - je nach
+        # Umlauf der Linien gegen den Wind (Befund 8 der Pruefagenten: Wand
+        # 10 x 3 m ΣF_x +26,01 oder −26,01 kN), an einer Volumenseite in den
+        # Koerper, an der Leeseite also gegen den Wind.
+        r = verlauf.get("netto") or geo.get("richtung")
+        if r is not None:
+            s = float(np.asarray(normale, float)[:3] @ np.asarray(r, float)[:3])
+            if beidseitig:
+                return -p if s < 0 else p       # Schalenlast wirkt mit der Elementnormalen
+            return -p if s > 0 else p           # Volumenseite: p drueckt gegen die Aussennormale
     return p
 
 
@@ -811,6 +960,9 @@ def windkanal_rechnen(w: Wind, model, geo: dict, fortschritt=None) -> dict:
     tris += _stab_vierecke(model, w, geo)
     if not tris:
         raise ValueError("Keine Flächen oder Stäbe für den Windkanal")
+    # Groesse und Schnitthoehe des Kanals aus allen Objekten (wie vor dem
+    # 12.11.2026); ``geo`` traegt seither nur das Gebaeude (Befund 13)
+    geo = gebaeude(w, model, alle=True)
     P = np.concatenate([np.asarray(t, float) for t in tris]).reshape(-1, 3)
     aufriss = str(w.schnittart or "").lower().startswith("auf")
     z_boden = float(geo["z_boden"])
@@ -1130,6 +1282,12 @@ def lasten_erzeugen(model, w: Wind, fortschritt=None) -> dict:
     aus_feld: list = []
     for name, rolle in roll.items():
         verlauf = {"art": "wind", "name": w.name, "param": param, "geometrie": geo, "rolle": rolle}
+        if rolle in ROLLEN_NETTO:
+            # eigene Abmessungen (Zonen ab den eigenen Enden, Befund 13) und
+            # die Richtung der Nettokraft (Befund 8)
+            verlauf["geometrie"] = objekt_geometrie(model, name, geo)
+            n_w = netto_richtung(model, name, geo["richtung"])
+            verlauf["netto"] = [float(x) for x in n_w] if n_w is not None else None
         if name in seiten:
             # Aussennormale der Flaeche (11.11.2026): an Schalen das Vorzeichen
             # der Last; ihr Fehlen kennzeichnet eine aeltere Windlast (Befund 40)
