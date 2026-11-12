@@ -109,6 +109,50 @@ STABLAST_KOPF = ["Name", "Type", "Force action", "Distribution", "Direction",
 #: Erdbeschleunigung, die der Import fuer "Self weight" ansetzt (importers/saf.py)
 G_SAF = 9.81
 
+#: Lastfallkategorie -> SAF (Befund 24, 11.11.2026: bis dahin standen in
+#: "Action type" und "Load group" die Kurzzeichen G, S ..., ein Blatt
+#: StructuralLoadGroup fehlte, und der Import machte jeden Lastfall zu Q).
+#: Werte nach der SAF-Beschreibung (saf.guide, StructuralLoadCase und
+#: StructuralLoadGroup, gelesen 12.11.2026): Action type Permanent, Variable
+#: oder Accidental; Load type des Lastfalls je Action type aus einer festen
+#: Liste; Lastgruppe mit Load group type und Relation, bei Variable mit
+#: einem freien "Load type" (Beispiele der Beschreibung: Domestic, Offices ...).
+SAF_STAENDIG = ("G", "P", "SET", "G_A", "W_S")
+SAF_AUSSERGEWOEHNLICH = ("A", "ANPRALL", "KLEMM")
+#: Load type des Lastfalls (sonst Standard bei Permanent, Static sonst)
+SAF_LASTART = {"P": "Prestress", "S": "Snow", "S_H": "Snow", "W": "Wind", "WIND_B": "Wind",
+               "T": "Temperature", "ERD": "Seismic"}
+#: Load type der Lastgruppe bei Variable (Nutzlastkategorien nach EN 1991-1-1)
+SAF_GRUPPENLAST = {"Q": "Others", "Q_A": "Domestic", "Q_B": "Offices", "Q_C": "Congregation",
+                   "Q_D": "Shopping", "Q_E": "Storage", "Q_F": "Vehicle < 30kN",
+                   "Q_G": "Vehicle > 30kN", "Q_H": "Roofs", "S": "Snow", "W": "Wind",
+                   "T": "Temperature", "ERD": "Seismic"}
+#: Kategorien, die SAF damit genau traegt; die uebrigen nennt der Hinweis
+#: (Statik3D liest jede aus der eigenen Spalte "Category" zurueck)
+SAF_GENAU = ("G", "P", "Q", "Q_A", "Q_B", "Q_C", "Q_D", "Q_E", "Q_F", "Q_G", "Q_H",
+             "S", "W", "T", "A", "ERD")
+
+
+def _saf_lastfall(kat: str, eigengewicht: bool) -> tuple:
+    """(Action type, Load type, Load group type, Relation, Load type der
+    Gruppe) einer Lastfallkategorie."""
+    from ..model import ACTION_CATEGORIES
+    if kat in SAF_STAENDIG:
+        aktion, gruppe, relation = "Permanent", "Permanent", "Together"
+    elif kat in SAF_AUSSERGEWOEHNLICH:
+        aktion, gruppe, relation = "Accidental", "Accidental", "Standard"
+    else:
+        aktion, relation = "Variable", "Standard"
+        gruppe = "Seismic" if kat == "ERD" else "Variable"
+    if eigengewicht:
+        lastart = "Self weight"
+    else:
+        lastart = SAF_LASTART.get(kat, "Standard" if aktion == "Permanent" else "Static")
+    gruppenlast = ""
+    if gruppe == "Variable":
+        gruppenlast = SAF_GRUPPENLAST.get(kat) or ACTION_CATEGORIES.get(kat, (kat,))[0]
+    return aktion, lastart, gruppe, relation, gruppenlast
+
 
 def _namen(liste, n: int = 8) -> str:
     """Die ersten n Eintraege, dazu "und k weitere"."""
@@ -460,7 +504,7 @@ def _stablasten(model: Model, log, staebe: list) -> list:
                 ohne.setdefault(int(e), st["name"])
     zeilen = [list(STABLAST_KOPF)]
     nicht: dict = {}
-    n_last = n_trapez = n_abschnitt = k = 0
+    n_last = n_trapez = n_abschnitt = k = n_projektion = n_umgerechnet = 0
 
     def melden(stab, grund, fall):
         nicht.setdefault((stab, grund), []).append(fall)
@@ -487,6 +531,29 @@ def _stablasten(model: Model, log, staebe: list) -> list:
             q1 = np.array(l.q, float)
             q2 = np.array(l.q2, float) if l.q2 is not None else q1.copy()
             lokal = l.system == "local"
+            # Last je Projektion (Befund 19/24, 11.11.2026: bis dahin ging sie
+            # mit Location "Length" als Last je wahrer Laenge hinaus, am Stab
+            # unter 45 Grad 41 % zu viel). SAF kennt Location "Projection" fuer
+            # globale Lasten, je Zeile und damit je Richtung X, Y, Z - so
+            # rechnet Statik3D sie, wenn die Last in einer Achsrichtung wirkt.
+            # Eine schraege Last projiziert Statik3D mit der Richtung der
+            # ganzen Last (assemble.projektionsfaktor); die Zeilen je Richtung
+            # truegen dann einen anderen Bezug. Sie geht darum als
+            # gleichwertige Last je wahrer Laenge hinaus: q * L_proj / L, beide
+            # Endwerte mit demselben Faktor, Gesamtkraft unveraendert (wie IFC).
+            proj = (not lokal) and getattr(l, "bezugslaenge", "") == "projektion"
+            if proj:
+                groesse = max(float(np.max(np.abs(q1))), float(np.max(np.abs(q2))))
+                belegt = [c for c in range(3)
+                          if max(abs(q1[c]), abs(q2[c])) > 1e-9 * groesse]
+                if len(belegt) > 1:
+                    from ..assemble import projektionsfaktor
+                    e = model.elements[i]
+                    T3e, _ = bm.local_axes(model.nodes[e.nodes[0]], model.nodes[e.nodes[1]], e.roll)
+                    f = projektionsfaktor(T3e[0], q1 if np.any(q1) else q2)
+                    q1, q2 = f * q1, f * q2
+                    proj = False
+                    n_umgerechnet += 1
             if lokal:
                 T3s = achsen.get(i)
                 if T3s is None:
@@ -517,16 +584,26 @@ def _stablasten(model: Model, log, staebe: list) -> list:
                 n_zeilen += 1
                 zeilen.append([f"Q{k}", "Standard", "On beam", "Uniform" if gleich else "Trapez",
                                achse, w1 / 1e3, (w1 if gleich else w2) / 1e3, stab, fall,
-                               "Local" if lokal else "Global", "" if lokal else "Length",
+                               "Local" if lokal else "Global",
+                               "" if lokal else ("Projection" if proj else "Length"),
                                "Absolute", "From start", "Full" if ganz else "Span",
                                "" if ganz else float(x1), "" if ganz else float(x2)])
             if n_zeilen:
                 n_last += 1
+                n_projektion += int(proj)
                 n_trapez += int(trapez)
                 n_abschnitt += int(a > 1e-9 * L or b < L * (1 - 1e-9))    # Abschnitt im Modell, nicht Stabteil
     if n_last:
         C.say(log, f"SAF: {n_last} Stablasten geschrieben ({len(zeilen) - 1} Zeilen, "
-                   f"{n_trapez} trapezförmig, {n_abschnitt} abschnittsweise)")
+                   f"{n_trapez} trapezförmig, {n_abschnitt} abschnittsweise"
+                   + (f", {n_projektion} je Projektion mit Location „Projection“"
+                      if n_projektion else "") + ")")
+    if n_umgerechnet:
+        C.warn(log, f"SAF: {C.anzahl(n_umgerechnet, 'Stablast', 'Stablasten')} je Projektion "
+                    "mit schräger Richtung in die gleichwertige Last je wahrer Stablänge "
+                    "umgerechnet (q · L_Projektion / L, Richtung und Gesamtkraft unverändert). "
+                    "SAF bezieht die Projektion je Richtung X, Y, Z einzeln; nach dem Einlesen "
+                    "gilt die Last je Stablänge.")
     for (stab, grund), faelle in nicht.items():
         folge = ", ".join(sorted(set(faelle)))
         C.warn(log, f"SAF: {len(faelle)} Stablast{'en' if len(faelle) != 1 else ''} auf {stab} "
@@ -834,16 +911,21 @@ def write_saf(model: Model, path: str, results=None, log: list = None, **_) -> s
                          ";".join(f"N{int(n) + 1}" for n in e.nodes), "Plate"])
     blaetter["StructuralSurfaceMember"] = flaechen
 
-    # Spaltennamen nach SAF: ux uy uz fix fiy fiz, dazu die Steifigkeiten
+    # Spaltennamen nach SAF: ux uy uz fix fiy fiz, dazu die Steifigkeiten in
+    # MN/m und MNm/rad, wie die SAF-Beschreibung sie fuer
+    # StructuralPointSupport vorschreibt (saf.guide, gelesen 12.11.2026) und
+    # wie der Import sie ohne Einheit annimmt. Bis zum 12.11.2026 standen sie
+    # ohne Einheit in N/m und Nm/rad da; nach dem Rundlauf war jedes gefederte
+    # Knotenlager 10⁶-fach steifer, praktisch starr (Befund 23).
     lager = [["Name", "Node", "ux", "uy", "uz", "fix", "fiy", "fiz",
-              "Stiffness X", "Stiffness Y", "Stiffness Z",
-              "Stiffness fix", "Stiffness fiy", "Stiffness fiz",
+              "Stiffness X [MN/m]", "Stiffness Y [MN/m]", "Stiffness Z [MN/m]",
+              "Stiffness Fix [MNm/rad]", "Stiffness Fiy [MNm/rad]", "Stiffness Fiz [MNm/rad]",
               "Coordinate system"]]
     for i, sup in enumerate(model.supports, 1):
         b = [sup.dof_behaviour(d) for d in range(6)]
         lager.append([sup.name or f"Sn{i}", f"N{sup.node + 1}"]
                      + [_cond(x) for x in b]
-                     + [float(x.stiffness) if x.typ == "spring" else "" for x in b]
+                     + [float(x.stiffness) / 1e6 if x.typ == "spring" else "" for x in b]
                      + ["Global"])
     blaetter["StructuralPointSupport"] = lager
 
@@ -867,12 +949,24 @@ def write_saf(model: Model, path: str, results=None, log: list = None, **_) -> s
     # Eigengewicht (N28): ein Lastfall mit g = 9,81 m/s² nach unten fuehrt
     # Load type "Self weight" - so liest ihn der Import wieder als Eigengewicht.
     # Bis zum 07.10.2026 stand dort immer "Static", das Eigengewicht fehlte.
-    faelle = [["Name", "Load group", "Load type", "Action type", "Description"]]
+    # Kategorie (Befund 24): Action type, Load type und Lastgruppe nach SAF,
+    # je Kategorie eine Lastgruppe gleichen Namens; die Spalte "Category" -
+    # eine Spalte, die SAF nicht kennt - traegt die Kategorie fuer Statik3D
+    faelle = [["Name", "Load group", "Load type", "Action type", "Description", "Category"]]
+    gruppen = [["Name", "Load group type", "Relation", "Load type"]]
     n_eg = 0
+    ungenau: dict[str, int] = {}
     for name, lc in model.load_cases.items():
         eg = _ist_eigengewicht(lc.gravity if lc.gravity is not None else [0.0, 0.0, 0.0])
         n_eg += int(eg)
-        faelle.append([name, lc.category, "Self weight" if eg else "Static", lc.category, lc.description])
+        kat = str(lc.category or "")
+        aktion, lastart, gtyp, relation, glast = _saf_lastfall(kat, eg)
+        faelle.append([name, kat, lastart, aktion, lc.description, kat])
+        if not any(z[0] == kat for z in gruppen[1:]):
+            gruppen.append([kat, gtyp, relation, glast])
+        if kat not in SAF_GENAU:
+            ungenau[kat] = ungenau.get(kat, 0) + 1
+    blaetter["StructuralLoadGroup"] = gruppen
     blaetter["StructuralLoadCase"] = faelle
     if n_eg:
         C.say(log, f"SAF: Eigengewicht in {n_eg} Lastfall{'' if n_eg == 1 else 'en'} als „Self weight“")
@@ -919,7 +1013,12 @@ def write_saf(model: Model, path: str, results=None, log: list = None, **_) -> s
                   if e.typ not in EL.STAB_TYPEN and e.typ not in EL.VOLUMEN_TYPEN
                   and not e.typ.startswith("shell") and e.typ != "feder"
                   and not e.typ.startswith("grenzschicht"))
+    n_ungenau = sum(ungenau.values())
     C.nicht_uebertragen(log, "SAF", hinweise + [
+        (f"{C.anzahl(n_ungenau, 'Lastfall', 'Lastfälle')} mit einer Lastfallkategorie ohne "
+         f"genaue Entsprechung in SAF ({', '.join(sorted(ungenau))}): andere Programme lesen "
+         "nur Action type, Load type und Lastgruppe, Statik3D liest die Kategorie aus der "
+         "eigenen Spalte „Category“ zurück") if n_ungenau else "",
         (n_seil, "Seil (geht als Fachwerkstab hinaus)", "Seile (gehen als Fachwerkstäbe hinaus)"),
         (sum(1 for s in model.supports if s.nonlinear),
          "Knotenlager mit Ausfall, Schlupf, Reibung oder Grenzkraft (linear geschrieben)",

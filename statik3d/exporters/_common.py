@@ -82,6 +82,34 @@ def nicht_uebertragen(log: Optional[list], fmt: str, teile: list) -> None:
         warn(log, f"{fmt}: nicht übertragen: " + ", ".join(worte) + ".")
 
 
+def je_art(model: Model, idx) -> str:
+    """Art und Anzahl der Elemente ``idx`` als Text: „ebene3: 1, ebene4: 2“."""
+    zahl: dict[str, int] = {}
+    for i in idx:
+        t = model.elements[int(i)].typ
+        zahl[t] = zahl.get(t, 0) + 1
+    return ", ".join(f"{t}: {n}" for t, n in sorted(zahl.items()))
+
+
+def elementhinweis(model: Model, idx, einzahl: str, mehrzahl: str, zusatz: str,
+                   zusatz_mehrzahl: str = "") -> str:
+    """Ein Eintrag fuer :func:`nicht_uebertragen`, der Anzahl und Art der
+    Elemente ``idx`` nennt: „2 ebene Elemente (ebene3: 1, ebene4: 1) <zusatz>“.
+    Ohne Elemente "" (Befund 17 der Pruefagenten, 11.11.2026: tetp2 bis tetp4
+    und ebene3 bis ebene8 fehlten in Nastran, Abaqus, IFC und DXF ohne ein
+    Wort)."""
+    idx = list(idx)
+    if not idx:
+        return ""
+    z = zusatz if len(idx) == 1 else (zusatz_mehrzahl or zusatz)
+    return f"{anzahl(len(idx), einzahl, mehrzahl)} ({je_art(model, idx)}) {z}"
+
+
+def von_weiteres(e) -> bool:
+    """Elemente, die :func:`weiteres` schon zaehlt (Feder, Grenzschicht)."""
+    return e.typ == "feder" or e.typ.startswith("grenzschicht")
+
+
 def weiteres(model: Model) -> list:
     """Was keiner der Austauschexporte (DXF, IFC, Abaqus, Nastran) schreibt -
     fuer :func:`nicht_uebertragen`."""
