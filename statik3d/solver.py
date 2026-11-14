@@ -2081,7 +2081,8 @@ def _stellen(model: Model, i: int, fl, q, L: float, th2, x) -> dict:
     Mt = np.full(n, -fl[3])
     My = -fl[4] - fl[2] * x - Mq[:, 2]
     Mz = -fl[5] + fl[1] * x + Mq[:, 1]
-    if th2 is not None and fl[0] != 0.0:
+    # fl[6]: am Laengsgelenk am Stabanfang ist fl[0] = 0 (B1, 14.11.2026)
+    if th2 is not None and (fl[0] != 0.0 or fl[6] != 0.0):
         dMy, dMz = _th2_feldanteil(model, i, fl, q, L, th2, x)
         My = My + dMy
         Mz = Mz + dMz
@@ -2143,6 +2144,13 @@ def _th2_feldanteil(model: Model, i: int, fl, q, L: float, ul, x) -> tuple:
         return ((M - M[0]) - (M[-1] - M[0]) * xs / L) / GA
 
     P = float(fl[0])
+    if len({int(d) for d in (e.hinges or [])} & {0, 6}) == 1:
+        # Laengsgelenk: die Stabkraft laeuft von 0 am Gelenk bis zur Last in
+        # Stabrichtung am anderen Ende; das Mittel wie in K_G
+        # (asm.stab_normalkraft, Befund B1 vom 14.11.2026). Bis dahin fl[0]:
+        # mit dem Gelenk am Stabanfang 0 (kein Feldanteil), am Stabende die
+        # ganze Kraft
+        P = float(0.5 * (fl[0] - fl[6]))
     w, v = sehne_w.copy(), sehne_v.copy()
     for _ in range(60):
         My_ = My0 + (w - w0) * P
@@ -3668,6 +3676,12 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
                     ul = A14 @ ul
                 f14 = np.zeros(14)
                 f14[:12] = f0
+                # Gelenke und Federgelenke in den 14 FHG wie die Steifigkeit
+                # (asm.element_matrix, Befund B2 vom 14.11.2026): die Stabenden
+                # aus der Kondensation zurueck; ohne Gelenk wie bisher
+                ul_knoten = ul
+                _k, _f, zurueck_ = asm.gelenke_kondensieren(kl, f14, e)
+                ul = asm.stabenden_zurueck(ul, zurueck_)
                 fl = kl @ ul - f14
                 n_geo = extra.get("n_geo") or {}
                 if i in n_geo:
@@ -3681,10 +3695,15 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
                     # Vz(0) 4,544 gegen Rz 2,000 kN
                     sec_ = model.sections[e.sec]
                     kg_ = bm.kg_local_beam(float(n_geo[i]), L, sec_.A, sec_.Iy + sec_.Iz)
-                    C_ = asm.stab_endkinematik(model, e)
+                    C_ = asm.stab_endkinematik(model, e, kl)
                     if C_ is not None:
-                        kg_ = C_.T @ kg_ @ C_
-                    fl[:12] = fl[:12] + kg_ @ ul[:12]
+                        # wie das Gleichungssystem: K_G = C^T k_G C auf den 14
+                        # Knoten-FHG (C 14x14, k_G auf die Stabenden C[:12] u);
+                        # am Gelenk bleibt das Moment 0 (wie Befund 31 beim
+                        # Balken ohne Woelbkrafttorsion)
+                        fl = fl + C_[:12].T @ (kg_ @ (C_[:12] @ ul_knoten))
+                    else:
+                        fl[:12] = fl[:12] + kg_ @ ul[:12]
                     out.append((i, "beam_th2", np.asarray(ul[:12], float).copy()))
                 out.append((i, "beam", fl[:12]))
                 out.append((i, "bimoment", (-float(fl[12]), float(fl[13]))))
@@ -11662,6 +11681,11 @@ def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = Non
     if any(asm.versatz_arme_global(model, e) is not None for e in model.elements):
         feq = case_loads(model, faktoren, system.aktiv)[1]
         end = _soll_endkraefte(model, static, faktoren, system.aktiv)
+    elif any({int(d) for d in (e.hinges or [])} & {0, 6} for e in model.elements
+             if e.typ in asm.LINE_TYPES):
+        # Laengsgelenk: die Stablast in Stabrichtung gibt seine Normalkraft
+        # (asm.stab_normalkraft, Befund B1 vom 14.11.2026)
+        feq = case_loads(model, faktoren, system.aktiv)[1]
     Kg = asm.geometric_stiffness(model, u, system.aktiv,
                                  n_anfang=_anfang_im_ergebnis(model, static, faktoren, system.aktiv),
                                  feq=feq, symmetrisch=True, endkraefte=end)

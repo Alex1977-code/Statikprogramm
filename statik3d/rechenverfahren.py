@@ -1263,6 +1263,52 @@ def _balken_mit_laengsgelenk(model) -> bool:
     return False
 
 
+def _laengsgelenk_mit_laengslast(model) -> bool:
+    """Ein Stab mit Laengsgelenk an einem Ende (lokaler FHG ux frei) und einer
+    Stablast in Stabrichtung in einem Lastfall (Strecken-, Eigengewicht) - seine
+    Normalkraft stand bis zum 14.11.2026 mit 0 in K_G, alpha_cr, Knicken,
+    Stabteilung und Theorie III. Ordnung (Befund B1). Gemessen wie die
+    Behebung: die Summe der Stabendlasten in Stabrichtung f0[0] + f0[6]
+    (die Anfangsdehnung hebt sich darin auf)."""
+    try:
+        els = [i for i, e in enumerate(getattr(model, "elements", None) or [])
+               if len({int(d) for d in (getattr(e, "hinges", None) or [])} & {0, 6}) == 1]
+        if not els:
+            return False
+        import numpy as np
+        from . import assemble as asm
+        wahl = set(els)
+        for lc in (getattr(model, "load_cases", None) or {}).values():
+            for i, f0 in asm.element_equivalent_loads(model, lc).items():
+                if i in wahl:
+                    f0 = np.asarray(f0, float)
+                    if abs(f0[0] + f0[6]) > 1e-9 * max(float(np.abs(f0).max()), 1.0):
+                        return True
+        return False
+    except Exception:                       # noqa: BLE001 - nicht pruefbar: möglicherweise betroffen
+        return True
+
+
+def _laengsgelenk_im_ergebnis(model, an) -> str:
+    """alpha_cr, Knicken, Theorie II. oder III. Ordnung im Ergebnis."""
+    teile = [t for t in (_alpha_cr_im_ergebnis(model, an), _theorie3_im_ergebnis(model, an)) if t]
+    return "; ".join(teile)
+
+
+def _woelb_mit_gelenk(model) -> bool:
+    """Ein Balken mit Woelbkrafttorsion (Haken „woelb“ und Iw > 0) mit Gelenk
+    oder Federgelenk - beide fehlten bis zum 14.11.2026 in seiner Steifigkeit,
+    die Last war kondensiert (Befund B2)."""
+    pruef = getattr(model, "stab_woelbt", None)
+    if pruef is None:
+        return False
+    try:
+        return any(pruef(e) and (getattr(e, "hinges", None) or getattr(e, "hinge_springs", None))
+                   for e in getattr(model, "elements", None) or [])
+    except Exception:                       # noqa: BLE001 - Pruefung, nie Abbruch
+        return False
+
+
 def _theorie2_oder_3_im_ergebnis(model, an) -> str:
     teile = [t for t in (_theorie2_gerechnet_im_ergebnis(model, an), _theorie3_im_ergebnis(model, an)) if t]
     return "; ".join(teile)
@@ -2770,10 +2816,39 @@ MERKMALE: list = [
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Verformungsnachweis der Art „Stab“ mit φx, φy oder φz",
         betrifft=_gzg_stab_verdrehung),
+    # Befundliste 14.11.2026, B1: ein Laengsgelenk gab in K_G stets N = 0, auch
+    # mit Stablast in Stabrichtung (Stuetze 5 m, Q L = 6 MN: alpha_cr „unendlich“
+    # statt 2,600, Theorie II. Ordnung 11,56 statt 5,07 kNm, Theorie III. Ordnung
+    # 3,125 statt 5,07 kNm). Seither das Mittel der Stabend-Normalkraefte samt
+    # Stablasten in K_G, alpha_cr, Knicken, Stabteilung, Feldanteil N w und
+    # Theorie III. Ordnung. Fehlerkorrektur
+    Merkmal(
+        name="laengsgelenk_laengslast", titel="Längsgelenk mit Stablast in Stabrichtung",
+        texte={"alt": "Normalkraft am Längsgelenk 0 (K_G, α_cr, Knicken, Stabteilung, Theorie III. Ordnung)",
+               "neu": "Mittel der Stabend-Normalkräfte samt Stablasten, wie derselbe Stab ohne Gelenk"},
+        wechsel=(Wechsel(stand=48, datum="14.11.2026", commit="fix/k5-b-theorie", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Stab mit Längsgelenk (ux frei) und Stablast in Stabrichtung (auch Eigengewicht), "
+                      "mit α_cr, Knicken oder Theorie II./III. Ordnung",
+        betrifft=_laengsgelenk_mit_laengslast, im_ergebnis=_laengsgelenk_im_ergebnis),
+    # Befundliste 14.11.2026, B2: an Balken mit Woelbkrafttorsion fehlten
+    # Gelenke und Federgelenke in der Steifigkeit, die Last war kondensiert
+    # (Einfeldtraeger eingespannt/Gelenk, q = 5 kN/m: am Gelenk 16,875 statt 0,
+    # am Lager 15,94 statt 22,50 kNm; Theorie II. Ordnung 20,19 statt 42,78 kNm).
+    # Seither in den 14 FHG kondensiert in Steifigkeit, Last, Rueckrechnung und
+    # K_G. Fehlerkorrektur
+    Merkmal(
+        name="woelb_gelenk", titel="Gelenk an Balken mit Wölbkrafttorsion",
+        texte={"alt": "Gelenk und Federgelenk in der Steifigkeit übergangen, Last kondensiert",
+               "neu": "Gelenk und Federgelenk in Steifigkeit, Last, Stabendkräften und K_G kondensiert"},
+        wechsel=(Wechsel(stand=48, datum="14.11.2026", commit="fix/k5-b-theorie", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Balken mit Wölbkrafttorsion und Gelenk oder Federgelenk",
+        betrifft=_woelb_mit_gelenk),
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 47
+VERFAHRENSSTAND = 48
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

@@ -456,6 +456,27 @@ def seil_streckenlasten(model: Model, factors: dict, aktiv=None) -> tuple:
 # ==========================================================================
 # Loesung
 # ==========================================================================
+def woelb_sperre(model: Model, aktiv=None) -> str:
+    """Leer - oder der Grund, warum Theorie III. Ordnung nicht rechnet: ein
+    Balken mit Woelbkrafttorsion (model.stab_woelbt). Das mitgehende System
+    (_Stab) kennt nur die 12 Stab-FHG, nicht die Verwoelbung; bis zum
+    14.11.2026 brach die Rechnung mit „Gleichungssystem singulär: cannot
+    reshape …“ ab (Befund B3). Entscheidung des Anwenders vom 14.11.2026:
+    vorher erkennen und mit Klartext abweisen, auch in der Modellpruefung
+    (Model.check). Elemente ab 0 gezaehlt wie Tabelle und Modellbaum."""
+    els = [i for i, e in enumerate(model.elements)
+           if (aktiv is None or aktiv[i]) and model.stab_woelbt(e)]
+    if not els:
+        return ""
+    from .solver import _stab_namen
+    i = els[0]
+    name = _stab_namen(model).get(i)
+    wo = f"Balken {name} (Element {i}, ab 0 gezählt)" if name else f"Balken (Element {i}, ab 0 gezählt)"
+    mehr = f" und {len(els) - 1} weitere Elemente" if len(els) > 1 else ""
+    return (f"Theorie III. Ordnung rechnet keine Wölbkrafttorsion – {wo}{mehr}; bitte nach "
+            "Theorie II. Ordnung rechnen oder die Wölbkrafttorsion abschalten")
+
+
 def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
                    max_iter: int = 30, tol: float = 1e-6, imperfektionen: bool = None,
                    elastisch: bool = True, richtung=None, alle_vorkruemmungen: bool = False,
@@ -468,6 +489,10 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
     die Knoten und Elemente von ``model``."""
     from .solver import case_loads, case_prescribed, Results
     from . import supports as sup
+    # vor der Stabteilung: die Elementnummer ist die des Modells (B3)
+    sperre_w = woelb_sperre(model, aktiv)
+    if sperre_w:
+        raise ValueError(sperre_w)
     if stabteilung:
         from .stabteilung import teilen, zurueck, teilzahlen, kraefte_theorie1, FAKTOR_THEORIE3
         fein = None

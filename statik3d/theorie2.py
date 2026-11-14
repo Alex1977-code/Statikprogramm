@@ -341,17 +341,21 @@ def ersatzlasten_vorkruemmung(model: Model, res, elastisch: bool = True,
                "elastisch": elastisch, "anzahl": len(je_stab)}
 
 
-def normalkraefte_kg(model: Model, u: np.ndarray, aktiv=None, n_anfang: dict = None) -> dict:
+def normalkraefte_kg(model: Model, u: np.ndarray, aktiv=None, n_anfang: dict = None,
+                     feq: dict = None) -> dict:
     """{Element: Normalkraft} der Balken (nicht Fachwerkstab, Seil), wie sie
-    asm.geometric_stiffness fuer K_g nimmt (Zug positiv)."""
+    asm.geometric_stiffness fuer K_g nimmt (Zug positiv). ``feq``
+    (solver.case_loads): die Stablasten - ein Laengsgelenk traegt die Last in
+    Stabrichtung (asm.stab_normalkraft, Befund B1 vom 14.11.2026)."""
     n_anfang = n_anfang or {}
+    feq = feq or {}
     out = {}
     for i, e in enumerate(model.elements):
         if e.typ not in asm.LINE_TYPES or e.typ in ("truss", "seil"):
             continue
         if aktiv is not None and not aktiv[i]:
             continue
-        out[i] = asm.stab_normalkraft(model, e, u, n_anfang.get(i, 0.0))
+        out[i] = asm.stab_normalkraft(model, e, u, n_anfang.get(i, 0.0), f0=feq.get(i))
     return out
 
 
@@ -397,7 +401,7 @@ def alpha_cr(model: Model, system, u: np.ndarray, nmodes: int = 1, n_anfang: dic
     ``endkraefte`` (Results.beam_end der Elemente einer Sollkraft,
     solver._soll_endkraefte): deren Stabendkraft mit der Verriegelung.
     """
-    einzel = einzelstab_knicken(model, u, getattr(system, "aktiv", None), n_anfang)
+    einzel = einzelstab_knicken(model, u, getattr(system, "aktiv", None), n_anfang, feq)
     stab = {"einzelstaebe": einzel,
             "alpha_cr_stab": einzel[0]["alpha_cr"] if einzel else math.inf,
             "stab": einzel[0]["stab"] if einzel else ""}
@@ -421,7 +425,7 @@ def alpha_cr(model: Model, system, u: np.ndarray, nmodes: int = 1, n_anfang: dic
     if mx > 0:
         modus /= mx
     a = float(1.0 / mu[0])
-    grob = stabteilung_grob(model, u, a, getattr(system, "aktiv", None), n_anfang)
+    grob = stabteilung_grob(model, u, a, getattr(system, "aktiv", None), n_anfang, feq)
     return {"alpha_cr": a, "modus": modus, "fehler": "", **stab,
             "teilung_grob": grob, "hinweis_teilung": teilung_hinweis(grob)}
 
@@ -433,7 +437,8 @@ def alpha_cr(model: Model, system, u: np.ndarray, nmodes: int = 1, n_anfang: dic
 TEILUNG_GRENZE = 0.3
 
 
-def stabteilung_grob(model: Model, u: np.ndarray, a_cr: float, aktiv=None, n_anfang: dict = None) -> list:
+def stabteilung_grob(model: Model, u: np.ndarray, a_cr: float, aktiv=None, n_anfang: dict = None,
+                     feq: dict = None) -> list:
     """Gedrueckte Balkenelemente, die fuer die Knickfigur zu lang sind
     (Befund A9 der Pruefagenten, 09.11.2026): alpha_cr |N| erreicht
     TEILUNG_GRENZE der Euler-Last des einzelnen Elements. Die Verzweigung
@@ -447,7 +452,7 @@ def stabteilung_grob(model: Model, u: np.ndarray, a_cr: float, aktiv=None, n_anf
     namen = _stab_namen(model)
     eltern = getattr(model, "_stabteilung_eltern", None) or {}
     out = []
-    for i, N in normalkraefte_kg(model, u, aktiv, n_anfang).items():
+    for i, N in normalkraefte_kg(model, u, aktiv, n_anfang, feq).items():
         if N >= 0.0:
             continue
         e = model.elements[i]
@@ -489,7 +494,8 @@ def teilung_hinweis(grob: list) -> str:
             f"mindestens vier Elemente teilen.")
 
 
-def einzelstab_knicken(model: Model, u: np.ndarray, aktiv=None, n_anfang: dict = None) -> list:
+def einzelstab_knicken(model: Model, u: np.ndarray, aktiv=None, n_anfang: dict = None,
+                       feq: dict = None) -> list:
     """Das Knicken der einzelnen gedrueckten Fachwerkstaebe (Elementtyp
     truss, auch „nur Druck“; ein Zugstab faellt bei Druck aus):
     alpha_cr,i = pi^2 E I / (L^2 N_Ed) je Stab. Knicklaenge L ist die
@@ -509,6 +515,7 @@ def einzelstab_knicken(model: Model, u: np.ndarray, aktiv=None, n_anfang: dict =
     from .solver import _stab_namen
     namen = _stab_namen(model)
     n_anfang = n_anfang or {}
+    feq = feq or {}             # Stablasten: Laengsgelenk mit Last in Stabrichtung (B1)
     je_stab: dict = {}
     pendel: dict = {}
     for i, e in enumerate(model.elements):
@@ -529,7 +536,7 @@ def einzelstab_knicken(model: Model, u: np.ndarray, aktiv=None, n_anfang: dict =
             pendel[i] = ebenen
         elif getattr(e, "nur", "") == "zug":
             continue
-        N = asm.stab_normalkraft(model, e, u, n_anfang.get(i, 0.0))
+        N = asm.stab_normalkraft(model, e, u, n_anfang.get(i, 0.0), f0=feq.get(i))
         # ab 0 wie in Tabellen und Modellbaum (C13; Befund 35, 11.11.2026) - fuer
         # Fachwerkstab und Gelenkbalken gleich, sonst traefen sich zwei Namen
         name = namen.get(i, f"Element {i}") if i not in pendel else f"Element {i}"
@@ -858,7 +865,7 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
             K_schief = asm.versatz_arm_schief(model, u, aktiv, feq)
         # dieselben Normalkraefte wie in K_g fuer die Stabendkraefte und das
         # Feld (A8, 09.11.2026: postprocess rechnet sie mit k + k_G)
-        n_geo = normalkraefte_kg(model, u, aktiv, n_anf)
+        n_geo = normalkraefte_kg(model, u, aktiv, n_anf, feq)
         try:
             if voll:
                 u_neu = _voll_loesen(system, Kg, Fges, us)
