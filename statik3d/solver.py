@@ -11602,6 +11602,25 @@ def _anfang_im_ergebnis(model: Model, res, factors: dict, aktiv=None) -> dict:
     return n
 
 
+def _soll_endkraefte(model: Model, res, factors: dict, aktiv=None) -> dict:
+    """{Element: Stabendkraefte (12,) des Ergebnisses} der Elemente einer
+    Vorspannkraft (Sollkraft) - fuer den Armanteil der geometrischen
+    Steifigkeit (asm.versatz_arm_kg): die Verriegelung steht nur im Ergebnis,
+    nicht in den Stablasten des Lastfalls (Verfahrensstand 41, 14.11.2026).
+    Leer ohne Sollkraft; dann bleibt alles wie bisher."""
+    from . import vorspannkraft as vk
+    soll = vk.sollkraefte(model, factors)
+    aus: dict = {}
+    if not soll or not getattr(res, "beam_end", None):
+        return aus
+    for s in soll:
+        for i in vk._elemente(model, s.stab, aktiv):
+            fl = res.beam_end.get(i)
+            if fl is not None:
+                aus[int(i)] = np.asarray(fl, float)
+    return aus
+
+
 def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = None,
                    combination: str = None, workers: int = None) -> Results:
     """Lineares Verzweigungsproblem: (K + lambda*Kg) v = 0 (Stabtragwerke).
@@ -11639,11 +11658,13 @@ def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = Non
     # Stablasten fuer den Armanteil der Staebe mit Versatz (14.11.2026), davon
     # der symmetrische Teil wie in theorie2.alpha_cr; ohne Versatz nicht gebraucht
     feq = None
+    end = None
     if any(asm.versatz_arme_global(model, e) is not None for e in model.elements):
         feq = case_loads(model, faktoren, system.aktiv)[1]
+        end = _soll_endkraefte(model, static, faktoren, system.aktiv)
     Kg = asm.geometric_stiffness(model, u, system.aktiv,
                                  n_anfang=_anfang_im_ergebnis(model, static, faktoren, system.aktiv),
-                                 feq=feq, symmetrisch=True)
+                                 feq=feq, symmetrisch=True, endkraefte=end)
     fi = system.fi
     Kff = system.Kff
     Kgff = Kg[fi][:, fi].tocsc()

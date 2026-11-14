@@ -553,6 +553,44 @@ def _stab_mit_ungleichem_versatz(model) -> bool:
     return False
 
 
+def _versatz_achsen_arm(model) -> bool:
+    """Verfahrensstand 41 (14.11.2026) beruehrt das Modell: ein Stab mit
+    verschiedenem Versatz an Anfang und Ende (Achsen, A1); ein Stab mit Versatz
+    und Stablast nach Theorie III. Ordnung (A2); eine Vorspannkraft
+    (Sollkraft) in einem Stab mit Versatz (Knicken, A3) oder mit alpha_cr im
+    Modus „auto“ (A3); ein Stab mit Versatz nach Theorie II. Ordnung
+    (Konvergenz, A4)."""
+    if _stab_mit_ungleichem_versatz(model):
+        return True
+    from . import assemble as asm
+    els = getattr(model, "elements", None) or []
+    mit = {i for i, e in enumerate(els)
+           if getattr(e, "typ", "") in asm.LINE_TYPES and asm.beam_versatz(e) is not None}
+    faelle = getattr(model, "load_cases", None) or {}
+    kombis = getattr(model, "combinations", None) or {}
+    soll_els: set = set()
+    try:
+        from .vorspannkraft import sollkraefte, _elemente
+        for n in faelle:
+            for s_ in sollkraefte(model, {n: 1.0}):
+                soll_els.update(int(i) for i in _elemente(model, s_.stab))
+    except Exception:                                   # noqa: BLE001 - lieber betroffen
+        soll_els = set()
+    if soll_els and str(getattr(getattr(model, "design", None), "theorie2", "aus") or "aus") == "auto":
+        return True
+    if not mit:
+        return False
+    if soll_els & mit:
+        return True
+    theorien = {str(getattr(x, "theorie", "") or "").upper() for x in list(faelle.values()) + list(kombis.values())}
+    if "II" in theorien or str(getattr(getattr(model, "design", None), "theorie2", "aus") or "aus") != "aus":
+        return True
+    if "III" in theorien:
+        return any(int(getattr(bl, "elem", -1)) in mit for lc in faelle.values()
+                   for bl in (getattr(lc, "beam_loads", None) or []))
+    return False
+
+
 def _balken_mit_schubflaeche(model) -> bool:
     """Ein Balkenelement, dessen Querschnitt eine Schubflaeche hat - sein
     Feldanteil N w nach Theorie II. Ordnung liess bis zum 09.11.2026 die
@@ -1882,6 +1920,28 @@ MERKMALE: list = [
         modellmerkmal="Stab mit Versatz der Stabenden (auch gleichem), mit α_cr, Knicken oder Theorie II. "
                       "Ordnung",
         betrifft=_stab_mit_versatz, im_ergebnis=_alpha_cr_im_ergebnis),
+    # Befunde A1 bis A4 der Pruefagenten vom 14.11.2026 an den Staenden 34 bis
+    # 40: (A1) die Achsen eines Stabs mit verschiedenem Versatz kamen aus
+    # local_axes der versetzten Linie - an einer lotrechten Knotenlinie drehte
+    # der Querschnitt um 90/180 Grad (Kopfverdrehung 0,96 statt 3,81 mrad,
+    # Lager +4,0 statt -4,0 kN); (A2) Theorie III. Ordnung setzte die Stablast
+    # eines Stabs mit Versatz mit unverdrehtem Arm an (3061 statt 3171 kNm);
+    # (A3) Knicken und alpha_cr „auto“ lasen die Sollkraft ohne Verriegelung
+    # (88,3 bzw. 1038,8 statt 801,6 bzw. 817,7; auto: ∞); (A4) Theorie II.
+    # Ordnung gab unkonvergiert ein Ergebnis aus. Fehlerkorrektur
+    Merkmal(
+        name="versatz_achsen_lotrecht", titel="Achsen, Stablast und Sollkraft an Stäben mit Versatz",
+        texte={"alt": "Achsen des versetzten Stabs aus der versetzten Linie neu (lotrecht um 90°/180° "
+                      "gedreht), Stablast nach Th III mit unverdrehtem Arm, Sollkraft im Knicken ohne "
+                      "Verriegelung, Th II unkonvergiert als Ergebnis",
+               "neu": "Achsen der Knotenlinie auf die Stabrichtung gedreht, Stablast über den mitgedrehten "
+                      "Arm, Sollkraft mit Verriegelung, Th II mit voller Matrix oder Fehler"},
+        wechsel=(Wechsel(stand=41, datum="14.11.2026", commit="fix/k5-a-versatz", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Stab mit verschiedenem Versatz; Stab mit Versatz und Stablast nach Theorie III. Ordnung "
+                      "oder nach Theorie II. Ordnung; Vorspannkraft (Sollkraft) im Stab mit Versatz oder mit "
+                      "α_cr im Modus „auto“",
+        betrifft=_versatz_achsen_arm),
     # Befund vom 11.11.2026 (Pruefung der Testmodelle): der Wasserdruck an
     # Schalen ohne globale Lastrichtung hatte das falsche Vorzeichen - „gegen
     # die Normale (in den Körper)“ wirkte mit der Elementnormale, numerisch
@@ -2053,7 +2113,7 @@ MERKMALE: list = [
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 40
+VERFAHRENSSTAND = 41
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

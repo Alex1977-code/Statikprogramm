@@ -211,6 +211,35 @@ class _Stab:
         self.L0 = L
         self.f0 = f0
         self.dofs = asm.element_dofs(e)
+        # Die Stablast am Stabende (ohne Anfangsdehnung, kondensiert), global in
+        # festen Richtungen - mit Versatz geht sie ueber den mitgedrehten Arm
+        # auf den Knoten (:meth:`arm_last`, Verfahrensstand 41)
+        self.F_last = None
+        if self.arm is not None:
+            fl0 = f0 if fa is None else f0 - fa
+            if np.any(fl0[[0, 1, 2, 6, 7, 8]]):
+                self.F_last = [self.E0T @ fl0[0:3], self.E0T @ fl0[6:9]]
+
+    def arm_last(self, R: np.ndarray, lam: float):
+        """Was die Stablast (Faktor ``lam``) ueber den mitgedrehten Arm mehr auf
+        die Knoten bringt als ueber den unverdrehten, der in F_ref steht
+        (asm.stablasten_einbauen): je Stabende das Moment (R_i a_i - a_i) x F_i,
+        und dessen Ableitung nach der Drehung [F_i]x [R_i a_i]x (wie die innere
+        Kraft in :meth:`knoten`). Rueckgabe [(Knoten, dM (3,), dK (3, 3))] oder
+        [] ohne Stablast am Stab mit Versatz.
+
+        Bis zum 14.11.2026 blieb die Stablast eines Stabs mit Versatz eine
+        feste Knotenlast mit dem unverdrehten Arm: Kragarm 4 m, Versatz 0,5 m,
+        qz -400 kN/m, Einspannmoment 3061,42 statt 3171,17 kNm (Kurzstabmodell),
+        auf der unsicheren Seite (tests/test_versatz_achsen_lotrecht.py)."""
+        if self.F_last is None:
+            return []
+        aus = []
+        for k, n in enumerate(self.nodes):
+            F = lam * self.F_last[k]
+            a_r = R[n] @ self.arm[k]
+            aus.append((n, np.cross(a_r - self.arm[k], F), bm._skew(F) @ bm._skew(a_r)))
+        return aus
 
     def zustand(self, X: np.ndarray, R: np.ndarray):
         """(f_l, T, k_g, N, L) im mitgehenden System der aktuellen Lage; f_l
@@ -531,6 +560,7 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
         q.pop(sl_.i, None)
     staebe = [_Stab(model, i, feq, feq_anf.get(i)) for i in wirksam
               if model.elements[i].typ != "seil"]
+    staebe_arm_last = [st for st in staebe if st.F_last is not None]
     # Die Anfangsdehnung der Staebe aus F_ref: dieselbe Last, die
     # asm.load_vector eingebaut hat (asm.stablasten_einbauen)
     F_anf = None
@@ -678,6 +708,21 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
                 info.schiefstellung, info.vorkruemmung = s_info, v_info
             F_stufe = stufenlast(F_ref, F_S, lam)
             F_ges = F_stufe + F_imp
+            # Stablasten an Staeben mit Versatz: ueber den mitgedrehten Arm
+            # (Verfahrensstand 41); ohne solche Staebe leer, alles wie bisher
+            arm_k = [x for st in staebe_arm_last for x in st.arm_last(R, lam)]
+            if arm_k:
+                F_ges = F_ges.copy()
+                ra, ca, va = [], [], []
+                for n_, dM, dK in arm_k:
+                    F_ges[NDOF * n_ + 3:NDOF * n_ + 6] += dM
+                    dd_ = np.arange(NDOF * n_ + 3, NDOF * n_ + 6)
+                    rr_, cc_ = np.meshgrid(dd_, dd_, indexing="ij")
+                    ra.append(rr_.ravel())
+                    ca.append(cc_.ravel())
+                    va.append(-dK.ravel())
+                K = K + sparse.coo_matrix((np.concatenate(va), (np.concatenate(ra), np.concatenate(ca))),
+                                          shape=(ndof, ndof)).tocsr()
             r = F_ges - f_int
             # bezogen auf die Last der Stufe - mit voller Temperatur oder
             # Vorspannung ist das nicht mehr lam * |F|; die Anfangsdehnung der

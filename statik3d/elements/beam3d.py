@@ -36,6 +36,42 @@ def local_axes(p1, p2, roll: float = 0.0):
     return np.vstack([ex, ey, ez]), L
 
 
+def stab_achsen_versetzt(p1, p2, roll, P1, P2):
+    """(T3, L) eines Stabs zwischen seinen versetzten Enden P1, P2, dessen
+    Knotenlinie p1 -> p2 mit Drehwinkel ``roll`` ist: die Achsen der
+    Knotenlinie, durch die kleinste Drehung von ihrer Richtung auf die
+    Stabrichtung t gebracht,
+
+        y' = y_n - (y_n . t) t  (normiert),   z' = t x y',
+
+    so wie Theorie III. Ordnung die Achsen mitfuehrt (theorie3._Stab.zustand).
+    Verfahrensstand 41 (14.11.2026): bis dahin kamen die Achsen aus
+    :func:`local_axes` fuer die Linie P1 -> P2 neu. Fuer eine lotrechte
+    Knotenlinie springt dort die Bezugsrichtung (|e_x,z| > 0,9999 nimmt global
+    X statt Z), und ein schon leicht geneigter Stab drehte seinen Querschnitt
+    um 90 bzw. 180 Grad gegen den der Knotenlinie: lotrechte Stuetze 4 m,
+    Versatz oben 0,1 m, Fx 10 kN, Kopfverdrehung 0,9639 statt 3,8119 mrad;
+    lokale Streckenlast qz 1 kN/m, Lager Rx +4,0 statt -4,0 kN
+    (tests/test_versatz_achsen_lotrecht.py)."""
+    T3n, _Ln = local_axes(p1, p2, roll)
+    d = np.asarray(P2, float) - np.asarray(P1, float)
+    L = float(np.linalg.norm(d))
+    if L <= 0:
+        raise ValueError("Stab mit Laenge 0")
+    t = d / L
+    y = T3n[1] - float(T3n[1] @ t) * t
+    n = float(np.linalg.norm(y))
+    if n > 1e-9:
+        y = y / n
+        z = np.cross(t, y)
+    else:
+        # y der Knotenlinie laengs des Stabs (Arm quer um 90 Grad): von z aus
+        z = T3n[2] - float(T3n[2] @ t) * t
+        z = z / np.linalg.norm(z)
+        y = np.cross(z, t)
+    return np.vstack([t, y, z]), L
+
+
 def transform_matrix(T3: np.ndarray) -> np.ndarray:
     """12x12 Blockdiagonale aus 3x3 Richtungskosinus."""
     T = np.zeros((12, 12))

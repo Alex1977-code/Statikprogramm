@@ -10344,6 +10344,39 @@ class Model:
                            "Last auf eine Seite mit Fläche legen")
         return aus
 
+    def _versatz_laenge_meldung(self, i: int, e) -> list:
+        """Die Zeile der Modellpruefung zu einem Stab, dessen verschiedener
+        Versatz an Anfang und Ende die Stabenden aufeinanderlegt (FEHLER: die
+        Rechnung bricht mit „Stab mit Laenge 0“ ab oder rechnet mit einem
+        beliebig steifen Stummel) oder ihn umkehrt (WARNUNG). Leer sonst.
+        Seit dem 14.11.2026 (Befund A10); bis dahin meldete die Pruefung nichts,
+        und die Rechnung nannte den Versatz nicht."""
+        if not getattr(e, "exzentrizitaet", None) or e.typ not in _EL.STAB_TYPEN or len(e.nodes) < 2:
+            return []
+        if any(n < 0 or n >= self.nn for n in e.nodes[:2]):
+            return []
+        from .elements import beam3d as _bm
+        from . import zahlen as _zl
+        X = self.nodes[e.nodes]
+        try:
+            arme = _bm.versatz_arme(X[0], X[1], e.roll, e.exzentrizitaet)
+        except (TypeError, ValueError):
+            return []
+        if arme is None:
+            return []
+        d = (X[1] + arme[1]) - (X[0] + arme[0])
+        Ln = float(np.linalg.norm(X[1] - X[0]))
+        Lp = float(np.linalg.norm(d))
+        text = (f"Länge zwischen den versetzten Stabenden {_zl.zahl_text(Lp, stellen=4)} m, "
+                f"Knotenlinie {_zl.zahl_text(Ln, stellen=4)} m")
+        if Lp <= 1e-3 * Ln:
+            return [f"FEHLER: Element {i}: der Versatz (Exzentrizität) der Stabenden legt Anfang und Ende "
+                    f"des Stabs aufeinander ({text}) – Versatz prüfen"]
+        if float(d @ (X[1] - X[0])) <= 0.0:
+            return [f"WARNUNG: Element {i}: der Versatz (Exzentrizität) der Stabenden kehrt den Stab um "
+                    f"({text}, Richtung entgegen der Knotenlinie) – Versatz prüfen"]
+        return []
+
     def check(self) -> list[str]:
         """Einfache Modellpruefung. Gibt Liste von Warnungen/Fehlern zurueck."""
         msgs = []
@@ -10379,6 +10412,7 @@ class Model:
                     msgs.append(f"FEHLER: Element {i}: Knoten {n} existiert nicht")
                 else:
                     used[n] = True
+            msgs += self._versatz_laenge_meldung(i, e)
         free = np.where(~used)[0]
         if len(free):
             # Nur Knoten, an denen etwas haengt (Last, Lager, Kopplung ...): ein

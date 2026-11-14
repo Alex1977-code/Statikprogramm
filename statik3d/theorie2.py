@@ -49,6 +49,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from . import assemble as asm
+from . import zahlen as zl
 from .elements import beam3d as bm
 from .model import Model
 
@@ -358,7 +359,7 @@ def normalkraefte_kg(model: Model, u: np.ndarray, aktiv=None, n_anfang: dict = N
 # alpha_cr (5.2.1)
 # ==========================================================================
 def alpha_cr(model: Model, system, u: np.ndarray, nmodes: int = 1, n_anfang: dict = None,
-             feq: dict = None) -> dict:
+             feq: dict = None, endkraefte: dict = None) -> dict:
     """
     Kleinster positiver Verzweigungslastfaktor zum Verformungszustand ``u``.
 
@@ -393,13 +394,15 @@ def alpha_cr(model: Model, system, u: np.ndarray, nmodes: int = 1, n_anfang: dic
     ``feq`` (solver.case_loads): die Stablasten fuer den Armanteil der Staebe
     mit Versatz (asm.versatz_arm_kg, seit dem 14.11.2026); alpha_cr nimmt
     davon den symmetrischen Teil - eine untere Schranke, siehe dort.
+    ``endkraefte`` (Results.beam_end der Elemente einer Sollkraft,
+    solver._soll_endkraefte): deren Stabendkraft mit der Verriegelung.
     """
     einzel = einzelstab_knicken(model, u, getattr(system, "aktiv", None), n_anfang)
     stab = {"einzelstaebe": einzel,
             "alpha_cr_stab": einzel[0]["alpha_cr"] if einzel else math.inf,
             "stab": einzel[0]["stab"] if einzel else ""}
     Kg = asm.geometric_stiffness(model, u, getattr(system, "aktiv", None), n_anfang=n_anfang,
-                                 feq=feq, symmetrisch=True)
+                                 feq=feq, symmetrisch=True, endkraefte=endkraefte)
     fi = system.fi
     Kgff = Kg[fi][:, fi].tocsc()
     if Kgff.shape[0] < 3 or abs(Kgff).max() == 0:
@@ -703,6 +706,37 @@ class Th2Info:
                 f"Verformungszuwachs {self.zuwachs * 100:+.1f} %")
 
 
+def _voll_loesen(system, K_extra, F: np.ndarray, us=None) -> np.ndarray:
+    """(K + K_extra) u = F mit der vollen, unsymmetrischen Matrix (SuperLU,
+    scipy spsolve) auf den freien FHG, mit den vorgegebenen Verschiebungen
+    ``us`` wie StaticSystem.solve - fuer die Iteration nach Theorie II.
+    Ordnung, wenn sie mit dem schiefsymmetrischen Armanteil als Last stockt
+    (Verfahrensstand 41). Die Loeser des Systems (ama, PARDISO symmetrisch)
+    verlangen Symmetrie; Stabwerke sind klein genug fuer die direkte Loesung.
+    Mit Hilfsfesselung (freie Bewegung) gibt es diesen Weg nicht."""
+    from scipy.sparse.linalg import spsolve
+    if getattr(system, "_rand", 0):
+        raise RuntimeError("freie Bewegung mit Hilfsfesselung - die volle Matrix ist singulär")
+    fi, si = system.fi, system.si
+    u = system.vals.copy()
+    rhs = np.asarray(F, float)[fi].copy()
+    if us is not None:
+        u[si] += us[si]
+        idx, k = system._federn()
+        if idx.size:
+            f_f = np.zeros(system.model.ndof)
+            f_f[idx] = k * us[idx]
+            rhs = rhs + f_f[fi]
+    Kt = (system.K + K_extra).tocsr()
+    if np.any(u[si]):
+        rhs = rhs - Kt[fi][:, si] @ u[si]
+    x = np.asarray(spsolve(Kt[fi][:, fi].tocsc(), rhs), float)
+    if not np.all(np.isfinite(x)):
+        raise RuntimeError("volle Matrix singulär")
+    u[fi] = x
+    return u
+
+
 def solve_theorie2(model: Model, factors: dict, name: str, system=None,
                    imperfektionen: bool = True, elastisch: bool = True,
                    max_iter: int = 30, tol: float = 1e-6,
@@ -790,7 +824,19 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
     u = u1.copy()
     res = res1
     Fges = F.copy()
-    for it in range(1, max_iter + 1):
+    # Stockt die Iteration mit dem schiefsymmetrischen Armanteil als Last,
+    # loest sie mit der vollen unsymmetrischen Matrix weiter (``voll``, eigene
+    # max_iter Schritte); bleibt sie dann unkonvergiert, ist es ein Fehler
+    # (Verfahrensstand 41, 14.11.2026). Bis dahin stockte sie an sehr weichen
+    # Stuetzen mit Versatz (alpha_cr 1,4: nach 30 Schritten 0,355 % Aenderung,
+    # phi_x 10,17 statt 2,64 mrad) und gab das Ergebnis als gerechnet aus.
+    voll = False
+    schritte_voll = 0
+    konv_vor = math.inf
+    nicht_konvergiert = False
+    it = 0
+    while True:
+        it += 1
         Fimp = np.zeros(model.ndof)
         if imperfektionen:
             Fs, s_info = ersatzlasten_schiefstellung(model, res, richtung)
@@ -804,13 +850,20 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
         # symmetrische Teil in der Matrix, der schiefsymmetrische als Last aus
         # dem vorigen Schritt (die Matrix bleibt symmetrisch, ama); ohne
         # Versatz ist K_schief None und alles wie bisher
-        Kg = asm.geometric_stiffness(model, u, aktiv, n_anfang=n_anf, feq=feq, symmetrisch=True)
-        K_schief = asm.versatz_arm_schief(model, u, aktiv, feq)
+        if voll:
+            Kg = asm.geometric_stiffness(model, u, aktiv, n_anfang=n_anf, feq=feq)
+            K_schief = None
+        else:
+            Kg = asm.geometric_stiffness(model, u, aktiv, n_anfang=n_anf, feq=feq, symmetrisch=True)
+            K_schief = asm.versatz_arm_schief(model, u, aktiv, feq)
         # dieselben Normalkraefte wie in K_g fuer die Stabendkraefte und das
         # Feld (A8, 09.11.2026: postprocess rechnet sie mit k + k_G)
         n_geo = normalkraefte_kg(model, u, aktiv, n_anf)
         try:
-            u_neu = system.solve(Fges if K_schief is None else Fges - K_schief @ u, K_extra=Kg, us=us)
+            if voll:
+                u_neu = _voll_loesen(system, Kg, Fges, us)
+            else:
+                u_neu = system.solve(Fges if K_schief is None else Fges - K_schief @ u, K_extra=Kg, us=us)
         except Exception as exc:
             info.fehler = f"Gleichungssystem singulär (α_cr ≈ 1?): {exc}"
             break
@@ -826,11 +879,33 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
         info.konvergenz = d / bezug
         if d / bezug < tol:
             break
-    else:
+        if voll:
+            schritte_voll += 1
+            if schritte_voll >= max_iter:
+                nicht_konvergiert = True
+                break
+        elif K_schief is not None and ((it >= 3 and info.konvergenz > 0.5 * konv_vor) or it >= max_iter):
+            # stockt: die Aenderung faellt nicht mehr wenigstens auf die Haelfte
+            voll = True
+            info.hinweise.append(
+                f"Theorie II. Ordnung: die Iteration mit dem Armanteil des Versatzes als Last stockte "
+                f"nach {it} Schritten (Änderung {zl.zahl_text(info.konvergenz * 100, stellen=3)} %) – "
+                "weiter mit der vollen unsymmetrischen Matrix")
+        elif it >= max_iter:
+            break
+        konv_vor = info.konvergenz
+    if it >= max_iter and not voll and not info.fehler and info.konvergenz >= tol:
         info.hinweise.append(
             f"Die Iteration ist nach {max_iter} Schritten nicht konvergiert "
             f"(letzte Änderung {info.konvergenz * 100:.3f} %). Das Tragwerk ist "
             "sehr verformungsweich - α_cr prüfen.")
+    if nicht_konvergiert and not info.fehler:
+        info.fehler = (
+            f"Theorie II. Ordnung nicht konvergiert: auch mit der vollen unsymmetrischen Matrix "
+            f"(Armanteil des Versatzes) nach {it} Schritten noch "
+            f"{zl.zahl_text(info.konvergenz * 100, stellen=3)} % Änderung – kein Ergebnis nach Theorie "
+            f"II. Ordnung. Das Tragwerk ist sehr verformungsweich (α_cr = "
+            f"{zl.zahl_text(info.alpha_cr, stellen=4)}); Aussteifung, Querschnitte oder Lasten prüfen")
 
     info.gerechnet = not info.fehler
     info.u_max_II = float(np.abs(u).max())
@@ -1016,10 +1091,26 @@ def check_theorie2(model: Model, analysis, combos: list = None, system=None,
             fein = fein_system(model, system, faktoren)
             m_a, s_a = (fein[0], fein[1]) if fein is not None else (model, system)
             F, _feq, _q, _temp = case_loads(m_a, faktoren, getattr(s_a, "aktiv", None))
-            u1 = s_a.solve(F, us=case_prescribed(m_a, faktoren))
-            ac = alpha_cr(m_a, s_a, u1,
-                          n_anfang=anfangsnormalkraefte(m_a, faktoren, getattr(s_a, "aktiv", None)),
-                          feq=_feq)
+            from .vorspannkraft import sollkraefte
+            if sollkraefte(m_a, faktoren):
+                # Vorspannkraft (Sollkraft): der Grundzustand mit Spannschritt
+                # und Verriegelung, N und Armanteil aus diesem Ergebnis wie im
+                # Knicken (Verfahrensstand 41, 14.11.2026). Bis dahin fehlte die
+                # Verriegelung hier ganz - am Zugband mit 70 kN „keine
+                # Normalkräfte“, alpha_cr ∞ statt 801,6
+                from .solver import _solve_loads, _anfang_im_ergebnis, _soll_endkraefte
+                r_s = _solve_loads(m_a, s_a, faktoren, zeile, "combination")
+                u1 = np.zeros(m_a.ndof)
+                u1[:m_a.nn * 6] = np.asarray(r_s.u, float).ravel()[:m_a.nn * 6]
+                ac = alpha_cr(m_a, s_a, u1,
+                              n_anfang=_anfang_im_ergebnis(m_a, r_s, faktoren, getattr(s_a, "aktiv", None)),
+                              feq=_feq,
+                              endkraefte=_soll_endkraefte(m_a, r_s, faktoren, getattr(s_a, "aktiv", None)))
+            else:
+                u1 = s_a.solve(F, us=case_prescribed(m_a, faktoren))
+                ac = alpha_cr(m_a, s_a, u1,
+                              n_anfang=anfangsnormalkraefte(m_a, faktoren, getattr(s_a, "aktiv", None)),
+                              feq=_feq)
             info = Th2Info(kombination=zeile, alpha_cr=ac["alpha_cr"], grenze=grenze,
                            u_max_I=float(np.abs(u1).max()))
             info.stab_aus(ac)

@@ -87,6 +87,20 @@ def _kragarm(art, r1, r2, n, lasten, theorie="I", stablasten=(), rho=0.0):
         st = [m.add_node(L * k / n + r(k)[0], r(k)[1], r(k)[2]) if np.any(r(k)) else ids[k]
               for k in range(n + 1)]
         els = [m.add_element("beam", [st[k], st[k + 1]], "ST", "Q") for k in range(n)]
+        # Drehwinkel des Kurzstabmodells: dieselben Achsen wie der Stab mit
+        # Versatz, die Achsen der Knotenlinie auf die Stabrichtung gedreht
+        # (bm.stab_achsen_versetzt, Verfahrensstand 41). Bis dahin nahm das
+        # Modell local_axes der Stablinie - dieselbe Konvention wie die Rechnung
+        # bis Stand 40, die an lotrechten Knotenlinien springt
+        from statik3d.elements import beam3d as bm
+        X = np.asarray(m.nodes, float)
+        for k, e in enumerate(els):
+            P1, P2 = X[st[k]], X[st[k + 1]]
+            if np.array_equal(r(k), r(k + 1)):
+                continue
+            T3s, _ = bm.stab_achsen_versetzt(X[ids[k]], X[ids[k + 1]], 0.0, P1, P2)
+            T0, _ = bm.local_axes(P1, P2, 0.0)
+            m.elements[e].roll = math.atan2(float(T3s[1] @ T0[2]), float(T3s[1] @ T0[1]))
         for a, b in zip(ids, st):
             if a != b:
                 m.add_element("beam", [a, b], "ST0", "STARR")
@@ -217,7 +231,9 @@ def test_stablasten():
     Lp = float(np.linalg.norm(P2 - P1))
     t = (P2 - P1) / Lp
     from statik3d.elements import beam3d as bm
-    T3, _ = bm.local_axes(P1, P2, 0.0)
+    # die Achsen des Stabs: die der Knotenlinie auf die Stabrichtung gedreht
+    # (Verfahrensstand 41; bis Stand 40 local_axes(P1, P2))
+    T3, _ = bm.stab_achsen_versetzt([0, 0, 0], [L, 0, 0], 0.0, P1, P2)
     teil = T3.T @ np.array([0.0, 2e3, 1e3]) * 2.0
     proj = 4e3 * math.sqrt(1 - t[0] ** 2) * Lp
     soll = np.array([proj, 0, -5e3 * Lp - rho * A * 9.81 * Lp - 1e3]) + teil
