@@ -7525,6 +7525,22 @@ zu erzeugen. Eine Flächenlast auf die Projektion mit linearem Verlauf trifft
 jetzt je Stelle die Seite, von der die Kraft kommt: Ein Verlauf von 0 auf
 −5 kN/m² global Z belastet das Dach und nicht die Unterseite. Verfahrensstand 33.
 
+**Freie Wand oder Tafel aus einem Volumen** (seit 12.11.2026). Ist eine
+freistehende Wand oder Anzeigetafel als Volumen modelliert und sind beide
+großen Seitenflächen als freie Wand bzw. Tafel gewählt, gelten die beiden
+gegenüberliegenden Seitenflächen desselben Volumens als eine Wand. Der
+Nettobeiwert c_p,net (Tabelle 7.9) bzw. c_f (7.4.3) erfasst Luv- und Leeseite
+schon zusammen; die Last wirkt darum nur einmal, auf der luvseitigen Fläche und
+in Windrichtung, und wechselt bei Anströmung von der Gegenseite mit. Das
+Protokoll der Lasterzeugung nennt die beiden Flächen, das Volumen und die
+Fläche, auf der die Last sitzt (im Bericht steht dieser Satz nicht). Bis dahin
+trug jede Seitenfläche die volle Nettolast: Eine Wand 10 × 0,3 × 3 m bekam
+53,5 statt 26,8 kN, dieselbe Wand als Schale 26,8 kN. Ältere so erzeugte
+Windlasten nennt das Programm beim Öffnen und im Ergebnisstatus; sie sind über
+Lasten › Wind neu zu erzeugen. Eine Schalenwand, ein Volumen mit nur einer
+gewählten Seitenfläche und Gebäude ohne freie Wand sind unverändert.
+Verfahrensstand 39; geprüft in `tests/test_wind_freie_wand_volumen.py`.
+
 **Numerischer Windkanal.** Mit *Verfahren → numerischer Windkanal* wird die
 Strömung um die gewählten Flächen und Stäbe in einem Schnitt gerechnet
 (Gitter-Boltzmann-Verfahren, siehe Theoriehandbuch 2.2a): *Grundriss*
@@ -11467,8 +11483,8 @@ der Theorie III. Ordnung kondensiert die geometrische Steifigkeit an Gelenken
 und Federgelenken wie die Theorie II. Ordnung. Bis zum 09.11.2026 bekam sie
 die volle Balkenform; mit einer Pendelstütze als Balken mit Gelenken neben
 einem Kragstiel fand die Rechnung ab 5/6 der Knicklast kein Gleichgewicht.
-Der Versatz der Stabenden ist nach Theorie III. Ordnung **nicht**
-berücksichtigt.
+Den Versatz der Stabenden berücksichtigt Theorie III. Ordnung seit dem
+12.11.2026 (siehe unten).
 
 **Stablast am Gelenk nach Theorie III. Ordnung** (seit 12.11.2026). Die
 Stabendkräfte eines Balkens mit Gelenk oder Federgelenk nehmen die Stablast
@@ -11490,6 +11506,24 @@ F·e fehlte. Bei kleinen Lasten stimmt Theorie III. Ordnung jetzt mit Theorie I.
 II. Ordnung überein, bei großen Verdrehungen (bis 32°) mit einem Modell aus
 starren Kurzstäben. Die interne Stabteilung teilt Stäbe mit Versatz nicht.
 Verfahrensstand 34; geprüft in `tests/test_theorie3_versatz.py`.
+
+**Verschiedener Versatz an Anfang und Ende in allen Rechenarten** (seit
+12.11.2026). Ein Stab, dessen Versatz am Anfang und am Ende verschieden ist,
+liegt jetzt auch nach Theorie I. und II. Ordnung zwischen seinen versetzten
+Stabenden; der Versatz wirkt als starrer Arm vom Knoten zum Stabende wie nach
+Theorie III. Ordnung. Länge, lokale Achsen, Stablasten (auch je Projektion),
+Eigengewicht, geometrische Steifigkeit, α_cr und die Schnittgrößen beziehen
+sich auf diese Stabachse; die Elementlänge in Tabellen und Bericht ist die
+Länge zwischen den versetzten Enden. Bis dahin lag ein solcher Stab auf der
+Knotenlinie, nur seine Enden waren versetzt, und das Momentengleichgewicht ging
+verloren: Ein Kragarm von 4 m mit 50 kN Zug durch die Einspannung und 0,1 m
+Versatz nur am Stabende ergab ein Einspannmoment von 5,0 kNm statt 0. Geprüft
+gegen die Handrechnung und gegen dasselbe System aus starren Kurzstäben ohne
+Versatz; ein linear geteilter Stab gleicht dem ungeteilten. Stäbe ohne Versatz
+oder mit gleichem Versatz an beiden Enden rechnen bitgleich wie bisher.
+Ergebnisse von Modellen mit verschiedenem Versatz an den Stabenden tragen den
+Status „möglicherweise betroffen – neu rechnen“. Verfahrensstand 38; geprüft in
+`tests/test_versatz_starrer_arm.py`.
 
 **Wölbkrafttorsion und Längsgelenk nach Theorie II. Ordnung** (seit
 12.11.2026). Balken mit Wölbkrafttorsion rechnen ihre Stabendkräfte jetzt mit

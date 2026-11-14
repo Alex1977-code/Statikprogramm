@@ -37,9 +37,15 @@ Der Verfahrensstand steigt weiter von 30 auf 37. Alle sieben neuen Stände sind 
 ### Drehlager, Z-Modell
 
 * Im Z-Modell Z3c sind die vier Trennflächen F1401, F1403, F1411 und F1413 aus dem Flächenlager „Starr“ genommen (Freigabe des Anwenders vom 12.11.2026). Die Geometrie ist unverändert. Die Prüfung vor der Rechnung meldet keinen FEHLER mehr. Die Dateien liegen als Kopien mit dem Zusatz `_ohne_trennflaechen`; die Originale sind unverändert.
+* Ebenso, mit Freigabe vom 12.11.2026, für das R-Modell `drehlager.json`, `modell.json`, die drei G0-Dateien in Drehlager_G0_Vergleich_2026-10-15 und `drehlager_mittel_LF1.json`: Kopien mit dem Zusatz `_ohne_trennflaechen` neben den Originalen. Feld für Feld ändert sich nur das Lager „Starr“ (46 statt 50 Flächen); die vier FEHLER der Prüfung vor der Rechnung sind weg, neue Meldungen gibt es nicht. Das R-Modell selbst bleibt RFEM-getreu eingefroren.
+
+## Dritter Teil: Versatz und freie Wand aus einem Volumen (Stände 38 und 39)
+
+Beide Punkte standen am Nachmittag unter „Offen“; der Anwender hat sie am 12.11.2026 freigegeben. Der Verfahrensstand steigt auf 39, beide Stände sind Fehlerkorrekturen.
+
+* **Verschiedener Versatz an Anfang und Ende (Stand 38).** Ein solcher Stab liegt jetzt auch nach Theorie I. und II. Ordnung zwischen seinen versetzten Stabenden, der Versatz wirkt als starrer Arm wie nach Theorie III. Ordnung. Länge, Achsen, Stablasten, Eigengewicht, geometrische Steifigkeit, α_cr und Schnittgrößen beziehen sich auf diese Achse. Ein Kragarm von 4 m mit 50 kN Zug durch die Einspannung und 0,1 m Versatz nur am Stabende hat jetzt das Einspannmoment 0 statt 5,0 kNm; die Spitze verschiebt sich 0,6375 mm (von Hand gleich, vorher 1,905 mm). Gegenprobe ist dasselbe System aus starren Kurzstäben ohne Versatz (Verschiebungen, Stabendkräfte und α_cr auf 1e-4 gleich). Stäbe ohne Versatz oder mit gleichem Versatz an beiden Enden sind bitgleich (23 Modelle, 3 136 Ergebnisfelder verglichen).
+* **Freie Wand oder Tafel aus einem Volumen (Stand 39).** Sind beide großen Seitenflächen eines Volumens als freie Wand bzw. Tafel gewählt, wirkt die Nettolast nur einmal, auf der Luvseite in Windrichtung. Bis dahin doppelt: Wand 10 × 0,3 × 3 m 53,5 statt 26,8 kN (von Hand 26,754 kN, als Schale 26,754 kN), Tafel 61,7 statt 30,8 kN. Ältere Windlasten nennt das Programm beim Öffnen; über Lasten › Wind neu erzeugen. Schalenwände und Volumen mit nur einer gewählten Seitenfläche sind bitgleich.
 
 ### Offen
 
-* Theorie I. und II. Ordnung rechnen einen Stab mit verschiedenem Versatz an Anfang und Ende entlang der Knotenlinie; dabei geht das Momentengleichgewicht verloren (Beispiel: 5,0 statt 0 kNm Einspannmoment). Entscheidung des Anwenders steht aus.
-* Eine freie Wand aus einem Volumen, bei der beide Seitenflächen gewählt sind, bekommt die Nettowindlast doppelt. Entscheidung steht aus.
-* R-Modell und G0-Dateien des Drehlagers haben die vier Trennflächen weiter im Lager „Starr“ und rechnen mit dem heutigen Stand nicht. Entscheidung steht aus.
+Die drei Entscheidungen vom Nachmittag sind getroffen und umgesetzt (dritter Teil und Abschnitt Drehlager).
