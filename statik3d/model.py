@@ -285,7 +285,8 @@ def schalennetz_hinweis(model) -> list:
                  f"{dbsp}) bis zum 12.11.2026")
     text = (f"Schalennetz nicht verbunden: {len(paare)} Flächenpaar(e) an {len(linien)} gemeinsamen "
             f"Linie(n) haben verschiedene Netzknoten (z. B. {beispiel}). So vernetzte das Programm bis "
-            f"zum 09.11.2026{dtext} – die Flächen hängen nur an den Linienenden zusammen, das Ergebnis "
+            f"zum 09.11.2026{dtext}, beim Neuvernetzen einzelner Flächen und an Polylinien bis zum "
+            "14.11.2026 – die Flächen hängen nur an den Linienenden zusammen, das Ergebnis "
             "ist zu weich. Bitte neu vernetzen.")
     vorschlag = "Netz › Vernetzen (alle Flächen)"
     hinweise = getattr(model, "importhinweise", None)
