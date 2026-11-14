@@ -882,13 +882,13 @@ class Werteskala:
 
 
 def _text(x: float) -> str:
-    """Beschriftung unter der Farbskala: ausgeschrieben (dezimal), ohne
-    Nachkommanullen wie bisher („0“, „-400“) - bis zum 14.11.2026 mit :.4g
-    „-1.235e+04“ bzw. „-2e-05“ (E7)."""
-    s = dezimal(x)
-    if "." in s:
-        s = s.rstrip("0").rstrip(".")
-    return "0" if s in ("", "-", "-0") else s
+    """Beschriftung unter der Farbskala: ausgeschrieben, vier geltende Ziffern
+    wie das fruehere :.4g, Dezimalpunkt wie in der Ansicht, ohne
+    Nachkommanullen („0“, „-400“). Bis zum 14.11.2026 mit :.4g „-1.235e+04“
+    bzw. „-2e-05“ (E7), danach mit dezimal() hoechstens drei Nachkommastellen -
+    eine Verdrehung -0,0004 stand als „0“ unter der Skala (A'11)."""
+    from .zahlen import zahl_text
+    return zahl_text(x, stellen=4, tausender=False, punkt=True)
 
 
 def grenzen(skala: Werteskala, werte, maske=None) -> dict:

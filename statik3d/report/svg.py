@@ -1121,6 +1121,7 @@ def draw_sn_curve(category: float, points=None, gamma_Mf: float = 1.0, width: in
     mit Dauerfestigkeit (Delta_sigma_D bei 5e6) und Schwellenwert (Delta_sigma_L
     bei 1e8) sowie den Lastpunkten points = [(Delta_sigma [Pa], n[, Name]), ...]."""
     from ..ec3.fatigue import sn_life
+    from ..zahlen import zahl_text
     cat = float(category)
     gMf = float(gamma_Mf) if gamma_Mf else 1.0
     dc = cat / gMf
@@ -1209,7 +1210,9 @@ def draw_sn_curve(category: float, points=None, gamma_Mf: float = 1.0, width: in
         col = "#2e8b57" if ok else "#c0392b"
         out.append(f'<circle cx="{_n(xx)}" cy="{_n(yy)}" r="4.5" fill="{col}" '
                    f'fill-opacity="0.85" stroke="#222222" stroke-width="0.8"/>')
-        lab = f"{name + ': ' if name else ''}Δσ = {ds / 1e6:.1f} MPa, n = {n:.3g}"
+        # Lastspielzahl ausgeschrieben, nie „5e+05“ (B'9, 14.11.2026)
+        lab = (f"{name + ': ' if name else ''}Δσ = {ds / 1e6:.1f} MPa, "
+               f"n = {zahl_text(float(f'{n:.3g}'), tausender=False, punkt=True)}")
         if xx > ml + 0.6 * Wp:
             out.append(text(xx - 7, yy + 4 + 11 * (k % 2), lab, 9, "end", col))
         else:

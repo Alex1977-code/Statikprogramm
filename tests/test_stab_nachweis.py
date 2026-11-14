@@ -186,7 +186,7 @@ def test_a6_verweise_und_vorspannung():
     check("A6 Stellung P1 mit staebe_aus = [S1] (erster Stab): abgewiesen, nennt „Stellung P1“",
           "S1 wird verwendet von Stellung P1" in grund and gleich, grund[:160])
     m, g = stuetze()
-    m.add_verformungsgrenze("V1", art="stab", stab="S1", groesse="ux", wert=300.0)
+    m.add_verformungsgrenze("V1", art="stab", stab="S1", groesse="uz", wert=300.0)
     grund, gleich = abgewiesen(m)
     check("A6 Verformungsnachweis V1 auf S1: abgewiesen, nennt ihn",
           "S1 wird verwendet von Verformungsnachweis V1" in grund and gleich, grund[:160])
@@ -1057,7 +1057,7 @@ def test_f42_kettentext_raet_nur_was_geht():
 
     def verweis():
         m = _kette_f42()
-        m.add_verformungsgrenze("V1", art="stab", stab="S2", groesse="ux", wert=300.0)
+        m.add_verformungsgrenze("V1", art="stab", stab="S2", groesse="uz", wert=300.0)
         return m
 
     def querschnitt():

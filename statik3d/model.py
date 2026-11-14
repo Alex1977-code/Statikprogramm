@@ -4223,10 +4223,17 @@ VERFORMUNGSGROESSEN = {
 #: Anwenders vom 14.11.2026: fuer „stab“ abweisen, als Knotennachweis anlegen.
 VERDREHUNGEN = ("phix", "phiy", "phiz")
 
+#: Die Groessen des Nachweises der Art „stab“: die Durchbiegung quer zur
+#: Stabachse (lokal y, lokal z, Betrag). Bis zum 14.11.2026 nahm gzg._wert fuer
+#: ux - wie fuer jede unbekannte Groesse - die Durchbiegung w_z (Kragarm mit
+#: Laengskraft: 5,30 mm statt der Laengsverschiebung 0,18 mm, Befund B'3 der
+#: zweiten Runde). Anwenderentscheidung vom 14.11.2026: ux wie φ abweisen.
+STAB_GROESSEN = ("uy", "uz", "u")
+
 
 def verformungsgroessen(art: str) -> dict:
     """Die Groessen, die ein Verformungsnachweis der Art *art* fuehren kann."""
-    return {k: v for k, v in VERFORMUNGSGROESSEN.items() if not (art == "stab" and k in VERDREHUNGEN)}
+    return {k: v for k, v in VERFORMUNGSGROESSEN.items() if not (art == "stab" and k not in STAB_GROESSEN)}
 
 
 def stab_verdrehung_text(name: str, groesse: str) -> str:
@@ -4236,15 +4243,51 @@ def stab_verdrehung_text(name: str, groesse: str) -> str:
             "Knotennachweis (Art „Knoten“) am Knoten anlegen, dessen Verdrehung begrenzt werden soll.")
 
 
+def stab_ux_text(name: str) -> str:
+    """Klartext: die Verschiebung ux laesst sich am Stab nicht nachweisen (B'3)."""
+    return (f"Verformungsnachweis „{name}“: die Verschiebung ux (in Stabrichtung) lässt sich für die Art "
+            "„Stab“ nicht nachweisen – der Stabnachweis bildet die Durchbiegung quer zur Stabachse (uy, uz "
+            "oder ihren Betrag u) gegen die Sehne. Bitte als Knotennachweis (Art „Knoten“) oder als "
+            "Punktpaar anlegen.")
+
+
+def verdrehung_lx_text(name: str, groesse: str) -> str:
+    """Klartext: eine Verdrehung braucht einen absoluten Grenzwert (B'4)."""
+    return (f"Verformungsnachweis „{name}“: eine Verdrehung ({groesse}) lässt sich nur gegen einen "
+            "absoluten Grenzwert in mrad nachweisen – L/x ergibt eine Länge, kein Winkel. Bitte als "
+            "Grenze „absoluter Wert“ wählen.")
+
+
+def verformungsgrenze_fehler(name: str, art: str, groesse: str, grenzart: str) -> str:
+    """Klartext, warum diese Verformungsgrenze nicht gefuehrt werden kann, oder ""."""
+    if art == "stab" and groesse in VERDREHUNGEN:
+        return stab_verdrehung_text(name, groesse)
+    if art == "stab" and groesse not in STAB_GROESSEN:
+        return stab_ux_text(name)
+    if groesse in VERDREHUNGEN and grenzart == "L/x":
+        return verdrehung_lx_text(name, groesse)
+    return ""
+
+
 def stab_verdrehung_hinweis(model) -> list:
-    """Beim **Oeffnen**: Verformungsnachweise der Art „stab“ mit einer
-    Verdrehung (aus einer Datei von vor dem 14.11.2026). Sie bleiben stehen
-    und werden „nicht geführt“ (gzg.check_grenze); umgestellt wird nichts."""
+    """Beim **Oeffnen**: Verformungsnachweise, die das Programm heute nicht mehr
+    fuehrt (aus einer Datei von vor dem 14.11.2026): Art „stab“ mit einer
+    Verdrehung (E2) oder mit ux (B'3), ein Punktpaar mit einer Verdrehung und
+    der Grenze L/x (B'4). Sie bleiben stehen und werden „nicht geführt“
+    (gzg.check_grenze); umgestellt wird nichts."""
     zeilen = []
     for nm, g in (getattr(model, "verformungsgrenzen", None) or {}).items():
-        if getattr(g, "art", "") == "stab" and getattr(g, "groesse", "") in VERDREHUNGEN:
-            zeilen.append(stab_verdrehung_text(nm, g.groesse) + " Bis zum 14.11.2026 verglich das "
+        art, groesse = getattr(g, "art", ""), getattr(g, "groesse", "")
+        if art == "stab" and groesse in VERDREHUNGEN:
+            zeilen.append(stab_verdrehung_text(nm, groesse) + " Bis zum 14.11.2026 verglich das "
                           "Programm hier eine Durchbiegung; der Nachweis wird jetzt nicht geführt.")
+        elif art == "stab" and groesse not in STAB_GROESSEN:
+            zeilen.append(stab_ux_text(nm) + " Bis zum 14.11.2026 verglich das Programm hier die "
+                          "Durchbiegung w_z; der Nachweis wird jetzt nicht geführt.")
+        elif art == "punktpaar" and groesse in VERDREHUNGEN and getattr(g, "grenzart", "") == "L/x":
+            zeilen.append(verdrehung_lx_text(nm, groesse) + " Bis zum 14.11.2026 verglich das Programm "
+                          "hier eine Verdrehung in rad mit einer Länge in m; der Nachweis wird jetzt "
+                          "nicht geführt.")
     return zeilen
 
 
@@ -6604,9 +6647,11 @@ class Model:
         if g not in VERFORMUNGSGROESSEN:
             raise KeyError(f"Verformungsgröße „{g}“ unbekannt: "
                            f"{sorted(VERFORMUNGSGROESSEN)}")
-        if art == "stab" and g in VERDREHUNGEN:
-            raise ValueError(stab_verdrehung_text(name, g))
         v = Verformungsgrenze(name, art, **kw)
+        # Stab nur mit uy/uz/u (E2, B'3), Verdrehungen nur mit absolutem Grenzwert (B'4)
+        grund = verformungsgrenze_fehler(name, art, v.groesse, v.grenzart)
+        if grund:
+            raise ValueError(grund)
         if art == "stab" and v.stab and v.stab not in self.members:
             raise KeyError(f"Stab „{v.stab}“ gibt es nicht")
         if art in ("knoten", "punktpaar"):

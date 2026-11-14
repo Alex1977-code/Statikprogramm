@@ -375,6 +375,12 @@ class Spalte:
     #: steht danach leer da. Sonst gilt „leer = 0“ wie bisher (Nachtrag N07,
     #: 07.10.2026: dort war 0 und „leer“ nicht zu trennen)
     leer_ok: bool = False
+    #: Die Zeilen stehen schon in der Anzeigeeinheit (gemischte Groessen wie
+    #: Kraft und Moment der Umhuellenden): nicht umrechnen, aber die
+    #: Nachkommastellen der Einstellung dieser Groesse nehmen (einheiten.nk).
+    #: Bis zum 14.11.2026 stand die Umhuellende fest mit zwei Stellen da - in
+    #: MN wurde -1,5 kN „0,00“ (A'11).
+    nk_groesse: str = ""
 
     def text_von(self, wert):
         """Der Klartext zu *wert* - oder *wert* selbst."""
@@ -505,6 +511,8 @@ class TabellenModell(QtCore.QAbstractTableModel):
         e = self.einheiten_quelle() if self.einheiten_quelle is not None else None
         if e is None or sp.art != "zahl":
             return 1.0, sp.einheit, sp.nachkomma
+        if sp.nk_groesse:
+            return 1.0, sp.einheit, e.nk(sp.nk_groesse)
         return e.anzeige(sp.einheit, sp.nachkomma)
 
     def kopf(self, k: int) -> str:

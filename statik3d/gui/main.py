@@ -27520,12 +27520,16 @@ class MainWindow(QtWidgets.QMainWindow):
         """Spalten der Tabelle „Umhüllende“; die Zellen „Kombination“ schalten
         das gezeigte Ergebnis (10c). Kraefte und Momente stehen gemischt in
         min/max - die Einheit der Zeile steht darum in einer eigenen Spalte
-        (E6, 14.11.2026; bis dahin ohne Einheit, fest kN und kNm)."""
+        (E6, 14.11.2026; bis dahin ohne Einheit, fest kN und kNm). Die Nachkommastellen
+        kommen aus der Einstellung „Kraft“ (gilt auch fuer Momente; A'11, 14.11.2026:
+        bis dahin fest zwei - in MN stand -1,5 kN als „0,00“)."""
         hin = "maßgebende Kombination – ein Klick zeigt dieses Ergebnis"
         return [Spalte("Element", "", "ganz"), Spalte("Größe"),
                 Spalte("Einheit", hinweis="eingestellte Einheit (Ansicht → Einheiten)"),
-                Spalte("min", "", "zahl", 2), Spalte("Kombination", hinweis=hin, ergebnis=True),
-                Spalte("max", "", "zahl", 2), Spalte("Kombination ", hinweis=hin, ergebnis=True)]
+                Spalte("min", "", "zahl", 2, nk_groesse="kraft"),
+                Spalte("Kombination", hinweis=hin, ergebnis=True),
+                Spalte("max", "", "zahl", 2, nk_groesse="kraft"),
+                Spalte("Kombination ", hinweis=hin, ergebnis=True)]
 
     def _huelle_zeilen(self, r) -> list:
         """Zeilen der Tabelle „Umhüllende“ in der eingestellten Einheit (E6)."""
