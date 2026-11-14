@@ -3960,6 +3960,37 @@ VERFORMUNGSGROESSEN = {
     "phix": "Verdrehung um x", "phiy": "Verdrehung um y", "phiz": "Verdrehung um z",
 }
 
+#: Verdrehungen gibt es nur am Knoten. Der Nachweis der Art „stab“ bildet die
+#: Durchbiegung gegen die Sehne; bis zum 14.11.2026 nahm er fuer phiy die
+#: Durchbiegung w_y, fuer phix/phiz w_z und nannte sie mrad (Kragarm: „0,00 mrad
+#: erfüllt“ statt 10,32 mrad nicht erfuellt, Befund E2). Entscheidung des
+#: Anwenders vom 14.11.2026: fuer „stab“ abweisen, als Knotennachweis anlegen.
+VERDREHUNGEN = ("phix", "phiy", "phiz")
+
+
+def verformungsgroessen(art: str) -> dict:
+    """Die Groessen, die ein Verformungsnachweis der Art *art* fuehren kann."""
+    return {k: v for k, v in VERFORMUNGSGROESSEN.items() if not (art == "stab" and k in VERDREHUNGEN)}
+
+
+def stab_verdrehung_text(name: str, groesse: str) -> str:
+    """Klartext: eine Verdrehung laesst sich am Stab nicht nachweisen (E2)."""
+    return (f"Verformungsnachweis „{name}“: eine Verdrehung ({groesse}) lässt sich für die Art „Stab“ "
+            "nicht nachweisen – der Stabnachweis bildet die Durchbiegung gegen die Sehne. Bitte als "
+            "Knotennachweis (Art „Knoten“) am Knoten anlegen, dessen Verdrehung begrenzt werden soll.")
+
+
+def stab_verdrehung_hinweis(model) -> list:
+    """Beim **Oeffnen**: Verformungsnachweise der Art „stab“ mit einer
+    Verdrehung (aus einer Datei von vor dem 14.11.2026). Sie bleiben stehen
+    und werden „nicht geführt“ (gzg.check_grenze); umgestellt wird nichts."""
+    zeilen = []
+    for nm, g in (getattr(model, "verformungsgrenzen", None) or {}).items():
+        if getattr(g, "art", "") == "stab" and getattr(g, "groesse", "") in VERDREHUNGEN:
+            zeilen.append(stab_verdrehung_text(nm, g.groesse) + " Bis zum 14.11.2026 verglich das "
+                          "Programm hier eine Durchbiegung; der Nachweis wird jetzt nicht geführt.")
+    return zeilen
+
 
 @dataclass
 class Verformungsgrenze:
@@ -6317,6 +6348,8 @@ class Model:
         if g not in VERFORMUNGSGROESSEN:
             raise KeyError(f"Verformungsgröße „{g}“ unbekannt: "
                            f"{sorted(VERFORMUNGSGROESSEN)}")
+        if art == "stab" and g in VERDREHUNGEN:
+            raise ValueError(stab_verdrehung_text(name, g))
         v = Verformungsgrenze(name, art, **kw)
         if art == "stab" and v.stab and v.stab not in self.members:
             raise KeyError(f"Stab „{v.stab}“ gibt es nicht")
@@ -11068,6 +11101,8 @@ class Model:
         m._ladehinweise.extend(zugstab_hinweis(m))
         # Schalennetz von vor dem 09.11.2026 mit unverbundenen Flaechen: nur ein Hinweis
         m._ladehinweise.extend(schalennetz_hinweis(m))
+        # Verformungsnachweis „Stab“ mit einer Verdrehung (E2, 14.11.2026): nur ein Hinweis
+        m._ladehinweise.extend(stab_verdrehung_hinweis(m))
         # Reibung an Lagern aus RFEM ohne Reibungsart (15.10.2026): nur ein Hinweis
         m._ladehinweise.extend(lagerreibung_hinweis(m))
         # Windlasten eines aelteren Programmstands (Befund 40, 11.11.2026): nur ein Hinweis

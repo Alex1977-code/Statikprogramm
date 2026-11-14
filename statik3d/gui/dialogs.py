@@ -2067,8 +2067,24 @@ class VerformungsgrenzeDialog(QtWidgets.QDialog):
             w.currentIndexChanged.connect(self._umschalten)
         self._umschalten()
 
+    def _groessen_fuellen(self, art) -> bool:
+        """Die Groessen zur Art: fuer „Stab“ keine Verdrehung (E2, 14.11.2026 -
+        bis dahin verglich der Stabnachweis dafuer eine Durchbiegung). Rueckgabe
+        True, wenn eine gewaehlte Verdrehung dabei herausfiel."""
+        from ..model import verformungsgroessen, VERDREHUNGEN
+        alt = self.cb_groesse.currentData()
+        self.cb_groesse.blockSignals(True)
+        self.cb_groesse.clear()
+        for k, text in verformungsgroessen(art).items():
+            self.cb_groesse.addItem(f"{k} – {text}", k)
+        i = self.cb_groesse.findData(alt)
+        self.cb_groesse.setCurrentIndex(i if i >= 0 else max(0, self.cb_groesse.findData("uz")))
+        self.cb_groesse.blockSignals(False)
+        return i < 0 and alt in VERDREHUNGEN
+
     def _umschalten(self):
         art = self.cb_art.currentData()
+        verdrehung_weg = self._groessen_fuellen(art)
         self.cb_stab.setEnabled(art == "stab")
         self.ed_knoten.setEnabled(art != "stab")
         lx = self.cb_grenzart.currentData() == "L/x"
@@ -2082,7 +2098,9 @@ class VerformungsgrenzeDialog(QtWidgets.QDialog):
                                  "Führungen und Fugen (DIN 19704).")
         elif art == "stab":
             self.hinweis.setText("Die Durchbiegung wird auf die Sehne zwischen den "
-                                 "Stabenden bezogen und aus der Momentenlinie gewonnen.")
+                                 "Stabenden bezogen und aus der Momentenlinie gewonnen."
+                                 + (" Eine Verdrehung lässt sich am Stab nicht nachweisen – "
+                                    "dafür die Art „Knoten“ wählen." if verdrehung_weg else ""))
         else:
             self.hinweis.setText("Verschiebung des Knotens gegenüber der Ausgangslage.")
 
