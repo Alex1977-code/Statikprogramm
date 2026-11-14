@@ -51,6 +51,9 @@ class Einheiten:
             return self.spannung
         if art == "moment":
             return f"{self.kraft}{self.laenge}"
+        if art == "drehfeder":
+            # Drehfedersteifigkeit, Moment je Radiant (Register Lager, E3 14.11.2026)
+            return f"{self.kraft}{self.laenge}/rad"
         if art == "strecke":
             return f"{self.kraft}/{self.laenge}"
         if art == "flaechenlast":
@@ -74,7 +77,7 @@ class Einheiten:
             return LAENGE[self.verformung]
         if art == "spannung":
             return SPANNUNG[self.spannung]
-        if art == "moment":
+        if art in ("moment", "drehfeder"):
             return fk * fl
         if art == "strecke":
             return fk / fl
@@ -83,7 +86,8 @@ class Einheiten:
         return 1.0
 
     def nk(self, art: str) -> int:
-        return {"kraft": self.nk_kraft, "moment": self.nk_kraft, "laenge": self.nk_laenge,
+        return {"kraft": self.nk_kraft, "moment": self.nk_kraft, "drehfeder": self.nk_kraft,
+                "laenge": self.nk_laenge,
                 "verformung": self.nk_verformung, "zwang": self.nk_verformung,
                 "spannung": self.nk_spannung, "winkel": self.nk_winkel,
                 "ausnutzung": self.nk_ausnutzung, "strecke": self.nk_last,
@@ -100,7 +104,11 @@ class Einheiten:
     def zahl(self, wert_si: float, art: str, nk: int = None) -> str:
         """Kurz und ohne Nachkommanullen - für Beschriftungen in der Ansicht."""
         n = self.nk(art) if nk is None else int(nk)
-        s = f"{self.aus_si(wert_si, art):.{n}f}".rstrip("0").rstrip(".")
+        s = f"{self.aus_si(wert_si, art):.{n}f}"
+        # Nullen nur hinter einem Dezimalpunkt abschneiden: bei 0 Nachkommastellen
+        # wurde bis zum 14.11.2026 aus „100“ eine „1“ (-100 kN als „1 kN“, E4)
+        if "." in s:
+            s = s.rstrip("0").rstrip(".")
         return s or "0"
 
     # -- Tabellenspalten in Grundeinheiten -----------------------------------

@@ -750,6 +750,16 @@ def _anschluss_ohne_sorte(model) -> bool:
     return False
 
 
+def _gzg_stab_verdrehung(model) -> bool:
+    """Ein Verformungsnachweis der Art „stab“ mit einer Verdrehung (phix/phiy/phiz) -
+    er verglich bis zum 14.11.2026 eine Durchbiegung und nannte sie mrad (Befundliste
+    14.11.2026, E2); jetzt wird er nicht gefuehrt."""
+    for g in (getattr(model, "verformungsgrenzen", None) or {}).values():
+        if getattr(g, "art", "") == "stab" and str(getattr(g, "groesse", "")).startswith("phi"):
+            return True
+    return False
+
+
 def _laminat_schalen(model) -> bool:
     """Ein Schalenelement mit geschichtetem Aufbau - seine Randspannungen standen
     bis zum 12.11.2026 als n/t ± 6 m/t² da (Pruefbericht 11.11.2026, Befund 3)."""
@@ -2748,10 +2758,22 @@ MERKMALE: list = [
         betrifft=_import_eigengewicht, import_korrektur=True, im_ergebnis=_import_eigengewicht_im_ergebnis,
         vorschlag="neu importieren (oder im Lastfall das Eigengewicht mit der Erdbeschleunigung der "
                   "RFEM-Datei ansetzen, meist g = 10 m/s²)"),
+    # Befundliste 14.11.2026, E2: Verformungsnachweis „Stab“ mit phiy/phiz verglich
+    # eine Durchbiegung (Kragarm: „0,00 mrad erfüllt“ statt 10,32 mrad nicht
+    # erfuellt). Entscheidung des Anwenders: abweisen, als Knotennachweis anlegen.
+    # Fehlerkorrektur
+    Merkmal(
+        name="gzg_stab_verdrehung", titel="Verformungsnachweis am Stab mit einer Verdrehung",
+        texte={"alt": "Durchbiegung gegen die Sehne als Verdrehung (mrad) verglichen",
+               "neu": "nicht geführt, als Knotennachweis anzulegen"},
+        wechsel=(Wechsel(stand=47, datum="14.11.2026", commit="fix/k5-b-anzeige", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Verformungsnachweis der Art „Stab“ mit φx, φy oder φz",
+        betrifft=_gzg_stab_verdrehung),
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 46
+VERFAHRENSSTAND = 47
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

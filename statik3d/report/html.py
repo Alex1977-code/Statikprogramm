@@ -1546,8 +1546,12 @@ class Report:
                 verlauf = "gleichmäßig"
                 if g.verlauf:
                     P = g.verlauf.get("punkte") or []
+                    # nie wissenschaftlich (E7, 14.11.2026; bis dahin :g und :.3g -
+                    # „(12.5, 0, -2e-05) → 1.23e+03“)
+                    from ..zahlen import zahl_text
                     verlauf = "linear: " + "; ".join(
-                        f"({', '.join(f'{float(x):g}' for x in pt[:3])}) → {float(pt[3]) / 1e3:.3g}"
+                        f"({', '.join(zahl_text(float(x), tausender=False, punkt=True) for x in pt[:3])}) → "
+                        f"{zahl_text(float(pt[3]) / 1e3, stellen=3, punkt=True)}"
                         for pt in P)
                 rows.append([("Fläche " if g.art == "flaeche" else "Volumen ") + str(g.ziel),
                              fmt(g.p / 1e3, 3) if not g.verlauf else "–", verlauf,
@@ -2225,11 +2229,13 @@ class Report:
                 prof.append([fmt(z, 1), fmt(vm_, 1), fmt(iv, 3), fmt(qp, 0)])
             b.append(("table", prof, f"Wind {name}: Höhenprofil", None, "compact"))
             if kw.get("staebe"):
+                # Re mit drei geltenden Ziffern ausgeschrieben, bis zum 14.11.2026 „4.70e+05“ (E7)
+                from ..zahlen import zahl_text
                 st = [["Stab", "Querschnitt", "b_ref [m]", "L [m]", "λ", "ψ_λ", "Re", "c_f,0", "c_f",
                        "w unten [N/m]", "w oben [N/m]", "F [kN]"]]
                 for sb in kw["staebe"]:
                     st.append([sb["stab"], sb["typ"], fmt(sb["b_ref"], 3), fmt(sb["L"], 2), fmt(sb["lambda"], 1),
-                               fmt(sb["psi"], 2), f"{sb['Re']:.2e}", fmt(sb["cf0"], 2), fmt(sb["cf"], 2),
+                               fmt(sb["psi"], 2), zahl_text(float(f"{sb['Re']:.3g}")), fmt(sb["cf0"], 2), fmt(sb["cf"], 2),
                                fmt(sb["w1"], 1), fmt(sb["w2"], 1), fmt(sb["F"] / 1e3, 2)])
                 b.append(("table", st, f"Wind {name}: Kraftbeiwerte und Streckenlasten der Stäbe", None, "compact"))
             if w.windkanal() and "windkanal" not in kw:

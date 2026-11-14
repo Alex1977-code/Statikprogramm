@@ -1237,7 +1237,7 @@ function stellungForm(st) {
     </div></details>
     <details><summary>Antriebsmoment</summary><div class="body">
       ${inp('antrieb_knoten', 'Knoten des Antriebs (Auswahl in 3D-Ansicht)', '', 'data-sel="nodes" placeholder="z.B. 24"')}
-      <div class="grid3">${num('antrieb_mx', 'Mx [kNm]', 0)}${num('antrieb_my', 'My [kNm]', 0)}${num('antrieb_mz', 'Mz [kNm]', 0)}</div>
+      <div class="grid3">${num('antrieb_mx', 'Mx [kNm]', 0, {scale: 1e3})}${num('antrieb_my', 'My [kNm]', 0, {scale: 1e3})}${num('antrieb_mz', 'Mz [kNm]', 0, {scale: 1e3})}</div>
     </div></details>
     <div class="btns"><button class="btn primary wide">${st ? 'Stellung ändern' : '+ Stellung anlegen'}</button></div>
   </form>`;

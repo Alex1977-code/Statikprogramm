@@ -1540,8 +1540,12 @@ def _op_stellung(st, m, d):
     kn = str(d.get("antrieb_knoten") or "").strip()
     treffer = re.findall(r"\d+", kn)
     if treffer:
+        # das Formular schickt Nm (data-scale 1e3 an den kNm-Feldern) und den
+        # Knoten aus der Auswahl, gezaehlt ab 0 wie Tabelle und Knotenlast;
+        # bis zum 14.11.2026 kamen 40 kNm als 40 Nm an Knoten 7 statt 8 an (E1)
         mv = [_f(d, "antrieb_mx", 0.0), _f(d, "antrieb_my", 0.0), _f(d, "antrieb_mz", 0.0)]
-        antrieb = (int(treffer[0]) - 1, mv)
+        _check_nodes(m, [int(treffer[0])])
+        antrieb = (int(treffer[0]), mv)
     neu = Stellung(
         name=name,
         winkel=_f(d, "winkel", 0.0),

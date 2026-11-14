@@ -1701,7 +1701,7 @@ def erlaeuterung(w: Wind, kw: dict) -> list:
         for sb in kw["staebe"]:
             z.append(f"Stab {sb['stab']} ({sb['typ']}, b_ref = {sb['b_ref']:.3f} m, L = {sb['L']:.2f} m): "
                      f"{sb['art']} c_f,0 = {sb['cf0']:.2f}, λ = {sb['lambda']:.1f}, ψ_λ = {sb['psi']:.2f}, "
-                     f"c_f = {sb['cf']:.2f}, Re = {sb['Re']:.2e}; w = c_f·q_p·b_ref = {sb['w1']:.1f} … "
+                     f"c_f = {sb['cf']:.2f}, Re = {format(float(format(sb['Re'], '.3g')), ',.0f').replace(',', ' ')}; w = c_f·q_p·b_ref = {sb['w1']:.1f} … "
                      f"{sb['w2']:.1f} N/m (z = {sb['z1']:.1f} … {sb['z2']:.1f} m), F = {sb['F'] / 1e3:.2f} kN.")
     if w.c_scd != 1.0:
         z.append(f"Strukturbeiwert c_s·c_d = {w.c_scd:g}.")

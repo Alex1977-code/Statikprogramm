@@ -255,6 +255,13 @@ def check_grenze(model: Model, g: Verformungsgrenze, ergebnisse: dict) -> Grenze
         return c
     # -- Bezugslaenge -------------------------------------------------
     if g.art == "stab":
+        # eine Verdrehung hat der Stabnachweis nicht (E2, 14.11.2026): aus
+        # einer aelteren Datei „nicht geführt“ statt einer Durchbiegung als mrad
+        from .model import VERDREHUNGEN
+        if g.groesse in VERDREHUNGEN:
+            c.fehler = ("Verdrehung am Stab nicht nachweisbar – als Knotennachweis "
+                        "(Art „Knoten“) anlegen")
+            return c
         mem = model.members.get(g.stab)
         if mem is None:
             c.fehler = f"Stab „{g.stab}“ gibt es nicht"
