@@ -1177,12 +1177,16 @@ class Report:
                 for mat in mit_tabelle:
                     rows.append([mat.name, mat.dickentext("fy"), mat.dickentext("fu") or "–"])
                 b.append(("table", rows, "Streckgrenze und Zugfestigkeit nach Erzeugnisdicke (aus der "
-                                         "Materialdatenbank der Quelldatei; die Nachweise nehmen den "
+                                         "Materialdatenbank der Quelldatei, über 80 mm auch nach "
+                                         "Erzeugnisnorm im Werkstoff eingetragen; die Nachweise nehmen den "
                                          "Wert der Dicke des Bauteils)", None, "compact"))
             if any(mat.grade and not getattr(mat, "fy_dicke", None) for mat in m.materials.values()):
                 b.append(("note", "Streckgrenzen für Erzeugnisdicken t ≤ 40 mm nach der Erzeugnisnorm "
-                                  "der Sorte (EN 10025-2 bis -5); für t > 40 mm werden die "
-                                  "abgeminderten Werte nach DIN EN 1993-1-1 Tabelle 3.1 verwendet."))
+                                  "der Sorte (EN 10025-2 bis -5); für 40 mm < t ≤ 80 mm werden die "
+                                  "abgeminderten Werte nach DIN EN 1993-1-1 Tabelle 3.1 verwendet. "
+                                  "Über 80 mm gibt die Tabelle keinen Wert: ohne Dickentabelle im "
+                                  "Werkstoff wird dort kein Nachweis geführt (f_y nach Erzeugnisnorm "
+                                  "eintragen)."))
         # ---- Querschnitte
         if self.opt("sections"):
             b.append(self._h(2, "Querschnitte"))
@@ -1543,8 +1547,12 @@ class Report:
                 verlauf = "gleichmäßig"
                 if g.verlauf:
                     P = g.verlauf.get("punkte") or []
+                    # nie wissenschaftlich (E7, 14.11.2026; bis dahin :g und :.3g -
+                    # „(12.5, 0, -2e-05) → 1.23e+03“)
+                    from ..zahlen import zahl_text
                     verlauf = "linear: " + "; ".join(
-                        f"({', '.join(f'{float(x):g}' for x in pt[:3])}) → {float(pt[3]) / 1e3:.3g}"
+                        f"({', '.join(zahl_text(float(x), tausender=False, punkt=True) for x in pt[:3])}) → "
+                        f"{zahl_text(float(pt[3]) / 1e3, stellen=3, punkt=True)}"
                         for pt in P)
                 rows.append([("Fläche " if g.art == "flaeche" else "Volumen ") + str(g.ziel),
                              fmt(g.p / 1e3, 3) if not g.verlauf else "–", verlauf,
@@ -2222,11 +2230,13 @@ class Report:
                 prof.append([fmt(z, 1), fmt(vm_, 1), fmt(iv, 3), fmt(qp, 0)])
             b.append(("table", prof, f"Wind {name}: Höhenprofil", None, "compact"))
             if kw.get("staebe"):
+                # Re mit drei geltenden Ziffern ausgeschrieben, bis zum 14.11.2026 „4.70e+05“ (E7)
+                from ..zahlen import zahl_text
                 st = [["Stab", "Querschnitt", "b_ref [m]", "L [m]", "λ", "ψ_λ", "Re", "c_f,0", "c_f",
                        "w unten [N/m]", "w oben [N/m]", "F [kN]"]]
                 for sb in kw["staebe"]:
                     st.append([sb["stab"], sb["typ"], fmt(sb["b_ref"], 3), fmt(sb["L"], 2), fmt(sb["lambda"], 1),
-                               fmt(sb["psi"], 2), f"{sb['Re']:.2e}", fmt(sb["cf0"], 2), fmt(sb["cf"], 2),
+                               fmt(sb["psi"], 2), zahl_text(float(f"{sb['Re']:.3g}")), fmt(sb["cf0"], 2), fmt(sb["cf"], 2),
                                fmt(sb["w1"], 1), fmt(sb["w2"], 1), fmt(sb["F"] / 1e3, 2)])
                 b.append(("table", st, f"Wind {name}: Kraftbeiwerte und Streckenlasten der Stäbe", None, "compact"))
             if w.windkanal() and "windkanal" not in kw:
@@ -4066,7 +4076,9 @@ class Report:
                                          "(EN 1993-1-6, 8.5)", None, ""))
                 b.append(("kv", [
                     ("Verhältnis r/t", f"{zyl['r_t']:.0f}"),
-                    ("Längenparameter ω", f"{zyl['omega']:.1f} ({zyl['bereich']})"),
+                    ("Längenparameter ω", f"{zyl['omega']:.1f} ({zyl['bereich']}"
+                                          + (f", Umfangsdruck {zyl['bereich_umfang']}"
+                                             if zyl.get("bereich_umfang") else "") + ")"),
                     ("Herstelltoleranz", zyl["qualitaet"]),
                     ("Beiwerte", f"C_x = {fmt(zyl.get('C_x') or 0, 3)}, "
                                  f"C_θ = {fmt(zyl.get('C_theta') or 0, 3)}, "

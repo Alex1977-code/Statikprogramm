@@ -48,6 +48,12 @@ def zugkoerper(a=0.1, b=0.1, L=0.4, nx=2, ny=2, nz=8, N=2500e3):
     """Quader unter Gleichlast, Symmetrierandbedingungen: einachsiger Zug."""
     m = Model("Zugkoerper")
     m.add_material(Material.steel("S355"))
+    # Der Koerper ist 100 mm dick. Ueber 80 mm hat S355 ohne Dickentabelle seit dem
+    # 14.11.2026 kein f_y mehr (Befund C4, Meldung statt Wert). Die Pruefungen hier
+    # gelten dem Spannungsnachweis, nicht der Dickenregel: der Werkstoff traegt darum
+    # eine Dickentabelle, die bis 100 mm den bis dahin gerechneten Wert 335 N/mm²
+    # fortschreibt (ein Pruefwert, nicht die Erzeugnisnorm)
+    m.materials["S355"].fy_dicke = [[0.040, 355e6], [0.100, 335e6]]
     ids = {}
     for k in range(nz + 1):
         for j in range(ny + 1):
@@ -785,7 +791,15 @@ def test_erzeugnisdicke_mindert_die_streckgrenze():
     check("die Probe ist scharf: aus der Auswahl allein käme 25 mm",
           abs(aus_auswahl - 0.025) < 1e-12, f"{aus_auswahl * 1000:.1f} mm")
 
-    _n, fy_dick = _material(m, els, t)
+    # Seit dem 14.11.2026 (Befund C4) hat S355 ohne Dickentabelle ueber 80 mm
+    # kein f_y mehr: der 200-mm-Koerper bekommt eine Meldung, kein Wert. Die
+    # Abminderung 40 < t <= 80 mm wird darum bei 80 mm geprueft.
+    from statik3d.ec3.volumen import _dicke_ohne_wert
+    _n, fy_200 = _material(m, els, t)
+    meldung = _dicke_ohne_wert(m, els, t)
+    check("über 80 mm ohne Dickentabelle: kein f_y, Meldung „f_y nach Erzeugnisnorm eintragen“",
+          fy_200 == 0.0 and "f_y nach Erzeugnisnorm eintragen" in meldung, meldung[:70])
+    _n, fy_dick = _material(m, els, 0.080)
     _n, fy_duenn = _material(m, els, 0.0)
     check("über 40 mm gilt die abgeminderte Streckgrenze",
           abs(fy_dick - 335e6) < 1e3, f"{fy_dick / 1e6:.1f} N/mm²")

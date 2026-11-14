@@ -225,24 +225,25 @@ def hinge_springs(kl: np.ndarray, fl: np.ndarray, springs) -> tuple:
     springs = [(int(d), float(k)) for d, k in (springs or []) if k and k > 0]
     if not springs:
         return kl, fl, None
-    n = 12 + len(springs)
-    B = np.zeros((12, n))
-    for i in range(12):
+    n0 = kl.shape[0]                # 12, mit Woelbkrafttorsion 14 (14.11.2026)
+    n = n0 + len(springs)
+    B = np.zeros((n0, n))
+    for i in range(n0):
         B[i, i] = 1.0
     K = np.zeros((n, n))
     f = np.zeros(n)
     for j, (d, k) in enumerate(springs):
         B[d, d] = 0.0
-        B[d, 12 + j] = 1.0          # das Element haengt am inneren FHG
+        B[d, n0 + j] = 1.0          # das Element haengt am inneren FHG
     K[:, :] = B.T @ kl @ B
     f[:] = B.T @ fl
     for j, (d, k) in enumerate(springs):
         e = np.zeros(n)
         e[d] = 1.0
-        e[12 + j] = -1.0
+        e[n0 + j] = -1.0
         K += k * np.outer(e, e)     # Feder zwischen aeusserem und innerem FHG
-    inner = np.arange(12, n)
-    outer = np.arange(12)
+    inner = np.arange(n0, n)
+    outer = np.arange(n0)
     Kii = K[np.ix_(inner, inner)]
     Kio = K[np.ix_(inner, outer)]
     try:
@@ -265,11 +266,13 @@ def hinge_local_disp(rec, ul: np.ndarray) -> np.ndarray:
 def condense(kl: np.ndarray, fl: np.ndarray, released: list[int]):
     """Statische Kondensation freigegebener (Gelenk-)FHG.
     Rueckgabe: kondensierte Matrix (12x12, Zeilen/Spalten der Gelenke = 0),
-    kondensierter Lastvektor und Daten zur Rueckrechnung (Kcc^-1, Kcr, fc)."""
+    kondensierter Lastvektor und Daten zur Rueckrechnung (Kcc^-1, Kcr, fc).
+    Ein Stab mit Woelbkrafttorsion kondensiert seine 14x14-Matrix ebenso
+    (die Gelenk-FHG liegen unter den ersten 12; seit dem 14.11.2026)."""
     if not released:
         return kl, fl, None
     c = np.array(sorted(set(released)), dtype=int)
-    r = np.array([i for i in range(12) if i not in set(c)], dtype=int)
+    r = np.array([i for i in range(kl.shape[0]) if i not in set(c)], dtype=int)
     Kcc = kl[np.ix_(c, c)]
     Kcr = kl[np.ix_(c, r)]
     try:
@@ -281,6 +284,46 @@ def condense(kl: np.ndarray, fl: np.ndarray, released: list[int]):
     f = np.zeros_like(fl)
     f[r] = fl[r] - Kcr.T @ Kcc_inv @ fl[c]
     return K, f, (c, r, Kcc_inv, Kcr)
+
+
+def stab_matrix_lokal(model: Model, e) -> np.ndarray:
+    """Die lokale Steifigkeit eines Stabelements vor Gelenken und Versatz:
+    12x12 (:func:`beam_local`), mit Woelbkrafttorsion 14x14
+    (:func:`beam_woelb_local`)."""
+    if model.stab_woelbt(e):
+        return beam_woelb_local(model, e)[0]
+    return beam_local(model, e)[0]
+
+
+def gelenke_kondensieren(kl: np.ndarray, f, e):
+    """(kl, f, zurueck): Federgelenke, dann Gelenke kondensiert wie in der
+    Steifigkeit (:func:`element_matrix`) - fuer 12 und 14 FHG (Woelbkraft-
+    torsion, seit dem 14.11.2026). ``zurueck`` (rec, cond, f_s) fuer die
+    Rueckrechnung (:func:`stabenden_zurueck`); f_s ist die Last nach den
+    Federgelenken, vor den Gelenken."""
+    rec = cond = None
+    if getattr(e, "hinge_springs", None):
+        kl, f, rec = hinge_springs(kl, f, e.hinge_springs)
+    f_s = f
+    if e.hinges:
+        kl, f, cond = condense(kl, f, e.hinges)
+    return kl, f, (rec, cond, f_s)
+
+
+def stabenden_zurueck(ul: np.ndarray, zurueck) -> np.ndarray:
+    """Die Stabend-Verschiebungen aus den lokalen Knotenverschiebungen ``ul``
+    (hinter dem Versatz): die freien Gelenk-FHG aus der Kondensation (mit der
+    federkondensierten Last f_s), dann die Stabenden hinter den
+    Federgelenken - wie solver.postprocess. ``zurueck`` aus
+    :func:`gelenke_kondensieren`."""
+    rec, cond, f_s = zurueck
+    if cond is not None:
+        c, r, Kcc_inv, Kcr = cond
+        ul = np.array(ul, float, copy=True)
+        ul[c] = Kcc_inv @ (f_s[c] - Kcr @ ul[r])
+    if rec is not None:
+        ul = hinge_local_disp(rec, ul)
+    return ul
 
 
 def stab_endkinematik(model: Model, e, kl: np.ndarray = None):
@@ -296,22 +339,28 @@ def stab_endkinematik(model: Model, e, kl: np.ndarray = None):
     Pruefagenten, 09.11.2026). Bis dahin bekam ein Balken mit Stabendgelenken
     die volle Balkenform: die Pendelstuetze als Balken mit Gelenken hatte
     alpha_cr 1,667 statt 2,000, ein gezogener Gelenkstab bis 37 % zu viel
-    (unsichere Seite)."""
+    (unsichere Seite).
+
+    Ohne ``kl`` nimmt sie die Matrix des Stabs (:func:`stab_matrix_lokal`):
+    mit Woelbkrafttorsion 14x14, C dann 14x14 (seit dem 14.11.2026, Befund
+    B2). Wer k_G (12x12) damit kondensiert, nimmt die ersten 12 Zeilen,
+    K_G = C[:12]^T k_G C[:12] auf allen 14 FHG."""
     federn = bool(getattr(e, "hinge_springs", None))
     if not (federn or e.hinges):
         return None
     if kl is None:
-        kl = beam_local(model, e)[0]
-    Cs = np.eye(12)
+        kl = stab_matrix_lokal(model, e)
+    n = kl.shape[0]
+    Cs = np.eye(n)
     kl_s = kl
     if federn:
-        kl_s, _f, rec = hinge_springs(kl, np.zeros(12), e.hinge_springs)
+        kl_s, _f, rec = hinge_springs(kl, np.zeros(n), e.hinge_springs)
         if rec is not None:
             B, Kii_inv, Kio, _fi = rec
-            Cs = B @ np.vstack([np.eye(12), -Kii_inv @ Kio])
-    Ch = np.eye(12)
+            Cs = B @ np.vstack([np.eye(n), -Kii_inv @ Kio])
+    Ch = np.eye(n)
     if e.hinges:
-        _K, _f, cond = condense(kl_s, np.zeros(12), e.hinges)
+        _K, _f, cond = condense(kl_s, np.zeros(n), e.hinges)
         if cond is not None:
             c, r, Kcc_inv, Kcr = cond
             Ch[c, :] = 0.0
@@ -331,6 +380,11 @@ def element_matrix(model: Model, e):
     if e.typ in LINE_TYPES:
         if model.stab_woelbt(e):
             kl, T3, L = beam_woelb_local(model, e)
+            # Gelenke und Federgelenke wie beim Balken ohne Woelbkrafttorsion,
+            # in den 14 FHG kondensiert (Befund B2 vom 14.11.2026: bis dahin
+            # fehlten sie hier, die Last aber war kondensiert - Einfeldtraeger
+            # eingespannt/Gelenk, q = 5 kN/m: am Gelenk 16,875 statt 0 kNm)
+            kl, _f, _z = gelenke_kondensieren(kl, np.zeros(14), e)
             A = stab_versatz(model, e)
             if A is not None:
                 A14 = np.eye(14)
@@ -1820,7 +1874,8 @@ def anfangsnormalkraft(f0) -> float:
     return float(-0.5 * (f0[6] - f0[0]))
 
 
-def stab_normalkraft(model: Model, e, u: np.ndarray, n_anfang: float = 0.0, _achsen=None) -> float:
+def stab_normalkraft(model: Model, e, u: np.ndarray, n_anfang: float = 0.0, _achsen=None,
+                     f0=None) -> float:
     """Normalkraft (Zug positiv) eines Stabelements aus dem Verschiebungsvektor
     ``u`` (ndof,) wie im Ergebnis: E A Δl/L des Stabs hinter seinen Versaetzen
     (Exzentrizitaet) plus ``n_anfang``, die Kraft seiner Anfangsdehnung bei
@@ -1840,9 +1895,25 @@ def stab_normalkraft(model: Model, e, u: np.ndarray, n_anfang: float = 0.0, _ach
     die geometrische Steifigkeit rechnete mit einer Scheinnormalkraft
     (Befund 33 des Pruefberichts vom 11.11.2026: Stuetze mit Laengsgelenk
     unter Querlast nach Theorie II. Ordnung 3,88 statt 3,125 kNm, alpha_cr
-    4,374 statt keiner Verzweigung; gezogen 2,69 kNm, unsichere Seite)."""
-    if any(int(d) in (0, 6) for d in (e.hinges or [])):
-        return 0.0
+    4,374 statt keiner Verzweigung; gezogen 2,69 kNm, unsichere Seite).
+
+    Eine Stablast in Stabrichtung erzeugt aber auch am Laengsgelenk eine
+    Normalkraft: sie laeuft von 0 am Gelenk bis zur ganzen Last am anderen
+    Ende. ``f0`` (lokale Stablasten des Elements, unkondensiert, wie
+    solver.case_loads sie als feq liefert, samt Anfangsdehnung): dann ist N
+    das Mittel der Stabend-Normalkraefte nach Theorie I. Ordnung,
+    ½ (f_l[6] - f_l[0]) aus :func:`stab_endkraefte_linear` - die
+    Anfangsdehnung faellt am freien Ende heraus, eine gleichmaessige Last gibt
+    -q L/2 wie derselbe Stab ohne Gelenk (E A Δl/L). Ohne ``f0`` 0 wie
+    bisher. Bis zum 14.11.2026 stets 0 (Befund B1: Stuetze 5 m, Q L = 6 MN in
+    Stabrichtung, alpha_cr „unendlich“ statt 2,600, Theorie III. Ordnung
+    3,125 statt 5,07 kNm)."""
+    frei = {int(d) for d in (e.hinges or [])}
+    if frei & {0, 6}:
+        if f0 is None or {0, 6} <= frei or not np.any(f0):
+            return 0.0
+        fl, _T3 = stab_endkraefte_linear(model, e, u, f0)
+        return float(0.5 * (fl[6] - fl[0]))
     mat = model.materials[e.mat]
     sec = model.sections[e.sec]
     if _achsen is None:
@@ -1900,6 +1971,9 @@ def stab_endkraefte_linear(model: Model, e, u: np.ndarray, f0=None):
             ul = A14 @ ul
         f14 = np.zeros(14)
         f14[:12] = f0
+        # Gelenke in den 14 FHG wie in der Steifigkeit (14.11.2026, B2)
+        _k, _f, zurueck = gelenke_kondensieren(kl, f14, e)
+        ul = stabenden_zurueck(ul, zurueck)
         return (kl @ ul - f14)[:12], T3
     kl, T3, T, _L = beam_local(model, e)
     ul = T @ u[d[:12]]
@@ -2042,6 +2116,7 @@ def geometric_stiffness(model: Model, u: np.ndarray, aktiv=None, n_anfang: dict 
     (tests/test_stab_nachzug.py)."""
     n = model.ndof
     n_anfang = n_anfang or {}
+    feq_e = feq or {}
     rows, cols, vals = [], [], []
     for i, e in enumerate(model.elements):
         if e.typ not in LINE_TYPES or not _wirkt(aktiv, i):
@@ -2050,13 +2125,33 @@ def geometric_stiffness(model: Model, u: np.ndarray, aktiv=None, n_anfang: dict 
         T3, L = stab_achsen(model, e)
         T = bm.transform_matrix(T3)
         d = element_dofs(e, model)[:12]
-        N = stab_normalkraft(model, e, u, n_anfang.get(i, 0.0), _achsen=(T, L))
+        # mit den Stablasten: ein Laengsgelenk traegt die Last in Stabrichtung
+        # (stab_normalkraft, Befund B1 vom 14.11.2026)
+        N = stab_normalkraft(model, e, u, n_anfang.get(i, 0.0), _achsen=(T, L), f0=feq_e.get(i))
         if e.typ in ("truss", "seil"):
             kg = bm.kg_local_saite(N, L)
         else:
             kg = bm.kg_local_beam(N, L, sec.A, sec.Iy + sec.Iz)
             # Gelenke und Federgelenke wie in der elastischen Steifigkeit (A7)
             C = stab_endkinematik(model, e)
+            if C is not None and C.shape[0] == 14:
+                # Woelbkrafttorsion: kondensiert in den 14 FHG wie element_matrix
+                # (Befund B2, 14.11.2026) - k_G wirkt auf die 12 Stabend-FHG
+                # C[:12] u; bis dahin bekam der Woelbstab K_G ohne Gelenk
+                kg = C[:12].T @ kg @ C[:12]
+                A = stab_versatz(model, e)
+                if A is not None:
+                    A14 = np.eye(14)
+                    A14[:12, :12] = A
+                    kg = A14.T @ kg @ A14
+                T14 = transform14(T3)
+                kg = T14.T @ kg @ T14
+                d14 = element_dofs(e, model)
+                r, c = np.meshgrid(d14, d14, indexing="ij")
+                rows.append(r.ravel())
+                cols.append(c.ravel())
+                vals.append(kg.ravel())
+                continue
             if C is not None:
                 kg = C.T @ kg @ C
         # Versatz der Stabenden (Exzentrizitaet) wie in der elastischen
@@ -2531,6 +2626,21 @@ def stablasten_einbauen(model: Model, feq: dict, F: np.ndarray) -> None:
     seither denselben Weg."""
     for i, fl in feq.items():
         e = model.elements[i]
+        if (e.hinges or getattr(e, "hinge_springs", None)) and model.stab_woelbt(e):
+            # mit Woelbkrafttorsion in den 14 FHG kondensiert wie die
+            # Steifigkeit (element_matrix, 14.11.2026, Befund B2); bei einem
+            # Torsionsgelenk geht ein Teil der Last auf die Verwoelbung
+            kl14, T3, _L = beam_woelb_local(model, e)
+            f14 = np.zeros(14)
+            f14[:12] = fl
+            _k, f14, _z = gelenke_kondensieren(kl14, f14, e)
+            A = stab_versatz(model, e)
+            if A is not None:
+                A14 = np.eye(14)
+                A14[:12, :12] = A
+                f14 = A14.T @ f14
+            F[element_dofs(e, model)] += transform14(T3).T @ f14
+            continue
         kl, T3, T, L = beam_local(model, e)
         if getattr(e, "hinge_springs", None):
             kl, fl, _ = hinge_springs(kl, fl, e.hinge_springs)

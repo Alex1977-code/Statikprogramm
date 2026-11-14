@@ -120,9 +120,9 @@ def sektorwerte(sec: Section) -> Sektorwerte | None:
         omega = (h_m/2)(y - b/2),  omega_max = h_m b/4
         S_omega am Steganschluss  = t_f h_m b^2/16
 
-    **U-Profil**: der Schubmittelpunkt liegt um e neben dem Steg,
+    **U-Profil**: der Schubmittelpunkt liegt um e neben der Stegmitte,
 
-        e = 3 t_f b^2 /(6 t_f b + h_m t_w)
+        e = 3 t_f b_s^2 /(6 t_f b_s + h_m t_w),   b_s = b - t_w/2
 
     Dadurch verwoelbt sich auch der Steg. Groesste Woelbordinate ist die am
     Flanschende oder am Steg, groesstes Woelbflaechenmoment liegt in Stegmitte.
@@ -139,6 +139,9 @@ def sektorwerte(sec: Section) -> Sektorwerte | None:
         Iw = 2 * tf * a ** 2 * (b ** 3 / 12.0)
         return Sektorwerte(omega, S, tf, "Flanschende", "Flansch am Steg", Iw)
     if sec.typ == "U":
+        # auf der Mittellinie: Flanschbreite bis Stegmitte (wie Section.channel,
+        # model.iw_u_profil; bis zum 14.11.2026 die volle Breite, Befund C6)
+        b = b - 0.5 * tw
         a = hm / 2.0
         e = 3.0 * tf * b ** 2 / (6.0 * tf * b + hm * tw)
         omega = a * max(e, b - e)

@@ -184,6 +184,10 @@ def test_lagerreibung_behalten():
     m = ex.frame_example()
     m.meta["quelle"] = "C:/x/rahmen.rf6"
     m.meta["rfem_zugstaebe"] = m.meta["rfem_seile"] = "beim Import gesetzt (14.10.2026)"
+    # Seit 14.11.2026 (Befund I3) traegt ein RFEM-Import mit Eigengewicht aus der
+    # Wichte dieses Merkmal; ohne es gilt das Modell als vor dem 14.11. importiert
+    # (Eigengewicht 1,9 % zu klein) - hier geht es nur um die Lagerreibung.
+    m.meta["rfem_eigengewicht"] = "beim Import gesetzt (14.11.2026)"
     m.supports[0].behaviour = {0: DofBehaviour(typ="rigid", mu=0.1, mu_ref=2)}
     an = solver.solve_all(m, design=False)
     p = os.path.join(tempfile.mkdtemp(prefix="status_ob_"), "rahmen.json")

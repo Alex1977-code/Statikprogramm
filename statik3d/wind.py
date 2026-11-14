@@ -14,12 +14,14 @@ c_r(z) = k_r·ln(z/z_0) mit k_r = 0,19·(z_0/z_0,II)^0,07 (z ≥ z_min, Tab. 4.1
 mittlere Geschwindigkeit v_m = c_r·c_o·v_b; Turbulenzintensität
 I_v = k_I/(c_o·ln(z/z_0)); Böengeschwindigkeitsdruck
 q_p = (1 + 7·I_v)·½·ρ·v_m². Alternativ die Mischprofile des NA
-(Tab. NA.B.2: Binnenland, Küste, Inseln der Nordsee) auf q_b = ½·ρ·v_b².
+(Tab. NA.B.2): Binnenland und Küste als Vielfache von q_b = ½·ρ·v_b², die
+Inseln der Nordsee mit festen Werten in kN/m² (Windzone 4).
 
 **Beiwerte**: Wände (Tab. 7.1) mit den Zonen D (Luv), E (Lee), A/B/C
 (Seiten, Bänder e/5 und e ab der Luvkante, e = min(b, 2h)); Flachdach
-(Tab. 7.2, scharfkantig) mit F/G/H/I; freistehende Wand (Tab. 7.9, Zonen
-A–D ab dem freien Ende) und Anzeigetafel (7.4.3, c_f = 1,8); Stäbe:
+(Tab. 7.2, scharfkantig) mit F/G/H/I; freistehende Wand (Tab. 7.9, c_p,net
+nach l/h, Zonen A–D entlang der Wand ab ihren freien Enden) und
+Anzeigetafel (7.4.3, c_f = 1,8); Stäbe:
 Rechteck (Bild 7.23, c_f,0 über d/b), scharfkantige Walzprofile (7.7,
 c_f,0 = 2,0), Kreiszylinder (Bild 7.28 bzw. Gl. 7.19 mit der Reynoldszahl
 Re = b·v/ν, ν = 15·10⁻⁶ m²/s, Rauigkeit k), Fachwerk (Bild 7.33/7.34 über
@@ -51,19 +53,37 @@ GELAENDE = {"0": (0.003, 1.0), "I": (0.01, 1.0), "II": (0.05, 2.0), "III": (0.3,
             "IV": (1.0, 10.0)}
 Z_MAX = 200.0
 
-#: Mischprofile des NA (Tab. NA.B.2): (z-Grenzen, Faktor, Exponent) auf q_b
+#: Mischprofile des NA (Tab. NA.B.2): je Stufe (Obergrenze z [m], Wert,
+#: Exponent), q_p(z) = Wert·(z/10)^Exponent. Binnenland und Küste: der Wert
+#: ist ein Faktor auf q_b. Inseln der Nordsee (nur Windzone 4): der Wert ist
+#: q_p selbst in Pa - 1,1 kN/m² bis 2 m, darüber 1,5·(z/10)^0,19 kN/m² bis
+#: 300 m (:data:`MISCHPROFILE_ABSOLUT`). Bis zum 14.11.2026 standen dort 1,1
+#: und 1,5 als Faktoren auf q_b und eine dritte Stufe über 50 m mit 1,7 und
+#: 0,16, die die Tabelle nicht hat: z = 10 m 0,844 statt 1,500 kN/m²
+#: (Befund C2 der Einheiten-Agenten)
 MISCHPROFILE = {
     "Binnenland": [(7.0, 1.5, 0.0), (50.0, 1.7, 0.37), (300.0, 2.1, 0.24)],
     "Küste und Inseln der Ostsee": [(4.0, 1.8, 0.0), (50.0, 2.3, 0.27), (300.0, 2.6, 0.19)],
-    "Inseln der Nordsee": [(2.0, 1.1, 0.0), (50.0, 1.5, 0.19), (300.0, 1.7, 0.16)],
+    "Inseln der Nordsee": [(2.0, 1100.0, 0.0), (300.0, 1500.0, 0.19)],
 }
+#: Mischprofile mit festen Werten (q_p in Pa, unabhängig von v_b und q_b)
+MISCHPROFILE_ABSOLUT = ("Inseln der Nordsee",)
 
 #: Zonen der Wände (Tab. 7.1, c_pe,10) - A, B, C Seitenwände; D Luv; E Lee je h/d
 CPE_SEITE = {"A": -1.2, "B": -0.8, "C": -0.5}
 #: Flachdach scharfkantig (Tab. 7.2, c_pe,10)
 CPE_FLACHDACH = {"F": -1.8, "G": -1.2, "H": -0.7, "I": -0.2}
-#: Freistehende Wand ohne Eckabschluss, l/h >= 10 (Tab. 7.9, c_p,net)
-CP_FREIE_WAND = {"A": 2.3, "B": 1.4, "C": 1.2, "D": 1.2}
+#: Freistehende Wand, Völligkeitsgrad φ = 1, ohne Eckausbildung (Tab. 7.9,
+#: c_p,net): die Zeilen l/h ≤ 3, l/h = 5 und l/h ≥ 10, dazwischen geradlinig
+#: (:func:`cp_freie_wand`). Bis zum 14.11.2026 galt für jede Wand die Zeile
+#: l/h ≤ 3, im Kommentar stand „l/h >= 10“ (Befund B4: Wand 30 × 3 m ΣF_x
+#: 68,547 statt 94,443 kN). Tab. 7.9 mit Eckausbildung und φ = 0,8 kennt das
+#: Programm nicht.
+TAB_7_9 = ((3.0, {"A": 2.3, "B": 1.4, "C": 1.2, "D": 1.2}),
+           (5.0, {"A": 2.9, "B": 1.8, "C": 1.4, "D": 1.2}),
+           (10.0, {"A": 3.4, "B": 2.1, "C": 1.7, "D": 1.2}))
+#: die Zeile l/h ≤ 3 der Tab. 7.9
+CP_FREIE_WAND = dict(TAB_7_9[0][1])
 CF_SCHILD = 1.8
 
 
@@ -158,7 +178,8 @@ def q_p(z: float, w: Wind) -> float:
     stufen = MISCHPROFILE.get(w.profil)
     if not stufen:
         raise ValueError(f"Profil '{w.profil}' unbekannt: {list(GELAENDE) + list(MISCHPROFILE)}")
-    qb = q_basis(w)
+    # Nordsee: feste Werte in Pa (Tab. NA.B.2), sonst Faktoren auf q_b
+    qb = 1.0 if w.profil in MISCHPROFILE_ABSOLUT else q_basis(w)
     z = max(float(z), 0.0)
     for grenze, faktor, exponent in stufen:
         if z <= grenze:
@@ -260,8 +281,18 @@ def zone_flachdach(x: float, y_rand: float, e: float) -> str:
     return "H" if x < e / 2.0 else "I"
 
 
+def cp_freie_wand(l_h: float) -> dict:
+    """c_p,net der Zonen A–D einer freistehenden Wand (Tab. 7.9, φ = 1, ohne
+    Eckausbildung) für das Verhältnis l/h aus Länge und Höhe der Wand:
+    geradlinig zwischen den Zeilen l/h = 3, 5 und 10, darunter bzw. darüber
+    die Randzeile."""
+    xs = [z for z, _c in TAB_7_9]
+    return {k: float(np.interp(float(l_h), xs, [c[k] for _z, c in TAB_7_9])) for k in "ABCD"}
+
+
 def zone_freie_wand(x_ende: float, h: float) -> str:
-    """Freistehende Wand (Tab. 7.9): A (0 … 0,3h), B (… 2h), C (… 4h), D (> 4h) ab dem freien Ende."""
+    """Freistehende Wand (Tab. 7.9, Bild 7.19): A (0 … 0,3h), B (… 2h), C (… 4h),
+    D (> 4h), gemessen entlang der Wand ab dem freien Ende."""
     if x_ende < 0.3 * h:
         return "A"
     if x_ende < 2.0 * h:
@@ -429,16 +460,53 @@ def objekt_geometrie(model, name: str, geo: dict, gruppe=None) -> dict:
     (:func:`wand_gruppen`) - Enden und Höhe kommen dann aus der ganzen Wand.
     Bis zum 14.11.2026 zählte jede Teilfläche für sich (Befund A8 der
     Prüfagenten: Wand 30 x 3 m aus drei Flächen ΣF_x 80,262 statt 68,547 kN,
-    Wand 10 x 3 m aus zwei Flächen übereinander 25,411 statt 26,754 kN)."""
+    Wand 10 x 3 m aus zwei Flächen übereinander 25,411 statt 26,754 kN).
+
+    Seit dem 14.11.2026 dazu die Richtung entlang der Wand (``laengs``,
+    waagerecht in der Wandebene) und die Lage der freien Enden auf ihr
+    (``s_min``, ``s_max``) samt der Länge ``l``: die Zonen A–D zählen nach
+    Bild 7.19 entlang der Wand, l/h wählt die Zeile der Tab. 7.9. Bis dahin
+    zählten sie quer zur Windrichtung (t_min/t_max) - bei schrägem Wind
+    gestaucht (Befund B5 der Prüfagenten). t_min/t_max und b bleiben die
+    Ausdehnung quer zum Wind."""
     kn = set()
-    for n in (gruppe or [name]):
+    namen = list(gruppe or [name])
+    for n in namen:
         kn |= _flaechenknoten(model, n)
     if not kn:
         return dict(geo)
-    out = _abmessungen(model, kn, np.asarray(geo["richtung"], float), np.asarray(geo["quer"], float),
-                       float(geo["z_boden"]))
+    d = np.asarray(geo["richtung"], float)
+    quer = np.asarray(geo["quer"], float)
+    out = _abmessungen(model, kn, d, quer, float(geo["z_boden"]))
     out["abmessungen"] = ABMESSUNGEN_OBJEKT
+    laengs = _wandrichtung(model, namen, d, quer)
+    s = model.nodes[sorted(kn)] @ laengs
+    out.update({"laengs": laengs.tolist(), "s_min": float(s.min()), "s_max": float(s.max()),
+                "l": float(np.ptp(s)) or 1e-6})
     return out
+
+
+def _wandrichtung(model, namen, d, quer) -> np.ndarray:
+    """Waagerechte Richtung entlang einer Wand aus den Flächen ``namen``: senkrecht
+    zur waagerechten Komponente ihrer (gleichgerichtet gemittelten) Normalen; das
+    Vorzeichen zeigt zu ``quer`` (bei Wind längs zur Wand: in Windrichtung) - die
+    Zonen zählen von beiden Enden, es ändert nichts. Eine waagerechte Fläche hat
+    keine solche Richtung: dann ``quer``."""
+    nrm = np.zeros(3)
+    for n in namen:
+        nn = _flaechennormale(model, n)
+        if nn is None:
+            continue
+        nh = np.array([nn[0], nn[1], 0.0])
+        nrm += nh if float(nh @ nrm) >= 0.0 else -nh
+    L = float(np.linalg.norm(nrm))
+    if L <= 1e-9:
+        return np.asarray(quer, float)
+    laengs = np.array([-nrm[1], nrm[0], 0.0]) / L
+    c = float(laengs @ np.asarray(quer, float))
+    if c < -1e-12 or (abs(c) <= 1e-12 and float(laengs @ np.asarray(d, float)) < 0.0):
+        laengs = -laengs
+    return laengs
 
 
 def netto_richtung(model, name: str, d) -> Optional[np.ndarray]:
@@ -446,15 +514,18 @@ def netto_richtung(model, name: str, d) -> Optional[np.ndarray]:
     Normale der Fläche, zur Leeseite gedreht (n · d ≥ 0). c_p,net (Tab. 7.9)
     und c_f (7.4.3) gelten in Windrichtung - unabhängig vom Umlauf der Linien
     und von der Knotenreihenfolge der Elemente: jedes Schalenelement zählt mit
-    seiner Normalen zur Leeseite gedreht (längs zum Wind: zur Normalen des
-    ersten Elements). Eine Volumenrandfläche trägt ihre Außennormale."""
+    seiner Normalen zur Leeseite gedreht; ein Element genau längs zum Wind
+    zählt gleichgerichtet mit der Summe der übrigen (bis zum 14.11.2026 mit
+    der Normalen des ersten Elements, also nach dem Umlauf). Eine Fläche ganz
+    längs zum Wind bekommt keine Nettolast (:func:`schale_quer`, Befund B5).
+    Eine Volumenrandfläche trägt ihre Außennormale."""
     from .elemente import SCHALEN_TYPEN
     f = model.flaechen.get(name)
     if f is None:
         return None
     d = np.asarray(d, float)
     n = np.zeros(3)
-    ref = None
+    laengs = []
     for e in f.elemente or []:
         if not 0 <= int(e) < len(model.elements):
             continue
@@ -465,12 +536,13 @@ def netto_richtung(model, name: str, d) -> Optional[np.ndarray]:
         L = float(np.linalg.norm(a))
         if L <= 0:
             continue
-        if ref is None:
-            ref = a / L
         s = float(a @ d)
         if abs(s) <= 1e-9 * L:
-            s = float(a @ ref)
+            laengs.append(a)
+            continue
         n += a if s >= 0 else -a
+    for a in laengs:
+        n += a if float(a @ n) >= 0 else -a
     if not n.any():
         n = _flaechennormale(model, name)
         if n is None:
@@ -520,18 +592,52 @@ def volumenflaeche_quer(model, name: str, d, koerper_von=None) -> Optional[str]:
     return k if abs(float(n @ np.asarray(d, float)[:3])) < QUER_ZUM_WIND else None
 
 
+def schale_quer(model, name: str, d) -> bool:
+    """Liegt die Schalenflaeche ``name`` nahezu parallel zur Windrichtung ``d``
+    (|n · d| < :data:`QUER_ZUM_WIND`, n die gemittelte Normale, das Vorzeichen
+    zaehlt nicht)? Dann bekommt sie als freie Wand oder Tafel keine Nettolast,
+    wie seit dem Stand 43 eine Volumenflaeche. Bis zum 14.11.2026 trug sie die
+    volle Nettolast quer zum Wind, ihr Vorzeichen hing am Umlauf der Linien
+    (Befund B5: Wand 10 x 3 m, Wind laengs, ΣF_x +39,395 oder −39,395 kN)."""
+    if name not in model.flaechen or _schalenmitte(model, name) is None:
+        return False
+    n = netto_richtung(model, name, d)
+    return n is not None and abs(float(n @ np.asarray(d, float)[:3])) < QUER_ZUM_WIND
+
+
 def quer_satz(namen, koerper: str, rolle: str) -> str:
-    """Der Satz fuers Protokoll zu Volumenflaechen ohne Nettolast (:func:`volumenflaeche_quer`)."""
+    """Der Satz fuers Protokoll zu Flaechen ohne Nettolast (:func:`volumenflaeche_quer`,
+    :func:`schale_quer`); ``koerper`` leer: Schalen."""
     if rolle == "schild":
         art, beiwert = "Anzeigetafel", "c_f nach DIN EN 1991-1-4, 7.4.3"
     else:
         art, beiwert = "Freie Wand", "c_p,net nach DIN EN 1991-1-4, Tab. 7.9"
     namen = list(namen)
-    wer = (f"die Fläche {namen[0]} des Volumens {koerper} liegt" if len(namen) == 1 else
-           f"die Flächen {', '.join(namen[:-1])} und {namen[-1]} des Volumens {koerper} liegen")
+    des = f" des Volumens {koerper}" if koerper else ""
+    wer = (f"die Fläche {namen[0]}{des} liegt" if len(namen) == 1 else
+           f"die Flächen {', '.join(namen[:-1])} und {namen[-1]}{des} liegen")
     return (f"{art}: {wer} nahezu parallel zur Windrichtung (|n·d| < 0,1) und "
             f"{'bekommt' if len(namen) == 1 else 'bekommen'} keine Nettolast – {beiwert} wirkt "
             f"quer zur Wand, nicht längs.")
+
+
+def _komma(x: float, stellen: int = 2) -> str:
+    return f"{float(x):.{stellen}f}".replace(".", ",")
+
+
+def wand_satz(namen, geo: dict) -> str:
+    """Der Satz fuers Protokoll zu einer freien Wand: Laenge entlang der Wand,
+    h, l/h und c_p,net der Zonen (Tab. 7.9, :func:`cp_freie_wand`)."""
+    namen = list(namen)
+    h, l_w = float(geo["h"]), float(geo.get("l", geo["b"]))
+    cp = cp_freie_wand(l_w / h)
+    wer = (f"Fläche {namen[0]}" if len(namen) == 1 else
+           f"Flächen {', '.join(namen[:-1])} und {namen[-1]}")
+    return (f"Freie Wand ({wer}): Länge l = {_komma(l_w)} m entlang der Wand, h = {_komma(h)} m, "
+            f"l/h = {_komma(l_w / h)}; c_p,net A/B/C/D = "
+            + "/".join(_komma(cp[k]) for k in "ABCD")
+            + " (DIN EN 1991-1-4, Tab. 7.9, φ = 1 ohne Eckausbildung, geradlinig zwischen l/h = 3, 5 "
+              "und 10), Zonen bis 0,3·h, 2·h und 4·h ab beiden freien Enden entlang der Wand (Bild 7.19).")
 
 
 #: Zwei Flaechen gehoeren zu derselben Wand, wenn ihre Normalen hoechstens rund
@@ -1034,6 +1140,171 @@ def alte_wandlasten_text(model) -> str:
     return ", ".join(f"Wind {w} in {lf}" for lf, w in alt[:5]) + (" …" if len(alt) > 5 else "")
 
 
+def _flaechenpunkte(model, name: str) -> np.ndarray:
+    """Mittelpunkte der Elemente (Schale) bzw. Elementseiten (Volumenrand) einer Flaeche."""
+    from .assemble import SOLID_FACES
+    from .elemente import SCHALEN_TYPEN
+    f = model.flaechen.get(name)
+    pkt = []
+    if f is None:
+        return np.zeros((0, 3))
+    for e in f.elemente or []:
+        if 0 <= int(e) < len(model.elements) and model.elements[int(e)].typ in SCHALEN_TYPEN:
+            pkt.append(model.nodes[_ecken(model.elements[int(e)])].mean(axis=0))
+    if not pkt:
+        for e, s in (f.randseiten or []):
+            if not 0 <= int(e) < len(model.elements):
+                continue
+            el = model.elements[int(e)]
+            seiten = SOLID_FACES.get(el.typ)
+            if seiten:
+                idx = [int(el.nodes[j]) for j in seiten[int(s) % len(seiten)]]
+                pkt.append(model.nodes[idx].mean(axis=0))
+    return np.asarray(pkt, float).reshape(-1, 3)
+
+
+def alte_wandzonen(model) -> list:
+    """[(Lastfall, Wind)] der Windlasten des Generators (Normverfahren) auf freien
+    Waenden und Tafeln, die ein Programmstand vor dem 14.11.2026 (Stand 49)
+    erzeugt hat (Geometrie ohne ``laengs``) und die heute anders entstehen
+    (Befund B5):
+
+    * eine Schale nahezu parallel zum Wind (:func:`schale_quer`) mit einer
+      Nettolast quer zum Wind;
+    * eine freie Wand schraeg zum Wind, deren Zonen quer zur Windrichtung statt
+      entlang der Wand zaehlen und an einem Elementmittelpunkt einen anderen
+      Beiwert ergeben als heute.
+
+    Bei senkrechtem Wind ist beides dasselbe - dort ist nichts neu zu erzeugen;
+    die Zeile der Tab. 7.9 nach l/h (Befund B4) waehlt schon das Verteilen."""
+    aus = []
+    cache: dict = {}
+    for lf, lc in (getattr(model, "load_cases", None) or {}).items():
+        for gl in getattr(lc, "geometrielasten", None) or []:
+            v = getattr(gl, "verlauf", None) or {}
+            g = v.get("geometrie") or {}
+            rolle = str(v.get("rolle", ""))
+            if (getattr(gl, "art", "flaeche") != "flaeche" or v.get("art") != "wind"
+                    or rolle not in ROLLEN_NETTO or v.get("feld") or g.get("richtung") is None
+                    or "laengs" in g):
+                continue
+            eintrag = (str(lf), str(v.get("name", "")))
+            if eintrag in aus:
+                continue
+            ziel = str(gl.ziel)
+            try:
+                d = np.asarray(g["richtung"], float)
+                if schale_quer(model, ziel, d):
+                    aus.append(eintrag)
+                    continue
+                if rolle != "freie_wand" or g.get("abmessungen") != ABMESSUNGEN_OBJEKT:
+                    continue                 # aeltere Abmessungen: alte_abmessungen
+                n = _flaechennormale(model, ziel)
+                if n is None:
+                    continue
+                nh = np.array([n[0], n[1], 0.0])
+                if float(np.linalg.norm(nh)) > 1e-9 and abs(float(nh @ d)) / float(np.linalg.norm(nh)) >= 1 - 1e-9:
+                    continue                 # senkrecht angestroemt: quer = entlang
+                schl = eintrag + (rolle,)
+                if schl not in cache:
+                    w = _param(v.get("param") or {})
+                    cache[schl] = (gebaeude(w, model), wand_gruppen(model, w.freie_waende))
+                geo, gruppen = cache[schl]
+                heute = objekt_geometrie(model, ziel, geo, gruppen.get(ziel))
+                for P in _flaechenpunkte(model, ziel):
+                    if (abs(beiwert_am_punkt({}, g, rolle, P)[0] - beiwert_am_punkt({}, heute, rolle, P)[0])
+                            > 1e-9):
+                        aus.append(eintrag)
+                        break
+            except Exception:                    # noqa: BLE001
+                continue
+    return aus
+
+
+def alte_wandzonen_text(model) -> str:
+    alt = alte_wandzonen(model)
+    return ", ".join(f"Wind {w} in {lf}" for lf, w in alt[:5]) + (" …" if len(alt) > 5 else "")
+
+
+#: Das Mischprofil „Inseln der Nordsee“ bis zum 14.11.2026 (Faktoren auf q_b,
+#: dritte Stufe) - nur zum Erkennen damals erzeugter Stablasten
+_NORDSEE_VOR_STAND_49 = [(2.0, 1.1, 0.0), (50.0, 1.5, 0.19), (300.0, 1.7, 0.16)]
+
+
+def _q_p_nordsee_vor_stand_49(z: float, w: Wind) -> float:
+    qb = q_basis(w)
+    z = max(float(z), 0.0)
+    for grenze, faktor, exponent in _NORDSEE_VOR_STAND_49:
+        if z <= grenze:
+            return faktor * qb * ((max(z, 1e-9) / 10.0) ** exponent if exponent else 1.0)
+    grenze, faktor, exponent = _NORDSEE_VOR_STAND_49[-1]
+    return faktor * qb * (grenze / 10.0) ** exponent
+
+
+def _nordsee(w) -> bool:
+    return str(getattr(w, "profil", "") or "") in MISCHPROFILE_ABSOLUT
+
+
+def nordsee_lasten(model) -> list:
+    """[(Lastfall, Wind)] mit Windlasten des Generators im Mischprofil „Inseln der
+    Nordsee“ - Flaechenlasten (q_p beim Verteilen) und Stablasten (Befund C2)."""
+    aus = []
+    winde = getattr(model, "winde", None) or {}
+    for lf, lc in (getattr(model, "load_cases", None) or {}).items():
+        for gl in getattr(lc, "geometrielasten", None) or []:
+            v = getattr(gl, "verlauf", None) or {}
+            if v.get("art") == "wind" and _nordsee(_param(v.get("param") or {})):
+                if (str(lf), str(v.get("name", ""))) not in aus:
+                    aus.append((str(lf), str(v.get("name", ""))))
+        for ll in getattr(lc, "linienlasten", None) or []:
+            e = str(getattr(ll, "erzeuger", "") or "")
+            if e.startswith("wind:") and _nordsee(winde.get(e[5:])) and (str(lf), e[5:]) not in aus:
+                aus.append((str(lf), e[5:]))
+    return aus
+
+
+def alte_nordsee_stablasten(model) -> list:
+    """[(Lastfall, Wind)] der Stablasten eines Winds im Mischprofil „Inseln der
+    Nordsee“ (Normverfahren), die noch mit dem Profil vor dem 14.11.2026
+    erzeugt sind: ihr Wert w = c_f·q_p·b_ref steht im Modell und liegt naeher
+    am damaligen als am heutigen q_p (Befund C2). Flaechenlasten rechnen q_p
+    beim Verteilen neu, sie sind hier nicht dabei. Ein Wind mit numerischem
+    Windkanal wird nicht geprueft (die Abschirmung macht beide Werte gleich
+    moeglich)."""
+    aus = []
+    for w in list((getattr(model, "winde", None) or {}).values()):
+        if not _nordsee(w) or w.windkanal() or not w.staebe:
+            continue
+        marke = f"wind:{w.name}"
+        try:
+            geo = gebaeude(w, model)
+        except Exception:                        # noqa: BLE001
+            continue
+        soll = {}
+        for name in w.staebe:
+            if name not in model.members:
+                continue
+            try:
+                soll[name] = (stabbeiwert(w, model, name, geo)["w1"],
+                              stabbeiwert(w, model, name, geo, qp=_q_p_nordsee_vor_stand_49)["w1"])
+            except Exception:                    # noqa: BLE001
+                continue
+        for lf, lc in model.load_cases.items():
+            for ll in lc.linienlasten:
+                if ll.erzeuger != marke or ll.ziel not in soll or (str(lf), w.name) in aus:
+                    continue
+                q = float(np.linalg.norm(np.asarray(ll.q, float)))
+                neu, alt = soll[ll.ziel]
+                if abs(q - alt) < abs(q - neu):
+                    aus.append((str(lf), w.name))
+    return aus
+
+
+def alte_nordsee_stablasten_text(model) -> str:
+    alt = alte_nordsee_stablasten(model)
+    return ", ".join(f"Wind {w} in {lf}" for lf, w in alt[:5]) + (" …" if len(alt) > 5 else "")
+
+
 def windlasten_hinweis(model) -> list:
     """Beim Oeffnen: die Zeilen fuers Protokoll zu Windlasten, die neu zu
     erzeugen sind (:func:`alte_windlasten`, :func:`alte_abmessungen`).
@@ -1059,6 +1330,18 @@ def windlasten_hinweis(model) -> list:
                    "Höhe darin je Teilfläche statt für die ganze Wand, oder eine Fläche eines Volumens "
                    "parallel zur Windrichtung (Stirnfläche, Boden, Dach) trägt eine Nettolast quer zum Wind "
                    f"({WIND_NEU_ERZEUGEN}, danach neu rechnen).")
+    if alte_wandzonen(model):
+        aus.append(f"Windlasten neu erzeugen: {alte_wandzonen_text(model)} mit einem älteren Programmstand "
+                   "erzeugt – an einer schräg angeströmten freien Wand zählen die Zonen A–D darin quer zur "
+                   "Windrichtung statt entlang der Wand, oder eine Schale parallel zur Windrichtung trägt als "
+                   f"freie Wand bzw. Anzeigetafel eine Nettolast quer zum Wind ({WIND_NEU_ERZEUGEN}, danach "
+                   "neu rechnen).")
+    if alte_nordsee_stablasten(model):
+        aus.append(f"Windlasten neu erzeugen: {alte_nordsee_stablasten_text(model)} mit einem älteren "
+                   "Programmstand erzeugt – die Stablasten darin stammen aus dem Mischprofil „Inseln der "
+                   "Nordsee“ mit 1,1 und 1,5 als Faktoren auf q_b statt als q_p in kN/m² (Windzone 4 bis "
+                   "50 m Höhe 44 % zu klein) "
+                   f"({WIND_NEU_ERZEUGEN}, danach neu rechnen; Flächenlasten rechnen beim Verteilen neu).")
     return aus
 
 
@@ -1086,9 +1369,20 @@ def beiwert_am_punkt(param: dict, geo: dict, rolle: str, punkt) -> tuple:
         z = zone_flachdach(x, y_rand, e)
         return CPE_FLACHDACH[z] - c_pi, z
     if rolle == "freie_wand":
-        x_ende = min(float(P @ quer) - geo["t_min"], geo["t_max"] - float(P @ quer))
+        if "laengs" in geo:
+            # Abstand zum naechsten freien Ende entlang der Wand, l/h der ganzen
+            # Wand (objekt_geometrie, 14.11.2026, Befunde B4/B5)
+            s = float(P @ np.asarray(geo["laengs"], float))
+            x_ende = min(s - geo["s_min"], geo["s_max"] - s)
+            l_w = float(geo["l"])
+        else:
+            # Last eines aelteren Programmstands: Abstand quer zur Windrichtung,
+            # Laenge = Breite quer (bei senkrechtem Wind dasselbe; sonst
+            # :func:`alte_wandzonen`)
+            x_ende = min(float(P @ quer) - geo["t_min"], geo["t_max"] - float(P @ quer))
+            l_w = float(b)
         z = zone_freie_wand(x_ende, h)
-        return CP_FREIE_WAND[z], z
+        return cp_freie_wand(l_w / h)[z], z
     if rolle == "schild":
         return CF_SCHILD, "Schild"
     return 0.0, "–"
@@ -1316,8 +1610,10 @@ def _param(p) -> Wind:
 # ==========================================================================
 # Stäbe
 # ==========================================================================
-def stabbeiwert(w: Wind, model, name: str, geo: dict) -> dict:
-    """c_f, b_ref, Re, ψ_λ und w(z) an beiden Enden eines Stabes."""
+def stabbeiwert(w: Wind, model, name: str, geo: dict, qp=None) -> dict:
+    """c_f, b_ref, Re, ψ_λ und w(z) an beiden Enden eines Stabes. ``qp``: eine
+    andere Funktion q_p(z, w) (zum Erkennen aelterer Stablasten)."""
+    qp = qp or q_p
     mem = model.members[name]
     els = [int(e) for e in mem.elements if 0 <= int(e) < len(model.elements)]
     if not els:
@@ -1336,7 +1632,7 @@ def stabbeiwert(w: Wind, model, name: str, geo: dict) -> dict:
     z1 = float(n1[2]) - geo["z_boden"]
     z2 = float(n2[2]) - geo["z_boden"]
     zm = 0.5 * (z1 + z2)
-    qm = q_p(max(zm, 0.0), w)
+    qm = qp(max(zm, 0.0), w)
     v = math.sqrt(2.0 * qm / RHO)
     re = reynolds(b_ref, v)
     lam = schlankheit(L, b_ref)
@@ -1356,8 +1652,8 @@ def stabbeiwert(w: Wind, model, name: str, geo: dict) -> dict:
     cf = cf0 * psi
     # Anteil quer zur Stabachse: Wind parallel zum Stab belastet ihn nicht
     sin = math.sqrt(max(0.0, 1.0 - float(achse @ d) ** 2))
-    w1 = w.c_scd * cf * q_p(max(z1, 0.0), w) * b_ref * sin
-    w2 = w.c_scd * cf * q_p(max(z2, 0.0), w) * b_ref * sin
+    w1 = w.c_scd * cf * qp(max(z1, 0.0), w) * b_ref * sin
+    w2 = w.c_scd * cf * qp(max(z2, 0.0), w) * b_ref * sin
     return {"stab": name, "typ": typ or "frei", "b_ref": b_ref, "L": L, "lambda": lam, "psi": psi,
             "Re": re, "cf0": cf0, "cf": cf, "art": art, "w1": w1, "w2": w2, "z1": z1, "z2": z2,
             "F": 0.5 * (w1 + w2) * L}
@@ -1553,6 +1849,8 @@ def lasten_erzeugen(model, w: Wind, fortschritt=None) -> dict:
     # Volumenflaechen nahezu parallel zum Wind: keine Nettolast (Befund A9)
     koerper_von = _koerper_von(model)
     quer: dict = {}
+    # je freie Wand (Gruppe) Laenge, h, l/h und c_p,net fuers Protokoll (Befund B4)
+    waende: dict = {}
     for name, rolle in roll.items():
         mit_feld = feld is not None and _feld_passt(wk, _flaechennormale(model, name), geo["quer"])
         if name in paare and paare[name][2] == rolle and not mit_feld:
@@ -1560,6 +1858,8 @@ def lasten_erzeugen(model, w: Wind, fortschritt=None) -> dict:
             continue
         if rolle in ROLLEN_NETTO and not mit_feld:
             k_quer = volumenflaeche_quer(model, name, geo["richtung"], koerper_von)
+            if k_quer is None and schale_quer(model, name, geo["richtung"]):
+                k_quer = ""                     # Schale parallel zum Wind (Befund B5)
             if k_quer is not None:
                 quer.setdefault((rolle, k_quer), []).append(name)
                 continue
@@ -1570,6 +1870,9 @@ def lasten_erzeugen(model, w: Wind, fortschritt=None) -> dict:
             verlauf["geometrie"] = objekt_geometrie(model, name, geo, gruppen[rolle].get(name))
             n_w = netto_richtung(model, name, geo["richtung"])
             verlauf["netto"] = [float(x) for x in n_w] if n_w is not None else None
+            if rolle == "freie_wand" and not mit_feld:
+                waende.setdefault(tuple(gruppen[rolle].get(name) or [name]), (verlauf["geometrie"], []))[1] \
+                    .append(name)
         if name in seiten:
             # Aussennormale der Flaeche (11.11.2026): an Schalen das Vorzeichen
             # der Last; ihr Fehlen kennzeichnet eine aeltere Windlast (Befund 40)
@@ -1581,6 +1884,8 @@ def lasten_erzeugen(model, w: Wind, fortschritt=None) -> dict:
         model.add_geometrielast(name, 0.0, art="flaeche", richtung=None, case=w.lastfall, verlauf=verlauf)
         n_obj += 1
         zonen[name] = rolle
+    for _gruppe, (g_w, namen) in waende.items():
+        netto_saetze.append(wand_satz(namen, g_w))
     for (rolle, k_quer), namen in quer.items():
         netto_saetze.append(quer_satz(namen, k_quer, rolle))
     staebe = []
@@ -1685,6 +1990,10 @@ def erlaeuterung(w: Wind, kw: dict) -> list:
                  f"c_r(z) = k_r·ln(z/z_0) mit k_r = 0,19·(z_0/z_0,II)^0,07 = {k_r(z0):.3f}, "
                  f"v_m = c_r·c_o·v_b, Turbulenzintensität I_v = 1/(c_o·ln(z/z_0)), "
                  f"Böengeschwindigkeitsdruck q_p = (1 + 7·I_v)·½·ρ·v_m² (DIN EN 1991-1-4, 4.3 bis 4.5).")
+    elif w.profil in MISCHPROFILE_ABSOLUT:
+        z.append(f"Mischprofil „{w.profil}“ des Nationalen Anhangs (Tab. NA.B.2): q_p(z) = 1,1 kN/m² bis "
+                 f"z = 2 m, darüber q_p(z) = 1,5·(z/10)^0,19 kN/m² bis 300 m – feste Werte der Windzone 4, "
+                 f"v_b und q_b gehen nicht ein.")
     else:
         z.append(f"Mischprofil „{w.profil}“ des Nationalen Anhangs (Tab. NA.B.2): q_p(z) stufenweise "
                  f"als Vielfaches von q_b.")
@@ -1701,7 +2010,7 @@ def erlaeuterung(w: Wind, kw: dict) -> list:
         for sb in kw["staebe"]:
             z.append(f"Stab {sb['stab']} ({sb['typ']}, b_ref = {sb['b_ref']:.3f} m, L = {sb['L']:.2f} m): "
                      f"{sb['art']} c_f,0 = {sb['cf0']:.2f}, λ = {sb['lambda']:.1f}, ψ_λ = {sb['psi']:.2f}, "
-                     f"c_f = {sb['cf']:.2f}, Re = {sb['Re']:.2e}; w = c_f·q_p·b_ref = {sb['w1']:.1f} … "
+                     f"c_f = {sb['cf']:.2f}, Re = {format(float(format(sb['Re'], '.3g')), ',.0f').replace(',', ' ')}; w = c_f·q_p·b_ref = {sb['w1']:.1f} … "
                      f"{sb['w2']:.1f} N/m (z = {sb['z1']:.1f} … {sb['z2']:.1f} m), F = {sb['F'] / 1e3:.2f} kN.")
     if w.c_scd != 1.0:
         z.append(f"Strukturbeiwert c_s·c_d = {w.c_scd:g}.")

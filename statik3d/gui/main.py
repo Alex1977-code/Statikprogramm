@@ -1826,6 +1826,11 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 eintrag("Lagerdichte…", lambda _n: self.lagerdichte_einstellen())
             eintrag("Größe aller Lager…", lambda _n: self.lagergroesse_einstellen(None))
+            # offener Hinweis „Flächenlager nach Neuvernetzen prüfen“ (Vorschlag vom
+            # 14.11.2026): bestaetigen, dass das Lager geprueft ist (Model.flaechenlager_geprueft)
+            if art == "flaechenlager" and self._flaechenlager_hinweis_offen(name):
+                eintrag("Flächenlager geprüft (Hinweis „nach Neuvernetzen prüfen“ erledigt)",
+                        lambda n: self.flaechenlager_geprueft(int(n)))
         elif art == "last":
             eintrag("Bearbeiten…", lambda n: self._lastmaske(*n), maske=True)
         menu.addSeparator()
@@ -5064,6 +5069,13 @@ class MainWindow(QtWidgets.QMainWindow):
         """Tabellen und Ansicht nach geaenderten Einheiten neu beschriften."""
         for t in self.findChildren(tab.Datentabelle):
             t.einheiten_aktualisieren()
+        # „Lasten“ und „Umhüllende“ stehen als fertige Zahlen in der Einheit
+        # da (E6, 14.11.2026): neu fuellen
+        if hasattr(self, "tbl_last") and hasattr(self, "cb_lastfilter"):
+            self._lasten_fuellen()
+        r = self.current_result() if hasattr(self, "tbl_env") else None
+        if hasattr(r, "extreme_table") and getattr(r, "beam", None):
+            self._fill(self.tbl_env, self._huelle_zeilen(r))
         self._einheiten_zeigen()
         self.redraw()
 
@@ -9059,10 +9071,13 @@ class MainWindow(QtWidgets.QMainWindow):
                         "nach_dicke", "nach Dicke", "info",
                         "\n".join(f"{mt.fliess_name() if was == 'fy' else mt.grenze_name()} {mt.dickentext(was)}"
                                   for was, tab in (("fy", mt.fy_dicke), ("fu", mt.fu_dicke)) if tab),
-                        hinweis="Streckgrenze und Zugfestigkeit nach Erzeugnisdicke aus der Quelldatei; die "
-                                "Nachweise nehmen den Wert der Dicke des Bauteils. f_y und f_u oben sind die "
-                                "Werte der dünnsten Stufe: ändert man sie, folgt die dünnste Stufe, die "
-                                "übrigen bleiben."))
+                        hinweis=("Streckgrenze und Zugfestigkeit nach Erzeugnisdicke aus der Quelldatei; die "
+                                 "Nachweise nehmen den Wert der Dicke des Bauteils. f_y und f_u oben sind die "
+                                 "Werte der dünnsten Stufe: ändert man sie, folgt die dünnste Stufe, die "
+                                 "übrigen bleiben.") if mt.dickentabelle_aus_quelle() else
+                                ("Über 80 mm nach Erzeugnisnorm eingetragen (Werkstoffdialog, Zeile „f_y/f_u "
+                                 "über 80 mm“); bis 80 mm gelten f_y, f_u und die Stahlsorte nach "
+                                 "DIN EN 1993-1-1 Tab. 3.1.")))
                 titel = f"Werkstoff {name}"
         elif art == "querschnitt":
             sec = m.sections.get(name)
@@ -14250,6 +14265,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._grenze_warnung = ""
         # Zeilen von _vernetzen (Sweep „immer“, Sperre der Stufe, Fein) vorn
         log = list(vorab or [])
+        # Schon vernetzte Nachbarflaechen gehen mit, sonst trennt das neue Netz
+        # sie an der gemeinsamen Linie (Befund B9, mesher.mit_vernetzten_nachbarn)
+        flaechen = mesher.mit_vernetzten_nachbarn(self.model, flaechen, log)
         n = 0
         prozesse = 1
         zeiten: dict = {}          # Sekunden je Phase, fuer die Schlusszeile
@@ -15472,8 +15490,8 @@ class MainWindow(QtWidgets.QMainWindow):
             Spalte("Nr", "", "ganz"), Spalte("Lastfall"), Spalte("Art"),
             Spalte("Ziel", "", "text", hinweis="Knoten bzw. Element"),
             Spalte("Größe", "", "text",
-                   hinweis="Knotenlast kN/kNm, Streckenlast kN/m, "
-                           "Flächenlast kN/m², Temperatur K"),
+                   hinweis="Wert mit Einheit, Kräfte und Lasten in der eingestellten "
+                           "Einheit (Ansicht → Einheiten), Temperatur K"),
             Spalte("Richtung"), Spalte("Bemerkung")],
             "Lasten", self, mit_kennwerten=False)
         self.tbl_last.zeile_gewaehlt.connect(self._tabelle_last)
@@ -15823,6 +15841,16 @@ class MainWindow(QtWidgets.QMainWindow):
         i = 0
         from .. import vorspannkraft as _vk_
         rfem_pruefen = _vk_.rfem_pruefen(m)
+        # Lastwerte in der eingestellten Einheit und mit ihr in der Zelle (E6,
+        # 14.11.2026; bis dahin fest kN/kN/m/kN/m², die Knotenlast ohne Einheit)
+        from .. import einheiten as _eh_
+        E_ = getattr(m, "einheiten", None) or _eh_.Einheiten()
+
+        def _w(v, art):
+            return f"{tab.festkomma(E_.aus_si(v, art), E_.nk(art))}"
+
+        def _z(v, art):
+            return zl.zahl_text(E_.aus_si(v, art), tausender=False)
         for lcname, lc in m.load_cases.items():
             if nur not in ("(alle)", "", lcname):
                 continue
@@ -15834,25 +15862,26 @@ class MainWindow(QtWidgets.QMainWindow):
             # in der Tabelle: bei einem Volumenmodell waeren es Hunderttausende,
             # und sie entstehen beim Verteilen neu. Die Objektlast steht dafuer.
             for l in lc.eigene("nodal_loads"):
-                teile = [f"{self.LASTRICHTUNG[k]} = {tab.festkomma(v / 1e3, 3)}"
+                teile = [f"{self.LASTRICHTUNG[k]} = {_w(v, 'kraft' if k < 3 else 'moment')} "
+                         f"{E_.einheit('kraft' if k < 3 else 'moment')}"
                          for k, v in enumerate(l.F) if v]
                 zeilen.append([i, lcname, "Knotenlast", f"K{l.node}",
                                "; ".join(teile) or "0",
                                "global", ""])
                 i += 1
             for l in lc.eigene("beam_loads"):
-                q = "; ".join(tab.festkomma(v / 1e3, 3) for v in l.q)
+                q = "; ".join(_w(v, "strecke") for v in l.q)
                 abschnitt = (f"von {zl.zahl_text(l.a, tausender=False)} m" + (f" bis {zl.zahl_text(l.b, tausender=False)} m" if l.b is not None else "")
                              if getattr(l, "teilweise", False) else "")
                 zeilen.append([i, lcname, "Streckenlast", f"E{l.elem}",
-                               f"q = ({q}) kN/m",
+                               f"q = ({q}) {E_.einheit('strecke')}",
                                tab.LASTSYSTEM_TEXT.get(l.system, l.system),
                                " ".join(x for x in ("veränderlich" if l.q2 is not None else "",
                                                     abschnitt) if x)])
                 i += 1
             for l in lc.eigene("face_loads"):
                 zeilen.append([i, lcname, "Flächenlast", f"E{l.elem}",
-                               f"p = {tab.festkomma(l.p / 1e3, 4)} kN/m²",
+                               f"p = {_w(l.p, 'flaechenlast')} {E_.einheit('flaechenlast')}",
                                "Richtungsvektor" if l.direction else "lokal z", ""])
                 i += 1
             # Vorspannung aus RFEM uebernommen (15.10.2026): Vermerk „prüfen“
@@ -15883,9 +15912,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 else:
                     if l.verlauf:
                         P = l.verlauf.get("punkte") or []
-                        wert = "linear " + " → ".join(f"{zl.zahl_text(float(x[3]) / 1e3, stellen=3)}" for x in P) + " kN/m²"
+                        wert = ("linear " + " → ".join(
+                            f"{zl.zahl_text(E_.aus_si(float(x[3]), 'flaechenlast'), stellen=3)}" for x in P)
+                            + f" {E_.einheit('flaechenlast')}")
                     else:
-                        wert = f"p = {tab.festkomma(l.p / 1e3, 4)} kN/m²"
+                        wert = f"p = {_w(l.p, 'flaechenlast')} {E_.einheit('flaechenlast')}"
                     if getattr(l, "lastbezug", ""):
                         from ..lastbezug import bezug_text
                         richtung = bezug_text(l.lastbezug, l.achse, l.ks)
@@ -15900,10 +15931,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 i += 1
             for l in lc.linienlasten:
                 ziel = ("Stab " if l.art == "stab" else "Linie ") + str(l.ziel)
-                q = "; ".join(tab.festkomma(v / 1e3, 3) for v in l.q)
-                wert = f"q = ({q}) kN/m"
+                q = "; ".join(_w(v, "strecke") for v in l.q)
+                wert = f"q = ({q}) {E_.einheit('strecke')}"
                 if l.q2 is not None and list(l.q2) != list(l.q):
-                    wert += " → (" + "; ".join(tab.festkomma(v / 1e3, 3) for v in l.q2) + ")"
+                    wert += " → (" + "; ".join(_w(v, "strecke") for v in l.q2) + ")"
                 abschnitt = ""
                 if l.von or l.bis is not None:
                     abschnitt = f"von {zl.zahl_text(l.von, tausender=False)} m" + (f" bis {zl.zahl_text(l.bis, tausender=False)} m" if l.bis is not None
@@ -15928,11 +15959,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 zeilen.append([i, lcname, "Anfangsvorspannung (P₀)" if presse else "Endvorspannung" if soll
                                else "Vorspannung (eingeprägte Dehnung)",
                                ("Stab " if l.art == "stab" else "Volumen ") + str(l.ziel),
-                               ((f"P₀ = {zl.zahl_text(l.kraft / 1e3, tausender=False)} kN, Δs = "
-                                 f"{zl.zahl_text(float(l.schlupf or 0.0) * 1e3, tausender=False)} mm") if presse
-                                else f"F_soll = {zl.zahl_text(l.kraft / 1e3, tausender=False)} kN")
+                               ((f"P₀ = {_z(l.kraft, 'kraft')} {E_.einheit('kraft')}, Δs = "
+                                 f"{_z(float(l.schlupf or 0.0), 'verformung')} {E_.einheit('verformung')}")
+                                if presse else f"F_soll = {_z(l.kraft, 'kraft')} {E_.einheit('kraft')}")
                                + (f", Gruppe {int(l.gruppe)}" if int(l.gruppe or 1) != 1 else "")
-                               if soll else f"F_v = {zl.zahl_text(l.kraft / 1e3, tausender=False)} kN",
+                               if soll else f"F_v = {_z(l.kraft, 'kraft')} {E_.einheit('kraft')}",
                                "Stabachse" if l.art == "stab" else
                                ("längste Abmessung" if l.achse is None else
                                 "(" + "; ".join(zl.zahl_text(x, tausender=False) for x in l.achse) + ")"),
@@ -16710,13 +16741,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tbl_react.zeile_gewaehlt.connect(self._tabelle_knoten)
         tabs.addTab(self.tbl_react, "Auflagerkräfte")
 
-        # die Zellen „Kombination“ schalten das gezeigte Ergebnis (10c)
-        hin = "maßgebende Kombination – ein Klick zeigt dieses Ergebnis"
-        self.tbl_env = tab.Datentabelle([
-            Spalte("Element", "", "ganz"), Spalte("Größe"),
-            Spalte("min", "", "zahl", 2), Spalte("Kombination", hinweis=hin, ergebnis=True),
-            Spalte("max", "", "zahl", 2), Spalte("Kombination ", hinweis=hin, ergebnis=True)],
-            "Umhuellende", self, mit_kennwerten=True)
+        self.tbl_env = tab.Datentabelle(self._huelle_spalten(), "Umhuellende", self, mit_kennwerten=True)
         self.tbl_env.zeile_gewaehlt.connect(self._tabelle_element)
         tabs.addTab(self.tbl_env, "Umhüllende")
         for t in (self.tbl_beam, self.tbl_env, self.tbl_react):
@@ -17204,6 +17229,11 @@ class MainWindow(QtWidgets.QMainWindow):
         gl.addWidget(row(*self.cb_dof[3:]))
         self.ed_spring = self._einheitenfeld(0.0, 90, "strecke")
         gl.addWidget(row(self._einheitenlabel("Federsteifigkeit [{strecke}] (0 = starr)"), self.ed_spring))
+        # Drehungen mit eigener Feder in {moment}/rad: bis zum 14.11.2026 galt
+        # das Feld darueber auch fuer sie, abhaengig von der Laengeneinheit (E3)
+        self.ed_drehfeder = self._einheitenfeld(0.0, 90, "drehfeder")
+        gl.addWidget(row(self._einheitenlabel("Drehfedersteifigkeit [{moment}/rad] (0 = starr)"),
+                         self.ed_drehfeder))
         b1 = QtWidgets.QPushButton("Lager setzen")
         b1.clicked.connect(self.set_support)
         b2 = QtWidgets.QPushButton("Einspannung")
@@ -22794,6 +22824,75 @@ class MainWindow(QtWidgets.QMainWindow):
         self._refresh_status()
         self.statusBar().showMessage("Lagerreibung: selbst gesetzt – behalten", 8000)
 
+    def _flaechenlager_hinweis_offen(self, idx) -> bool:
+        """Hat das Flaechenlager Nummer ``idx`` den offenen Hinweis „Flächenlager nach
+        Neuvernetzen prüfen“ (model.flaechenlager_neuvernetzen_offen)?"""
+        from ..model import flaechenlager_neuvernetzen_offen
+        lager = self.model.surface_supports
+        try:
+            ss = lager[int(idx)]
+        except (IndexError, TypeError, ValueError):
+            return False
+        return str(ss.name) in flaechenlager_neuvernetzen_offen(self.model)
+
+    def flaechenlager_geprueft(self, idx: int) -> None:
+        """Rechtsklick „Flächenlager geprüft“ (Vorschlag vom 14.11.2026): der Anwender
+        bestaetigt den Hinweis „nach Neuvernetzen prüfen“; die Logik steht in
+        Model.flaechenlager_geprueft. Der Status der geladenen Ergebnisse wird neu
+        bewertet - sie bleiben (der Hinweis zaehlt nicht in der Rechnung). Ein
+        Rueckgaengig-Schritt."""
+        from .. import rechenverfahren as _rv
+        ss = self.model.surface_supports[int(idx)]
+        self.merken(f"Flächenlager {ss.name} geprüft", beschriftung=True)
+        self.model.flaechenlager_geprueft(ss.name)
+        info = getattr(self.analysis, "info", None)
+        if isinstance(info, dict) and isinstance(info.get("rechenverfahren"), dict):
+            bew = _rv.bewerten(self.model, info["rechenverfahren"], self.analysis)
+            for k, v in (("verfahren_hinweis", bew["hinweis"]), ("verfahren_betroffen", bew["betroffen"])):
+                if v:
+                    info[k] = v
+                else:
+                    info.pop(k, None)
+        self.log.appendPlainText(f"Flächenlager „{ss.name}“ nach Neuvernetzen geprüft – Hinweis erledigt "
+                                 "(im Modell vermerkt)")
+        self._refresh_kopf()
+        self._refresh_status()
+        self.statusBar().showMessage(f"Flächenlager „{ss.name}“: geprüft", 8000)
+
+    def _u_profile_iw_fragen(self) -> bool:
+        """Beim Oeffnen (Vorschlag vom 14.11.2026, vom Anwender freigegeben): traegt die
+        Datei U-Profile mit I_w nach der Formel bis zum 14.11.2026 (Befund C6), fragt das
+        Programm, ob I_w nach der berichtigten Formel neu berechnet werden soll. Ja:
+        Rueckgaengig-Schritt, Model.u_profile_iw_berichtigen (eigene Werte bleiben),
+        Protokollzeile; geladene Ergebnisse gehoeren zum alten I_w und werden verworfen
+        (Modell geaendert). Nein: alles bleibt, der Status bleibt. Rueckgabe: berichtigt?"""
+        namen = self.model.u_profile_iw_alt()
+        if not namen:
+            return False
+        ergebnisse = self.analysis is not None or self.results is not None
+        text = ("Die Datei enthält U-Profile, deren Wölbwiderstand I_w nach der Formel bis zum 14.11.2026 "
+                "berechnet ist (volle Flanschbreite, zu groß): " + ", ".join(namen[:6])
+                + (" …" if len(namen) > 6 else "") + ".\n\n"
+                "I_w der U-Profile nach der berichtigten Formel neu berechnen?\n\n"
+                "Eigene I_w-Werte bleiben unverändert. Ein Rückgängig-Schritt."
+                + (" Die geladenen Ergebnisse gehören zum alten I_w und werden verworfen (neu rechnen); "
+                   "Rückgängig holt sie nicht zurück." if ergebnisse else ""))
+        if not self._fragen("I_w der U-Profile", text):
+            self.log.appendPlainText("I_w der U-Profile nicht neu berechnet (" + ", ".join(namen[:6])
+                                     + (" …" if len(namen) > 6 else "")
+                                     + ") – der Status „Wölbwiderstand I_w der U-Profile“ bleibt")
+            return False
+        self.merken("I_w der U-Profile neu berechnet")
+        for z in self.model.u_profile_iw_berichtigen():
+            self.log.appendPlainText(z)
+        if ergebnisse:
+            self.analysis = None
+            self.results = None
+            self._ergebnisse_verworfen_nachziehen()
+        self.refresh_all()
+        self.info("I_w der U-Profile nach der berichtigten Formel neu berechnet")
+        return True
+
     def _lager_rfem_anwenden(self, w: dict):
         from ..importers import rfem6_db as R6
         m = self.model
@@ -24366,12 +24465,14 @@ class MainWindow(QtWidgets.QMainWindow):
             dofs = [i for i, c in enumerate(self.cb_dof) if c.isChecked()]
         if not dofs:
             return self.error("Keine Freiheitsgrade angehakt")
-        if not zf.freigeben([self.ed_spring], self._zahlmeldung):
+        if not zf.freigeben([self.ed_spring, self.ed_drehfeder], self._zahlmeldung):
             return
         k = self.ed_spring.si()                # N/m aus der eingestellten Einheit
+        kr = self.ed_drehfeder.si()            # Nm/rad (E3, 14.11.2026)
+        steif = [k if d < 3 else kr for d in dofs]
         self.merken(f"Lager an {len(self.selection)} Knoten")
         for n in self.selection:
-            self.model.fix(int(n), dofs, stiffness=[k] * len(dofs) if k > 0 else None)
+            self.model.fix(int(n), dofs, stiffness=steif if any(x > 0 for x in steif) else None)
         self.refresh_all()
 
     def support_nonlinear(self):
@@ -27414,6 +27515,28 @@ class MainWindow(QtWidgets.QMainWindow):
         return (matrix(0, float), matrix(1, float),
                 matrix(2, int) if mit else None, matrix(3, int) if mit else None)
 
+    @staticmethod
+    def _huelle_spalten() -> list:
+        """Spalten der Tabelle „Umhüllende“; die Zellen „Kombination“ schalten
+        das gezeigte Ergebnis (10c). Kraefte und Momente stehen gemischt in
+        min/max - die Einheit der Zeile steht darum in einer eigenen Spalte
+        (E6, 14.11.2026; bis dahin ohne Einheit, fest kN und kNm)."""
+        hin = "maßgebende Kombination – ein Klick zeigt dieses Ergebnis"
+        return [Spalte("Element", "", "ganz"), Spalte("Größe"),
+                Spalte("Einheit", hinweis="eingestellte Einheit (Ansicht → Einheiten)"),
+                Spalte("min", "", "zahl", 2), Spalte("Kombination", hinweis=hin, ergebnis=True),
+                Spalte("max", "", "zahl", 2), Spalte("Kombination ", hinweis=hin, ergebnis=True)]
+
+    def _huelle_zeilen(self, r) -> list:
+        """Zeilen der Tabelle „Umhüllende“ in der eingestellten Einheit (E6)."""
+        E = self._einheiten_modell()
+        zeilen = []
+        for e, k, mn, c1, mx, c2 in r.extreme_table():
+            art = "kraft" if k in ("N", "Vy", "Vz") else "moment"
+            f = E.faktor(art)
+            zeilen.append([e, k, E.einheit(art), mn * f, c1, mx * f, c2])
+        return zeilen
+
     def current_result(self):
         """Aktuell gewaehltes Ergebnisobjekt (Results oder Envelope) oder None."""
         if self.results is not None:
@@ -27578,8 +27701,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.tbl_env.hinweis_setzen("Extremwerte gibt es zur Umhüllenden - Ergebnis „Umhüllende“ wählen")
             self._ergebnistabelle_nachziehen(self.tbl_env, self.tbl_beam)
         elif hasattr(r, "extreme_table"):
-            rows = ([[e, k, mn / 1e3, c1, mx / 1e3, c2] for e, k, mn, c1, mx, c2 in r.extreme_table()]
-                    if getattr(r, "beam", None) else [])
+            rows = self._huelle_zeilen(r) if getattr(r, "beam", None) else []
             self._fill(self.tbl_env, rows)
             # Stabkraefte je Element: min und max mit der massgebenden
             # Kombination je Wert, aus der Umhuellenden selbst (03.10.2026,
@@ -31872,6 +31994,12 @@ class MainWindow(QtWidgets.QMainWindow):
         if (getattr(self.model, "_umbenennung", None) or {}).get("geaendert"):
             self._namen_umgestellt = True
             self._titel_nachziehen()
+        # U-Profile mit I_w nach der alten Formel (Vorschlag vom 14.11.2026): die Frage
+        # nach dem Oeffnen; Ja ist eine Aenderung (Stern im Titel, Rueckgaengig)
+        try:
+            self._u_profile_iw_fragen()
+        except Exception as ex:          # noqa: BLE001 - eine Frage sperrt kein Oeffnen
+            self.log.appendPlainText(f"I_w der U-Profile nicht geprüft: {ex}")
         return True
 
     def _analyse_passt(self) -> str:

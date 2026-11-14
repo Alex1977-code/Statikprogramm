@@ -1458,6 +1458,10 @@ def main():
         from statik3d.model import Model, Material
         mv = Model("Volumen")
         mv.add_material(Material.steel("S355"))
+        # Der Koerper ist 100 mm dick: ueber 80 mm gibt Tab. 3.1 keinen Wert, seit
+        # 14.11.2026 (Befund C4) traegt der Anwender f_y/f_u nach der Erzeugnisnorm
+        # ein (EN 10025-2, S355, 80 < t <= 100 mm: 315 / 470 N/mm²).
+        mv.materials["S355"].erzeugnisnorm_setzen(315e6, 470e6)
         ids = {}
         for k in range(3):
             for j in range(2):

@@ -187,11 +187,22 @@ def kennwerte(wd: Wasserdruck, model=None, fortschritt=None) -> dict:
     Mit Modell und ``verfahren = "numerisch"`` kommen Resultierende,
     Angriffspunkt, Geschwindigkeiten und Druckverlauf aus dem Druckfeld der
     Potentialströmung (Schlüssel ``verfahren``, ``q``, ``p_max``, ``profil``,
-    ``gitter``; das Feld selbst unter ``_feld``)."""
+    ``gitter``; das Feld selbst unter ``_feld``).
+
+    Geneigte und waagerechte Schalen (:func:`analytische_flaechen`, seit dem
+    14.11.2026) rechnen analytisch: sie stehen unter ``analytisch_flaechen``
+    ({Fläche: Neigung}) und ``wasser_von_oben``, gehen nicht ins Gitter ein
+    (sonst verdürben sie auch das Feld an den lotrechten Flächen desselben
+    Schnitts) - sind es alle benetzten Flächen, entfällt das Feld."""
     out = _kennwerte_analytisch(wd, model)
-    if model is not None and wd.numerisch() and (wd.flaechen or wd.koerper):
+    ana = analytische_flaechen(wd, model) if model is not None else {}
+    if ana:
+        out["analytisch_flaechen"] = dict(ana)
+        out["wasser_von_oben"] = [n for n in ana if seite_wasser(wd, model, n)[1]]
+    numerisch = [n for n in wd.flaechen if n not in ana]
+    if model is not None and wd.numerisch() and (numerisch or wd.koerper):
         try:
-            fr = feld_rechnen(wd, model, fortschritt=fortschritt)
+            fr = feld_rechnen(wd, model, fortschritt=fortschritt, flaechen=numerisch)
         except st.Abgebrochen:
             raise
         except (ValueError, KeyError, RuntimeError) as ex:
@@ -398,11 +409,20 @@ def druck_aus_verlauf(verlauf: dict, punkt, normale=None, beidseitig: bool = Fal
         return -p_n if (beidseitig and wd.richtung is None) else p_n
     g = verlauf.get("geometrie") or geometrie(wd)
     z = float(np.asarray(punkt, float)[2])
+    # stroemungsnumerisch gewaehlt, die Schale aber geneigt oder waagerecht
+    # (:func:`analytische_flaechen`, 14.11.2026): die Seite des Oberwassers
+    # steht je Flaeche im Verlauf, gegen die Flaechennormale gezaehlt wie ``seite``
+    seite = float(verlauf["seite_wasser"]) if "seite_wasser" in verlauf else wd.seite
+    if "seite_wasser" in verlauf and wd.richtung is not None:
+        # wie im Feld: positiv in Richtung d, wenn das Oberwasser in d drueckt
+        nf = verlauf.get("normale_flaeche")
+        c = seite * float(np.asarray(nf, float)[:3] @ np.asarray(wd.richtung, float)[:3]) if nf else 0.0
+        seite = -1.0 if c > 1e-9 else 1.0
     if verlauf.get("dyn"):
         # Druckschwankung: Amplitude auf der benetzten Fläche
-        p = float(verlauf.get("dp_dyn", 0.0)) * wd.seite if druck(wd, z, g) > 0 else 0.0
+        p = float(verlauf.get("dp_dyn", 0.0)) * seite if druck(wd, z, g) > 0 else 0.0
     else:
-        p = druck(wd, z, g) * wd.seite
+        p = druck(wd, z, g) * seite
     if beidseitig and wd.richtung is None and p != 0.0:
         # p drueckt gegen die Flaechennormale; die Schalenlast zaehlt mit der
         # Elementnormale
@@ -506,6 +526,127 @@ def stroemungsrichtung(wd: Wasserdruck, model) -> np.ndarray:
     return ex / L if L > 1e-9 else np.array([1.0, 0.0, 0.0])
 
 
+#: Neigung einer benetzten Schale gegen die Lotrechte [°], ab der der
+#: stroemungsnumerische Wasserdruck sie analytisch rechnet (Entscheidung des
+#: Anwenders vom 14.11.2026, Befund B6). Die Potentialstroemung im lotrechten
+#: Schnitt teilt das Gitter an der letzten Spalte des Verschlusses in
+#: Oberwasser (davor) und Unterwasser (dahinter, stroemung.wasserdruck_feld):
+#: eine geneigte oder waagerechte Haut reicht ueber mehrere Spalten, das Wasser
+#: auf beiden Seiten bekommt die Energiehoehe des Oberwassers, der Nettodruck
+#: faellt weg. Gemessen an der Wand 2 x 3 m, Oberwasser 2,5 m: richtig bis
+#: zu einem Versatz der Haut von rund 0,7 Zellen ueber die Verschlusshoehe,
+#: falsch ab rund einer Zelle (Gitter 40: 1° richtig, 1,5° ΣF_y 0,3 statt 61,3
+#: kN; Gitter 80: 0,5° richtig, 1° falsch). 0,1° haelt den Versatz auch beim
+#: feinsten Gitter (400 Zellen) bei 0,7 Zellen; eine lotrecht gemeinte Flaeche
+#: mit Rundungsfehlern der Koordinaten (1 mm auf 10 m sind 0,006°) bleibt numerisch.
+NEIGUNG_NUMERISCH = 0.1
+
+
+def schalenneigung(model, name: str) -> Optional[float]:
+    """Groesste Neigung [°] der Schalenelemente einer Flaeche gegen die
+    Lotrechte (0 lotrecht, 90 waagerecht) - None ohne Schalenelemente
+    (Volumenrand: der Koerper fuellt die Spalten, dort bleibt es numerisch)."""
+    from .elemente import SCHALEN_TYPEN
+    f = model.flaechen.get(name)
+    if f is None:
+        return None
+    gross = None
+    for e in f.elemente or []:
+        if not 0 <= int(e) < len(model.elements):
+            continue
+        el = model.elements[int(e)]
+        if el.typ not in SCHALEN_TYPEN:
+            continue
+        k = 4 if el.typ in ("shell4", "shell8", "shell9") else 3
+        X = model.nodes[[int(n) for n in el.nodes[:k]]]
+        a = np.cross(X[2] - X[0], X[3] - X[1]) if k == 4 else np.cross(X[1] - X[0], X[2] - X[0])
+        L = float(np.linalg.norm(a))
+        if L <= 0:
+            continue
+        w = math.degrees(math.asin(min(1.0, abs(float(a[2])) / L)))
+        gross = w if gross is None else max(gross, w)
+    return gross
+
+
+def analytische_flaechen(wd: Wasserdruck, model) -> dict:
+    """{Flaeche: Neigung [°]} der benetzten Schalen, die beim
+    stroemungsnumerischen Wasserdruck analytisch gerechnet werden: gegen die
+    Lotrechte um mehr als :data:`NEIGUNG_NUMERISCH` geneigt oder waagerecht.
+    Analytisch gewaehlt: leer."""
+    if not wd.numerisch():
+        return {}
+    aus = {}
+    for name in wd.flaechen:
+        w = schalenneigung(model, name)
+        if w is not None and w > NEIGUNG_NUMERISCH:
+            aus[name] = w
+    return aus
+
+
+def seite_wasser(wd: Wasserdruck, model, name: str) -> tuple:
+    """(+1 oder −1, von_oben): auf welcher Seite der Flaechennormale
+    (:func:`flaechennormale`) das Oberwasser einer analytisch gerechneten
+    Flaeche steht - +1 auf der Seite der Normale (Druck gegen sie, wie
+    ``seite`` = +1). Die Referenzflaeche des Ober- bzw. Unterwassers sagt es
+    selbst; sonst liegt das Oberwasser gegen die Stroemungsrichtung, und wo
+    die Flaeche dazu nicht steht (waagerecht), auf der Seite der
+    Oberwasser-Referenzflaeche, zuletzt oben (``von_oben`` True)."""
+    n = flaechennormale(model, name)
+    if n is None:
+        return 1, False
+    if name == wd.ow_flaeche:
+        return (-1 if str(wd.ow_seite or "").lower().startswith("unter") else 1), False
+    if name == wd.uw_flaeche:
+        return (1 if str(wd.uw_seite or "").lower().startswith("unter") else -1), False
+    c = float(n @ stroemungsrichtung(wd, model))
+    if abs(c) >= 0.1:
+        return (1 if c < 0 else -1), False
+    if wd.ow_flaeche and wd.ow_flaeche in model.flaechen:
+        n_ow = _seitennormale(model, wd.ow_flaeche, wd.ow_seite)
+        if n_ow is not None and abs(float(n @ n_ow)) >= 0.1:
+            return (1 if float(n @ n_ow) > 0 else -1), False
+    return (1 if n[2] >= 0 else -1), True
+
+
+def alte_geneigte_felder(model) -> list:
+    """[(Lastfall, Wasserdruck, Flaeche)]: stroemungsnumerischer Wasserdruck mit
+    Druckfeld auf einer Schale, die gegen die Lotrechte um mehr als
+    :data:`NEIGUNG_NUMERISCH` geneigt oder waagerecht ist - mit einem
+    Programmstand vor dem 14.11.2026 erzeugt (Befund B6: Schale 80° ΣF
+    (−2,6; 0,5) statt (61,3; −10,8) kN, waagerecht 0 statt 78,5 kN). Das
+    Feld steht im Modell; erst das Neuerzeugen rechnet dort analytisch."""
+    aus = []
+    for fall, lc in (getattr(model, "load_cases", None) or {}).items():
+        for gl in getattr(lc, "geometrielasten", None) or []:
+            v = getattr(gl, "verlauf", None) or {}
+            if v.get("art") != "wasser" or not v.get("feld") or getattr(gl, "art", "flaeche") != "flaeche":
+                continue
+            w = schalenneigung(model, str(gl.ziel))
+            if w is not None and w > NEIGUNG_NUMERISCH:
+                aus.append((str(fall), str(v.get("name") or ""), str(gl.ziel)))
+    return aus
+
+
+def alte_geneigte_felder_text(model) -> str:
+    teile = []
+    for fall, wd, _f in alte_geneigte_felder(model):
+        t = f"Wasserdruck {wd} in {fall}" if wd else f"Lastfall {fall}"
+        if t not in teile:
+            teile.append(t)
+    return ", ".join(teile[:5]) + (" …" if len(teile) > 5 else "")
+
+
+def wasserdruck_hinweis(model) -> list:
+    """Beim Oeffnen: die Zeile fuers Protokoll zu :func:`alte_geneigte_felder`.
+    Umgestellt wird nichts."""
+    if not alte_geneigte_felder(model):
+        return []
+    return [f"Wasserdruck neu erzeugen: {alte_geneigte_felder_text(model)} mit einem älteren Programmstand "
+            "strömungsnumerisch erzeugt – an geneigten oder waagerechten Schalen trägt das Druckfeld darin "
+            "kaum oder verkehrte Last; neu erzeugt rechnet das Programm dort analytisch (Lasten › Wasserdruck: "
+            "den Wasserdruck neu erzeugen, danach neu rechnen)."]
+
+
 def schnitt_anlegen(wd: Wasserdruck, model, g: dict, punkte: np.ndarray) -> tuple:
     """Schnittebene und Gitter um den Verschluss: (Schnitt, z_sohle)."""
     ex = stroemungsrichtung(wd, model)
@@ -541,10 +682,12 @@ def schnitt_anlegen(wd: Wasserdruck, model, g: dict, punkte: np.ndarray) -> tupl
 _FELD_CACHE: dict = {}
 
 
-def feld_rechnen(wd: Wasserdruck, model, fortschritt=None) -> dict:
+def feld_rechnen(wd: Wasserdruck, model, fortschritt=None, flaechen=None) -> dict:
     """Die Potentialströmung um den Verschluss rechnen: Rückgabe
     {"schnitt", "z_sohle", "feld" (siehe stroemung.wasserdruck_feld), "g",
     "hinweise"}. Je Parametersatz und Geometrie einmal (Zwischenspeicher).
+    ``flaechen``: die Flächen im Gitter (Vorgabe alle benetzten; ohne die
+    analytisch gerechneten, :func:`kennwerte`).
 
     Der Schlüssel des Zwischenspeichers ist ein Fingerabdruck dessen, woraus
     das Feld entsteht: die Dreiecke der benetzten Flächen (Koordinaten aus
@@ -554,7 +697,7 @@ def feld_rechnen(wd: Wasserdruck, model, fortschritt=None) -> dict:
     eine gedrehte Wand gleicher Teilung bekam das alte Feld (ΣF −61,22 statt
     +61,22 kN)."""
     g = geometrie(wd, model)
-    tris = st.objekt_dreiecke(model, wd.flaechen, wd.koerper)
+    tris = st.objekt_dreiecke(model, list(wd.flaechen) if flaechen is None else list(flaechen), wd.koerper)
     if not tris:
         raise ValueError("Die benetzten Flächen haben keine Geometrie (weder Netz noch Randlinien)")
     n_uw = _seitennormale(model, wd.uw_flaeche, wd.uw_seite) \
@@ -645,6 +788,10 @@ def lasten_erzeugen(model, wd: Wasserdruck, fortschritt=None) -> dict:
     ausgerichtet = schalen_ausrichten(model)
     g = geometrie(wd, model)
     kw = kennwerte(wd, model, fortschritt=fortschritt)
+    # Stroemungsnumerisch gewaehlt: geneigte und waagerechte Schalen rechnen
+    # analytisch (Entscheidung des Anwenders vom 14.11.2026, Befund B6), je
+    # Flaeche mit der Seite des Oberwassers
+    seiten_ana = {name: seite_wasser(wd, model, name) for name in (kw.get("analytisch_flaechen") or {})}
     kw["schalenlage"] = list(ausgerichtet)
     feld = None
     if kw.get("verfahren") == "numerisch":
@@ -696,6 +843,10 @@ def lasten_erzeugen(model, wd: Wasserdruck, fortschritt=None) -> dict:
             n_f = flaechennormale(model, name)
             if n_f is not None:
                 v["normale_flaeche"] = [float(x) for x in n_f]
+            if name in seiten_ana:
+                # geneigt oder waagerecht: analytisch, Seite des Oberwassers je Flaeche
+                v.pop("feld", None)
+                v["seite_wasser"] = int(seiten_ana[name][0])
             model.add_geometrielast(name, 0.0, art="flaeche", richtung=wd.richtung, case=fall, verlauf=v)
             n_lasten += 1
         for name in wd.koerper:
@@ -796,6 +947,21 @@ def erlaeuterung(wd: Wasserdruck, kw: dict) -> list:
             z.append("Hinweis: " + hw)
     elif kw.get("numerik_fehler"):
         z.append(f"Strömungsnumerische Berechnung nicht möglich ({kw['numerik_fehler']}) - Näherungsformeln.")
+    ana = kw.get("analytisch_flaechen") or {}
+    if ana:
+        namen = list(ana)
+        wer = (f"die Fläche {namen[0]} ist" if len(namen) == 1 else
+               f"die Flächen {', '.join(namen[:-1])} und {namen[-1]} sind")
+        neig = ", ".join(f"{n} {ana[n]:.1f}°".replace(".", ",") for n in namen[:6])
+        oben = list(kw.get("wasser_von_oben") or [])
+        z.append(f"Strömungsnumerisch gewählt, aber {wer} gegen die Lotrechte um mehr als "
+                 f"{f'{NEIGUNG_NUMERISCH:g}'.replace('.', ',')}° geneigt oder waagerecht ({neig}): dort rechnet "
+                 f"das Programm den Wasserdruck analytisch mit den Näherungsformeln, weil die Potentialströmung "
+                 f"im lotrechten Schnitt beide Seiten einer geneigten Haut dem Oberwasser zuschlägt; das "
+                 f"Oberwasser steht dort auf der Seite der Referenzfläche bzw. gegen die Strömungsrichtung"
+                 + (f", an {', '.join(oben)} ohne diesen Bezug oben" if oben else "")
+                 + (" – die Resultierende des Druckfelds oben erfasst diese Flächen nicht, maßgebend ist die "
+                    "Summe der Elementlasten" if kw.get("verfahren") == "numerisch" else "") + ".")
     return z
 
 

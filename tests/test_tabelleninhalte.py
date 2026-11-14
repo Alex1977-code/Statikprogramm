@@ -468,10 +468,12 @@ def test_fenster_reihenfolge_und_lasten():
     check("… keine „-0,000“ / „-0.000“ (auf null gerundet, ohne Vorzeichen)",
           not any(re.search(r"-0[,.]0+(?!\d)", t) for t in texte),
           str([t for t in texte if re.search(r"-0[,.]0", t)][:3]))
-    check("… die Streckenlast -0,4 N/m steht als „q = (0,000; 0,000; 0,000) kN/m“",
-          any(t == "q = (0,000; 0,000; 0,000) kN/m" for t in grosse), str(grosse))
-    check("… zwei Komponenten einer Knotenlast mit Semikolon: „Fy = 0,000; Fz = 0,000“",
-          any(t == "Fy = 0,000; Fz = 0,000" for t in grosse), str(grosse))
+    # seit dem 14.11.2026 (E6) in der eingestellten Einheit mit deren Nachkommastellen
+    # (Vorgabe kN, 2) und mit Einheit je Komponente; bis dahin fest 3 Stellen, ohne Einheit
+    check("… die Streckenlast -0,4 N/m steht als „q = (0,00; 0,00; 0,00) kN/m“",
+          any(t == "q = (0,00; 0,00; 0,00) kN/m" for t in grosse), str(grosse))
+    check("… zwei Komponenten einer Knotenlast mit Semikolon: „Fy = 0,00 kN; Fz = 0,00 kN“",
+          any(t == "Fy = 0,00 kN; Fz = 0,00 kN" for t in grosse), str(grosse))
     check("… Eigengewicht mit Komma: „-9,81 m/s²“", any(t == "-9,81 m/s²" for t in grosse), str(grosse))
     check("… das Bezugssystem steht auf Deutsch: „global“",
           any(str(z[5]) == "global" for z in w.tbl_last.modell.zeilen))
@@ -589,8 +591,10 @@ def test_lasttabelle_vektoren():
     check("Flaechenlast mit Richtung: „(0,707; 0; -0,707)“", zelle("Flächenlast", 5) == "(0,707; 0; -0,707)"
           or any(str(z[5]) == "(0,707; 0; -0,707)" for z in zeilen),
           str([z[5] for z in zeilen]))
-    check("Linienlast: „q = (0,000; 0,000; -12,500) kN/m → (0,000; 0,000; -5,000)“",
-          zelle("Linienlast", 4) == "q = (0,000; 0,000; -12,500) kN/m → (0,000; 0,000; -5,000)",
+    # Seit 14.11.2026 (Befund E6) folgt die Lasttabelle der eingestellten Einheit
+    # und Genauigkeit (Vorgabe 2 Nachkommastellen); der Wert ist unverändert.
+    check("Linienlast: „q = (0,00; 0,00; -12,50) kN/m → (0,00; 0,00; -5,00)“",
+          zelle("Linienlast", 4) == "q = (0,00; 0,00; -12,50) kN/m → (0,00; 0,00; -5,00)",
           str(zelle("Linienlast", 4)))
     check("… im Bezugssystem „lokal“, Abschnitt „von 0,5 m bis 2 m“",
           zelle("Linienlast", 5) == "lokal" and zelle("Linienlast", 6) == "von 0,5 m bis 2 m",

@@ -144,6 +144,19 @@ def _mehrzahl(art: str, n: int) -> str:
     return art if n == 1 else formen.get(art, "Stäbe")
 
 
+def _fy_hinweis(mat, d: float) -> float:
+    """f_y fuer den Vergleich mit FYB_MIN. Ueber 80 mm hat ein Werkstoff, der nur
+    die Stahlsorte kennt, kein f_y (Befund C4, 14.11.2026); jede Sorte der
+    Tabelle liegt aber unter f_yb 640 - dann -1 als Marke „unter FYB_MIN, Wert
+    unbekannt“ (die Zeile nennt die Sorte statt eines Werts)."""
+    if mat is None:
+        return 0.0
+    fy = float(mat.yield_strength(d) or 0.0)
+    if not fy and mat.dicke_ohne_wert(d, "fy"):
+        return -1.0
+    return fy
+
+
 def schraubenhinweis(model, stabarten: dict = None) -> str:
     """Der gebuendelte Hinweis zur Schraubenguete - "" ohne Befund.
 
@@ -183,15 +196,15 @@ def schraubenhinweis(model, stabarten: dict = None) -> str:
                 if dk <= D_MAX + TOL_KOERPER:
                     koerper_d[kn] = min(dk, koerper_d.get(kn, dk))
         mat = model.materials.get(getattr(e0, "mat", ""))
-        fy = float(mat.yield_strength(d) or 0.0) if mat is not None else 0.0
-        if 0.0 < fy < FYB_MIN:
+        fy = _fy_hinweis(mat, d)
+        if fy < 0 or 0.0 < fy < FYB_MIN:
             staebe.setdefault(mat.name, []).append((mn, sec.name, (stabarten or {}).get(mn, "Stab")))
             fy_text[mat.name] = fy
     koerper: dict = {}         # Werkstoff -> [Koerper]
     for kn in sorted(koerper_d):
         mat = model.materials.get(getattr(model.koerper[kn], "material", ""))
-        fy = float(mat.yield_strength(koerper_d[kn]) or 0.0) if mat is not None else 0.0
-        if 0.0 < fy < FYB_MIN:
+        fy = _fy_hinweis(mat, koerper_d[kn])
+        if fy < 0 or 0.0 < fy < FYB_MIN:
             koerper.setdefault(mat.name, []).append(kn)
             fy_text.setdefault(mat.name, fy)
     if not staebe and not koerper:
@@ -206,7 +219,9 @@ def schraubenhinweis(model, stabarten: dict = None) -> str:
             was.append(f"{len(st)} {_mehrzahl(art, len(st))} ({_querschnitte_text(q for _s, q, _a in st)})")
         if ko:
             was.append(f"{len(ko)} Schraubenkörper")
-        teile.append(" und ".join(was) + f" aus „{wn}“ (f_y {zahl_text(fy_text[wn] / 1e6)} N/mm²)")
+        teile.append(" und ".join(was) + f" aus „{wn}“ ("
+                     + (f"f_y {zahl_text(fy_text[wn] / 1e6)} N/mm²" if fy_text[wn] > 0
+                        else f"Stahlsorte {model.materials[wn].grade}, über 80 mm ohne f_y") + ")")
     alle_staebe = [s for v in staebe.values() for s, _q, _a in v]
     alle_koerper = [k for v in koerper.values() for k in v]
     betroffen = []

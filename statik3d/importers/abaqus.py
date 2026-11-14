@@ -21,7 +21,11 @@ Unterstuetzte Schluesselwoerter (Gross-/Kleinschreibung egal, '**' = Kommentar):
     *CLOAD                        Knotenlast (Knoten/NSET, FHG, Wert)
     *DLOAD                        P / Pn (Flaechendruck), GRAV, PX/PY/PZ (Stablast)
     *INCLUDE, INPUT=              Datei einfuegen
-Einheiten: SI angenommen; 'unit_scale' skaliert nur die Koordinaten.
+Einheiten: ohne 'unit_scale' SI (m, N, Pa, kg); mit 'unit_scale' (z. B. 0,001 fuer
+mm) gilt die Datei als konsistentes System Laenge-N-s - bei mm also mm, N, MPa, t,
+mm/s² - und alles wird umgerechnet: Koordinaten, Querschnitte, E, f_y, Dichte,
+Momente, Druecke, Streckenlasten, Erdbeschleunigung (_common.Einheitensystem; bis
+zum 14.11.2026 nur Koordinaten und Querschnitte).
 """
 from __future__ import annotations
 
@@ -166,6 +170,7 @@ class _State:
         self.model = model
         self.log = log
         self.scale = unit_scale
+        self.es = C.Einheitensystem(unit_scale)
         self.nodes = C.NodeIndex(model, tol)
         self.nid: dict[int, int] = {}            # Abaqus-Knotennummer -> Index
         self.eid: dict[int, int] = {}            # Abaqus-Elementnummer -> Index
@@ -366,6 +371,8 @@ def _apply_cload(block: Block, st: _State) -> None:
         if not targets or dof is None or val is None or not 1 <= int(dof) <= 6:
             C.warn(st.log, f"*CLOAD: Zeile '{', '.join(parts)}' nicht verwendbar")
             continue
+        if int(dof) > 3:
+            val = val * st.es.moment
         for n in targets:
             F = [0.0] * 6
             F[int(dof) - 1] = val
@@ -385,7 +392,7 @@ def _apply_dload(block: Block, st: _State) -> None:
             vec = [C.parse_number(p) or 0.0 for p in parts[3:6]]
             while len(vec) < 3:
                 vec.append(0.0)
-            model.case(st.case).gravity = [mag * v for v in vec]
+            model.case(st.case).gravity = [mag * st.es.beschleunigung * v for v in vec]
             if parts[0] and st.elem_list(parts[0]) and \
                     len(st.elem_list(parts[0])) < len(model.elements):
                 C.say(st.log, "*DLOAD GRAV: Eigengewicht wirkt auf das gesamte Modell "
@@ -397,6 +404,7 @@ def _apply_dload(block: Block, st: _State) -> None:
             continue
         m = re.match(r"^P(\d*)$", label)
         if m:
+            mag = mag * st.es.spannung
             face = int(m.group(1)) - 1 if m.group(1) else 0
             for e in elems:
                 el = model.elements[e]
@@ -412,7 +420,7 @@ def _apply_dload(block: Block, st: _State) -> None:
         if m:
             k = "XYZ".index(m.group(1))
             q = [0.0, 0.0, 0.0]
-            q[k] = mag
+            q[k] = mag * st.es.streckenlast
             for e in elems:
                 if model.elements[e].typ in ("beam", "truss"):
                     model.load_beam(e, *q, system="global", case=st.case)
@@ -427,6 +435,7 @@ def import_inp(path: str, model: Model = None, log: list = None,
     if model is None:
         model = Model(os.path.splitext(os.path.basename(path))[0])
     st = _State(model, log, float(unit_scale), tol)
+    st.es.melden(log, "Abaqus", "E-Modul, f_y, Dichte, Momente, Drücke, Streckenlasten und Erdbeschleunigung")
     # der leere Vorgabelastfall eines frischen Modells weicht dem gleichnamigen
     # *STEP der Datei (Befund B6, 09.11.2026: der erste Lastfall hiess "LF1_2")
     vorgabe = C.leerer_vorgabelastfall(model)
@@ -475,13 +484,14 @@ def import_inp(path: str, model: Model = None, log: list = None,
                 if b.lines:
                     vals = [C.parse_number(p) for p in _split(b.lines[0])]
                     if vals and vals[0]:
-                        st.cur_mat.E = vals[0]
+                        st.cur_mat.E = vals[0] * st.es.spannung
+                        st.es.e_pruefen(log, f"*MATERIAL {st.cur_mat.name}", st.cur_mat.E)
                     if len(vals) > 1 and vals[1] is not None:
                         st.cur_mat.nu = vals[1]
             elif b.keyword == "DENSITY" and st.cur_mat is not None and b.lines:
                 v = C.parse_number(_split(b.lines[0])[0])
                 if v:
-                    st.cur_mat.rho = v
+                    st.cur_mat.rho = v * st.es.dichte
             elif b.keyword == "EXPANSION" and st.cur_mat is not None and b.lines:
                 v = C.parse_number(_split(b.lines[0])[0])
                 if v is not None:
@@ -489,7 +499,7 @@ def import_inp(path: str, model: Model = None, log: list = None,
             elif b.keyword == "PLASTIC" and st.cur_mat is not None and b.lines:
                 v = C.parse_number(_split(b.lines[0])[0])
                 if v:
-                    st.cur_mat.fy = v
+                    st.cur_mat.fy = v * st.es.spannung
                     grade = C.steel_grade_from_text(st.cur_mat.name)
                     if grade:
                         st.cur_mat.grade = grade

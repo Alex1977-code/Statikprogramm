@@ -200,10 +200,13 @@ _BLOCK_TITLE = re.compile(r"^(LF|LC|CO|LK|EK|RC)\s*(\d+)\b", re.IGNORECASE)
 class Table:
     """Tabelle mit erkannter Kopfzeile."""
 
-    def __init__(self, name: str, rows: list[list], kind: str):
+    def __init__(self, name: str, rows: list[list], kind: str, log: list = None):
         self.name = name
         self.rows = rows
         self.kind = kind
+        #: Protokoll fuer Einheiten, die die Tabelle nicht kennt (je Spalte einmal)
+        self.log = log
+        self._gewarnt: set = set()
         self.cols: dict[str, int] = {}
         self.raw: dict[str, str] = {}
         self.start = len(rows)
@@ -257,7 +260,9 @@ class Table:
         return key in self.cols
 
     def unit(self, key: str, default: float) -> float:
-        return C.unit_factor(self.raw.get(key, ""), default)
+        log = self.log if key not in self._gewarnt else None
+        self._gewarnt.add(key)
+        return C.unit_factor(self.raw.get(key, ""), default, log, f"Tabelle „{self.name}“")
 
     def text(self, row: list, key: str) -> str:
         j = self.cols.get(key)
@@ -643,7 +648,7 @@ def import_rfem_tables(path: str, model: Model = None, log: list = None,
         kind = classify_sheet(name)
         if kind is None or kind in found:
             continue
-        t = Table(name, rows, kind)
+        t = Table(name, rows, kind, log)
         if t.ok:
             found[kind] = t
         else:
@@ -1001,7 +1006,12 @@ def import_rfem_tables(path: str, model: Model = None, log: list = None,
                 no = int(m.group(1))
             no = int(no)
             name = f"LF{no}"
-            cat = C.category_from_text(t.text(row, "cat"), "G" if no == 1 else "Q")
+            # das Kurzzeichen einer Kategorie (Q_A, S, ERD ...) gilt, wie es dasteht - so
+            # schreibt der eigene Tabellenexport sie (14.11.2026, Rundlauf I2: bis dahin
+            # wurde aus Q_A eine Nutzlast Q, aus S, W, A eine Kategorie aus der Nummer)
+            from ..model import ACTION_CATEGORIES
+            kurz = t.text(row, "cat").strip()
+            cat = kurz if kurz in ACTION_CATEGORIES else                 C.category_from_text(kurz, "G" if no == 1 else "Q")
             desc = t.text(row, "name")
             if name in model.load_cases:
                 lc = model.load_cases[name]

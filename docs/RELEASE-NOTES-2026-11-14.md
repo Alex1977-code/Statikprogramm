@@ -13,7 +13,25 @@ Am 14.11.2026 haben zehn Prüfagenten den Stand vom 12.11.2026 (Stände 31 bis 4
 * Der Status bleibt stehen, solange das Modell selbst erneuert werden muss: getrenntes Netz an doppelten Randlinien („Netz neu erzeugen“), altes Druckfeld eines strömungsnumerischen Wasserdrucks an Schalen („Wasserdruck neu erzeugen“), alte Kontaktfuge an Schalen („Kontaktfugen neu ausführen“). Bisher verschwand er nach „neu rechnen“.
 * Eine Kontaktfuge zwischen zwei Schalen mit Spalt meldet nicht mehr „durchdringend“. Wind und Wasserdruck schreiben umgedrehte Elemente ins Protokoll. Der Ladehinweis zu Windabmessungen erscheint an freien Wänden nur noch bei einer echten Änderung. Stand 38 trägt in der Verfahrenstabelle das richtige Datum 14.11.2026.
 
+## Zweiter Teil: ältere Fehler aus der Prüfung (Stände 45 bis 50)
+
+Diese Fehler bestanden schon vor dem 12.11.2026; die Prüfagenten haben sie am 14.11.2026 gefunden. Der Verfahrensstand steigt auf 50.
+
+### Wo Ergebnisse anders ausfallen
+
+* **Nachweise und Werkstoff (Stand 45).** Umfangsbeulspannung langer Zylinder nach EN 1993-1-6 D.1.3.1 (r 1 m, t 10 mm, l 100 m: 5,78 statt 39 222 N/mm², Ausnutzung 5,86 statt 0,06). Ebene Beulfelder mit gegenläufiger Normale (25,9 statt 11,7 N/mm²). Anschlussbleche mit f_y/f_u ihrer eigenen Dicke (Naht an 50-mm-Kopfplatte 417,8 statt 453,3 N/mm²). Über 80 mm ohne Dickentabelle kein still angenommener Wert mehr, sondern „f_y nach Erzeugnisnorm eintragen“; dafür hat der Werkstoffdialog die Zeile „f_y/f_u über 80 mm (Erzeugnisnorm)“. Ermüdung von Schrauben über M30 mit k_s = (30/d)^0,25 (M36: Schädigung 0,031 statt 0,025; am Drehlager Kerbfall-Vorschlag der Zugstäbe Rund 40 46,5 statt 50). I_w der U-Profile auf der Mittellinie (UPN 200: 10 499 statt 12 277 cm⁶), beim Öffnen auf Nachfrage umzustellen. Anschlussmeldungen zählen Elemente ab 0.
+* **Import (Stand 46).** RFEM-6-Eigengewicht aus der Wichte γ wie in RFEM (Stahl 78,5 statt 77,0 kN/m³). IFC/SDNF übernehmen die Einheit der Datei (vorher 1000-fach zu groß über den Dialog), IFC Flächen- und Trägheitsmomenteinheiten, Nastran/Abaqus in mm vollständig umgerechnet, Tabellen im RFEM-Aufbau im Rundlauf vollständig, unbekannte Einheiten gewarnt, alte Statik3D-SAF-Federn richtig, SAF-Kategorien ohne Spalte „Category“. Das Drehlager V15_4 ist von der Eigengewichtsänderung nicht betroffen (kein Lastfall mit Eigengewicht).
+* **Anzeige und Eingabe (Stand 47).** Verformungsnachweis „Stab“ mit φ wird abgewiesen (zeigte 0,00 mrad „erfüllt“ statt 10,32 mrad „nicht erfüllt“). Eigenes Feld für die Drehfedersteifigkeit im Register Lager. Browser: Antriebsmoment einer Stellung in kNm, Knoten ab 0. Tabellen „Lasten“ und „Umhüllende“ mit eingestellter Einheit, Beschriftungen bei 0 Nachkommastellen, keine wissenschaftliche Schreibweise in Bericht und Farbskala.
+* **Theorie II./III. Ordnung (Stand 48).** Längsgelenk mit Last in Stabrichtung: N in K_G, α_cr, Stabteilung und Feldanteil als Mittel der Stabend-Normalkräfte (α_cr 2,60 statt „∞“; Theorie III. Ordnung 5,06 statt 3,13 kNm). Gelenke an Wölbbalken in der Steifigkeit (0 statt 16,9 kNm am Gelenk). Theorie III. Ordnung mit Wölbkrafttorsion wird mit Klartext abgewiesen.
+* **Wind und Wasserdruck (Stand 49).** Nordsee nach NA.B.2 mit festen Werten (1,50 statt 0,84 kN/m² bei 10 m). Tab. 7.9 nach l/h (Wand 30 × 3 m: 94,4 statt 68,5 kN). Zonen entlang der Wand, keine Nettolast bei Wind parallel zur Wand, auch an Schalen. Strömungsnumerik rechnet geneigte (> 0,1°) und waagerechte Schalen analytisch, mit Meldung (80°: 61,3 statt −2,6 kN).
+* **Netz (Stand 50).** Eine einzeln neu vernetzte Fläche nimmt ihre vernetzten Nachbarn mit (149,6 statt 397,7 mm); gerade Linie und Polylinie auf derselben Strecke werden verbunden (150,0 statt 407,0 mm); Warnung vor der Rechnung bei getrenntem Netz.
+* **Flächenlager.** Dateien von vor dem 12.11.2026 mit Flächenlagern mit Elementliste zeigen den Hinweis „Flächenlager nach Neuvernetzen prüfen“, bis er per Rechtsklick bestätigt ist.
+
+### Berichtigung früherer Zahlen
+
+Die Summen der freistehenden Wand in den Release-Notes vom 12.11.2026 (Stand 39: Wand 10 × 0,3 × 3 m 26,8 kN) und im ersten Teil oben (Stand 43: Wand 30 × 3 m 68,5 kN, 10 × 3 m 26,8 kN) rechneten mit der falschen Zeile l/h ≤ 3 der Tab. 7.9. Richtig sind 28,0 kN (l/h = 3,3) und 94,4 kN (l/h = 10). Die Aussagen „einmal statt doppelt“ und „als eine Wand“ bleiben richtig.
+
 ## Nicht enthalten
 
-* Die übrigen Befunde der Prüfung vom 14.11.2026 (Gruppe B: ältere Fehler, unter anderem Zylinderbeulen, Nordsee-Wind, f_y über 80 mm, Längsgelenk, Tab. 7.9, Strömungsnumerik an geneigten Flächen, Importeinheiten, Anzeige) kommen in einem eigenen PR. Die Befundliste steht in `BEFUNDE-2026-11-14.md` auf dem Desktop.
-* Offene Vorschläge an den Anwender: Werkstoffzeile „f_y/f_u über 80 mm“, I_w der U-Profile beim Öffnen neu berechnen, Hinweis „Flächenlager nach Neuvernetzen prüfen“ für Dateien vor Stand 37.
+* Nebenbefunde der Agenten, je eine Zeile in der Befundliste und in den Berichten, unter anderem: Schubbeulen von Zylindern mit den Bereichen des Meridiandrucks, Beulnachweise ohne Werkstoff fallen auf 235 zurück, Sonderregeln der Anzeigetafel nach 7.4.3, Feldanteil ohne Gelenk mit der Kraft am Stabanfang, Eckausbildung der freien Wand, Stellungsmaske zählt Knoten ab 1.
+* Vorschlag an den Anwender offen: beim Neuvernetzen einer Fläche die Knoten der Nachbarn wiederverwenden, damit zusammenhängende Konstruktionen nicht ganz neu vernetzt werden.

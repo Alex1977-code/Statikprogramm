@@ -762,7 +762,7 @@ def eingabepruefung(model) -> list:
     """
     aus: list = []
     for teil in (_eingabe_werkstoffe, _eingabe_querschnitte, _eingabe_dicken,
-                 _eingabe_lastziele, _eingabe_lager):
+                 _eingabe_lastziele, _eingabe_lager, _eingabe_schalennetz):
         try:
             aus += teil(model)
         except Exception as ex:           # noqa: BLE001 - eine Pruefung darf nie sperren
@@ -771,6 +771,31 @@ def eingabepruefung(model) -> list:
                 text=f"Ein Teil der Eingabeprüfung ließ sich nicht ausführen ({teil.__name__}: "
                      f"{type(ex).__name__}: {str(ex)[:100]})."))
     return aus
+
+
+def _eingabe_schalennetz(model) -> list:
+    """Ein Schalennetz, das an einer gemeinsamen Linie zweier Flaechen getrennt
+    ist (mesher.unverbundene_schalenlinien) - WARNUNG je Linie und
+    Flaechenpaar. Befund B9 vom 14.11.2026: eine einzeln neu vernetzte Flaeche
+    hing nur noch an den Linienenden an ihrem Nachbarn (Platte 4 m aus zwei
+    Flaechen 397,70 statt 149,59 mm) und rechnete ohne Meldung weiter; beim
+    Oeffnen meldete sich so ein Netz, vor der Rechnung nicht."""
+    from . import mesher
+    if not getattr(model, "flaechen", None) or not len(model.elements):
+        return []
+    # je Linie des Modells und Flaechenpaar eine Zeile (die Teilstuecke einer
+    # Linie im Netz zusammen)
+    je: dict = {}
+    for x in mesher._unverbunden(model):
+        key = mesher.schalenlinien_text(x)
+        n, obj = je.get(key, (0, str(x[0])))
+        je[key] = (n + int(x[3]), obj)
+    return [Befund(
+        pruefung="Schalennetz nicht verbunden", objekt=obj, wert=float(n), stufe="WARNUNG",
+        text=f"Schalennetz nicht verbunden: {key} – die Netze haben dort verschiedene Knoten ({n} Knoten "
+             "nur auf einer Seite), die Flächen hängen nur an den Linienenden zusammen, das Ergebnis ist zu "
+             "weich. Bitte neu vernetzen (Netz › Vernetzen, beide Flächen).")
+        for key, (n, obj) in je.items()]
 
 
 def _eingabe_werkstoffe(model) -> list:

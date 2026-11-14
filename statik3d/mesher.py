@@ -934,24 +934,73 @@ def _teilplan(model: Model, schalen: list) -> dict:
         if x not in ketten and gerade(ln) and len(ln.nodes) == 2:
             paar_linien.setdefault(frozenset(int(k) for k in ln.nodes), []).append(x)
     paar: dict = {}
+
+    def benennen(u, v, vorschlag) -> str:
+        key = frozenset((u, v))
+        if key not in paar:
+            vorhanden = paar_linien.get(key)
+            if vorhanden:
+                paar[key] = vorhanden[0]
+                for y in vorhanden[1:]:      # Doppellinien zwischen denselben Knoten
+                    umlegen[y] = vorhanden[0]
+            else:
+                name = vorschlag
+                while name in lines or name in plan["teilstuecke"]:
+                    name += "'"
+                plan["teilstuecke"][name] = Line(name=name, nodes=[int(u), int(v)], typ="polyline")
+                paar[key] = name
+        return paar[key]
     for x, kette in ketten.items():
-        namen = []
-        for i, (u, v) in enumerate(zip(kette[:-1], kette[1:])):
-            key = frozenset((u, v))
-            if key not in paar:
-                vorhanden = paar_linien.get(key)
-                if vorhanden:
-                    paar[key] = vorhanden[0]
-                    for y in vorhanden[1:]:      # Doppellinien zwischen denselben Knoten
-                        umlegen[y] = vorhanden[0]
-                else:
-                    name = f"{x} (Teil {i + 1})"
-                    while name in lines or name in plan["teilstuecke"]:
-                        name += "'"
-                    plan["teilstuecke"][name] = Line(name=name, nodes=[int(u), int(v)], typ="polyline")
-                    paar[key] = name
-            namen.append(paar[key])
-        ersatz[x] = namen
+        ersatz[x] = [benennen(u, v, f"{x} (Teil {i + 1})")
+                     for i, (u, v) in enumerate(zip(kette[:-1], kette[1:]))]
+
+    # ---- Abschnitte gerader Polylinien (Befund B10 vom 14.11.2026) ---------
+    # Eine Polylinie mit Zwischenknoten (L7p = [1, 6, 4]) gegen eine gerade
+    # Linie derselben Strecke (L7 = [1, 4]) einer anderen Flaeche: (a) teilte
+    # L7 am Knoten 6, die Teilstuecke hiessen aber anders als die Polylinie -
+    # 2 von 12 Knoten gemeinsam, Platte 4 m 407,02 statt 149,99 mm, ohne
+    # Meldung; ebenso gegen Einzellinien La = [1, 6], Lb = [6, 4]. Jetzt ist
+    # jeder Abschnitt einer solchen Polylinie im Netz eine Linie wie jede
+    # andere: eine vorhandene Linie oder ein Teilstueck zwischen denselben zwei
+    # Knoten **ist** er. Zerlegt wird nur eine Polylinie, deren Abschnitt eine
+    # andere Flaeche mit einer anderen Linie belegt; gleiche Polylinien zweier
+    # Flaechen bleiben Doppellinien (unten).
+    abschnitte: dict = {}                      # Polylinie -> [(u, v)]
+    belegt: dict = {}                          # Schluessel -> [Linie]
+    for x in besitzer:
+        ln = lines[x]
+        kn = [int(k) for k in ln.nodes]
+        if x in ketten or not gerade(ln):
+            continue
+        if len(kn) == 2:
+            belegt.setdefault(frozenset(kn), []).append(x)
+        elif len(kn) > 2:
+            abschnitte[x] = list(zip(kn[:-1], kn[1:]))
+            for u, v in abschnitte[x]:
+                belegt.setdefault(frozenset((u, v)), []).append(x)
+    for y, kette in ketten.items():
+        for u, v in zip(kette[:-1], kette[1:]):
+            belegt.setdefault(frozenset((u, v)), []).append(y)
+
+    def gleiche_knoten(a, b) -> bool:
+        ka, kb = [int(k) for k in lines[a].nodes], [int(k) for k in lines[b].nodes]
+        return ka == kb or ka == kb[::-1]
+    for x, st in abschnitte.items():
+        wx = set(besitzer[x])
+        partner: dict = {}                     # andere Linie -> ihre Flaechen
+        for u, v in st:
+            for y in belegt.get(frozenset((u, v)), []):
+                if y != x and set(besitzer[y]) - wx and not (y in abschnitte and gleiche_knoten(x, y)):
+                    partner[y] = set(besitzer[y]) - wx
+        if not partner:
+            continue
+        ersatz[x] = [benennen(u, v, f"{x} (Abschnitt {i + 1})") for i, (u, v) in enumerate(st)]
+        fremd = set().union(*partner.values())
+        stelle(wx, fremd)
+        plan["meldungen"].append(
+            f"Polylinie {x} ({fl(wx)}) im Netz in ihre {len(st)} Abschnitte geteilt "
+            f"({', '.join(ersatz[x])}): dort {'schließt' if len(fremd) == 1 else 'schließen'} {fl(fremd)} "
+            f"mit {', '.join(sorted(partner))} an – gemeinsame Netzknoten.")
 
     # ---- Doppellinien: dieselben Knoten, anderer Name ---------------------
     # Befund 39 vom 11.11.2026: eine Rippe mit eigener Linie R0d auf dem
@@ -963,7 +1012,7 @@ def _teilplan(model: Model, schalen: list) -> dict:
     # Bogen zwischen denselben Knoten beruehrt nur an den Enden).
     gruppen: dict = {}
     for x in besitzer:
-        if x in ketten or x in umlegen:
+        if x in ersatz or x in umlegen:            # geteilt (Kette, Abschnitte) oder schon umgelegt
             continue
         kn = tuple(int(k) for k in lines[x].nodes)
         if kn[0] == kn[-1]:
@@ -1134,16 +1183,77 @@ def doppelte_randlinien(model: Model) -> list:
     return list(_teilplan(model, schalen)["doppelt"])
 
 
+def _netzlinien(plan: dict, f) -> list:
+    """Die Linien einer Flaeche, wie das Netz sie sieht (:func:`_teilplan`):
+    Rand und Oeffnungen mit Teilstuecken, Abschnitten und umgelegten
+    Doppellinien, dazu ihre Zwangslinien."""
+    ersetzt = plan["ersetzt"]
+    return (ersetzt(f.linien) + [y for loch in (f.oeffnungen or []) for y in ersetzt(loch)]
+            + list(plan["zwang"].get(f.name, [])))
+
+
+def mit_vernetzten_nachbarn(model: Model, flaechen, log: list = None) -> list:
+    """Die Flaechen zum Vernetzen, erweitert um die **schon vernetzten**
+    Schalenflaechen, die mit einer von ihnen eine Linie im Netz teilen
+    (gemeinsame Linie, Doppellinie, Teilstueck, Abschnitt einer Polylinie,
+    Zwangslinie - :func:`_teilplan` ueber alle Schalen des Modells).
+
+    Befund B9 vom 14.11.2026: eine einzelne Flaeche neu vernetzen (Auswahl,
+    „Vernetzen“ beim Uebernehmen, „Nur das Objekt ohne Netz“) gab ihrer
+    gemeinsamen Linie neue Knoten, die vernetzte Nachbarflaeche behielt die
+    alten - beide hingen nur an den Linienenden zusammen (Platte 4 m aus zwei
+    Flaechen 397,70 statt 149,59 mm), ohne Meldung. Ein Nachbar, der
+    mitvernetzt wird, bekommt selbst neue Linienknoten; darum geht es weiter
+    zu dessen vernetzten Nachbarn, bis nichts mehr dazukommt. Flaechen ohne
+    Netz und Flaechen ohne gemeinsame Linie bleiben, wie sie sind. Die
+    Protokollzeile nennt, was mitvernetzt wird. Rueckgabe die Liste (die
+    gewaehlten zuerst, in ihrer Reihenfolge)."""
+    flaechen = list(flaechen or [])
+    alle = [f for f in (getattr(model, "flaechen", None) or {}).values() if _ist_schale(model, f)]
+    gewaehlt = {f.name for f in flaechen}
+    start = [f for f in flaechen if _ist_schale(model, f)]
+    kandidaten = [f for f in alle if f.name not in gewaehlt and f.elemente]
+    if not start or not kandidaten:
+        return flaechen
+    plan = _teilplan(model, alle)
+    linien_von = {f.name: set(_netzlinien(plan, f)) for f in start + kandidaten}
+    an_linie: dict = {}
+    for f in kandidaten:
+        for x in linien_von[f.name]:
+            an_linie.setdefault(x, []).append(f)
+    dazu: list = []
+    grund: dict = {}                          # Name -> (Linie, Flaeche, ueber die er dazukam)
+    offen = list(start)
+    drin = set(gewaehlt)
+    while offen:
+        f = offen.pop(0)
+        for x in sorted(linien_von[f.name]):
+            for g in an_linie.get(x, []):
+                if g.name in drin:
+                    continue
+                drin.add(g.name)
+                dazu.append(g)
+                grund[g.name] = (x, f.name)
+                offen.append(g)
+    if dazu:
+        from .importers import _common as C
+        teile = [f"{g.name} (Linie {grund[g.name][0]} zu {grund[g.name][1]})" for g in dazu]
+        C.say(log, ("Schon vernetzte Nachbarfläche wird mitvernetzt, damit sie an der gemeinsamen Linie "
+                    "verbunden bleibt: " if len(dazu) == 1 else
+                    f"{len(dazu)} schon vernetzte Nachbarflächen werden mitvernetzt, damit sie an den "
+                    "gemeinsamen Linien verbunden bleiben: ")
+              + ", ".join(teile[:12]) + (f" und {len(teile) - 12} weitere" if len(teile) > 12 else ""))
+    return flaechen + dazu
+
+
 def _gruppe_und_plan(model: Model, flaechen) -> tuple:
     """(gemeinsam zu vernetzende Schalenflaechen, Teilplan) - siehe
     :func:`gemeinsame_schalen` und :func:`_teilplan`."""
     schalen = [f for f in flaechen if _ist_schale(model, f)]
     plan = _teilplan(model, schalen)
-    ersetzt = plan["ersetzt"]
 
     def alle_linien(f):
-        return (ersetzt(f.linien) + [y for loch in (f.oeffnungen or []) for y in ersetzt(loch)]
-                + list(plan["zwang"].get(f.name, [])))
+        return _netzlinien(plan, f)
     zahl: dict = {}
     for f in schalen:
         for x in set(alle_linien(f)):
@@ -1196,7 +1306,11 @@ def unverbundene_schalenlinien(model: Model) -> list:
     ``umgelegt``); hier zaehlen sie darum ebenfalls als **eine** gemeinsame
     Linie, unter dem Namen, den das Netz benutzt (Befund A10 vom 14.11.2026:
     ein Netz von vor dem 12.11.2026, an der Doppellinie getrennt, blieb beim
-    Oeffnen ungemeldet und nach „neu rechnen“ ohne Status)."""
+    Oeffnen ungemeldet und nach „neu rechnen“ ohne Status).
+
+    Ebenso zaehlen Teilstuecke und Abschnitte von Polylinien, die das Netz
+    gemeinsam nimmt (Befund B10 vom 14.11.2026); ``Linie`` ist dann der Name
+    im Netz (etwa „L7 (Teil 1)“)."""
     return [x[:4] for x in _unverbunden(model)]
 
 
@@ -1208,35 +1322,60 @@ def getrennte_doppellinien(model: Model) -> list:
     return [(x[0], x[4], x[1], x[2], x[3]) for x in _unverbunden(model) if x[4]]
 
 
+def getrennte_schalenlinien(model: Model) -> list:
+    """Gemeinsame Linien im Netz (keine Doppellinien), an denen das vorhandene
+    Netz getrennt ist: [(Linie im Netz, [Linien des Modells], Flaeche A,
+    Flaeche B, Knoten nur auf einer Seite)] - nach dem Neuvernetzen einer
+    einzelnen Flaeche bis zum 14.11.2026 (Befund B9), an Abschnitten einer
+    Polylinie (Befund B10) oder aus einem Stand vor dem 09.11.2026
+    (Verfahrensmerkmal „schalennetz_getrennt“). Leer, wenn verbunden."""
+    return [(x[0], x[5], x[1], x[2], x[3]) for x in _unverbunden(model) if not x[4]]
+
+
+def schalenlinien_text(eintrag) -> str:
+    """„Linie L7 (Flächen F1/F2)“ zu einem Eintrag aus :func:`_unverbunden`:
+    die Linien des Modells, aus denen die Netzlinie kommt."""
+    linie, a, b = eintrag[0], eintrag[1], eintrag[2]
+    namen = list(eintrag[5]) if len(eintrag) > 5 and eintrag[5] else [linie]
+    return (f"Linie {'/'.join(namen)}" if len(namen) == 1 else f"Linien {'/'.join(namen)}") + f" (Flächen {a}/{b})"
+
+
 def _unverbunden(model: Model, doppellinien: bool = True) -> list:
-    """[(Linie, Flaeche A, Flaeche B, Knoten nur auf einer Seite, [Doppellinien])]
-    - siehe :func:`unverbundene_schalenlinien`; ohne ``doppellinien`` jede Linie
-    fuer sich (wie bis zum 14.11.2026)."""
+    """[(Linie, Flaeche A, Flaeche B, Knoten nur auf einer Seite, [Doppellinien],
+    [Linien des Modells])] - siehe :func:`unverbundene_schalenlinien`; ohne
+    ``doppellinien`` jede Linie fuer sich (wie bis zum 14.11.2026)."""
     schalen = [f for f in (getattr(model, "flaechen", None) or {}).values()
                if _ist_schale(model, f) and f.elemente]
     if len(schalen) < 2 or not len(model.elements):
         return []
-    # Doppellinien wie im Netz auf eine Linie legen (_teilplan)
-    umgelegt = dict(_teilplan(model, schalen).get("umgelegt") or {}) if doppellinien else {}
+    # Doppellinien wie im Netz auf eine Linie legen (_teilplan); ebenso
+    # Teilstuecke und Abschnitte von Polylinien (Befund B10 vom 14.11.2026)
+    plan = _teilplan(model, schalen) if doppellinien else None
+    umgelegt = dict(plan.get("umgelegt") or {}) if plan else {}
+    ersetzt = plan["ersetzt"] if plan else (lambda namen: list(namen or []))
+    import collections
+    linien = collections.ChainMap(dict(plan["teilstuecke"]), model.lines) if plan else model.lines
     knoten_von = {}
     an_linie: dict = {}
     doppel: dict = {}
+    herkunft: dict = {}                       # Netzlinie -> Modelllinien, aus denen sie kommt
     for f in schalen:
         knoten_von[f.name] = {int(k) for e in f.elemente if 0 <= int(e) < len(model.elements)
                               for k in model.elements[int(e)].nodes}
         for x in set(list(f.linien or []) + [y for loch in (f.oeffnungen or []) for y in loch]):
-            h = umgelegt.get(x, x)
-            if f.name not in an_linie.setdefault(h, []):
-                an_linie[h].append(f.name)
-            if h != x:
-                doppel.setdefault(h, set()).add(x)
+            for h in ersetzt([x]):
+                if f.name not in an_linie.setdefault(h, []):
+                    an_linie[h].append(f.name)
+                herkunft.setdefault(h, set()).add(x)
+                if h != x and umgelegt.get(x) == h:
+                    doppel.setdefault(h, set()).add(x)
     out = []
     cache: dict = {}
     X = model.nodes
     for linie, namen in an_linie.items():
-        if len(namen) < 2 or linie not in model.lines:
+        if len(namen) < 2 or linie not in linien:
             continue
-        ln = model.lines[linie]
+        ln = linien[linie]
         kand = sorted(set().union(*(knoten_von[n] for n in namen)))
         if str(ln.typ or "") in GERADE_LINIEN and len(ln.nodes) == 2 and kand:
             # gerade Linie: Abstand zur Strecke, nur unter den Knoten der anliegenden
@@ -1261,7 +1400,8 @@ def _unverbunden(model: Model, doppellinien: bool = True) -> list:
         a, ka = seiten[0]
         for b, kb in seiten[1:]:
             if ka != kb:
-                out.append((linie, a, b, len(ka ^ kb), sorted(doppel.get(linie, ()))))
+                out.append((linie, a, b, len(ka ^ kb), sorted(doppel.get(linie, ())),
+                            sorted(herkunft.get(linie, ()))))
     return out
 
 
@@ -2925,7 +3065,9 @@ def modell_vernetzen(model: Model, log: list = None, fortschritt=None, workers: 
     from .importers import _common as C
     log = [] if log is None else log
     netz = model.netz
-    flaechen = list(model.flaechen.values()) if flaechen is None else list(flaechen)
+    # Eine Auswahl nimmt ihre schon vernetzten Nachbarflaechen mit (Befund B9)
+    flaechen = list(model.flaechen.values()) if flaechen is None else \
+        mit_vernetzten_nachbarn(model, flaechen, log)
     koerper = list(model.koerper.values()) if koerper is None else list(koerper)
     zeiten: dict = {}
     t0 = time.time()

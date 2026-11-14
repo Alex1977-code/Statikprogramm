@@ -124,7 +124,25 @@ class MaterialDialog(QtWidgets.QDialog):
         f.addRow("Streckgrenze fy [MPa]", self.fy)
         f.addRow("Zugfestigkeit fu [MPa]", self.fu)
         self._grade_anfang = self.grade.currentText()
-        if getattr(m, "fy_dicke", None):
+        # f_y/f_u ueber 80 mm nach der Erzeugnisnorm (Vorschlag vom 14.11.2026, vom
+        # Anwender freigegeben): DIN EN 1993-1-1 Tab. 3.1 endet bei 80 mm, darueber
+        # gibt es ohne Eintrag keinen Nachweis (Befund C4). Die Eingabe wird eine
+        # Dickenstufe (Material.erzeugnisnorm_setzen), die Stahlsorte bleibt (β_w).
+        # Gesperrt bei einer Dickentabelle aus der Quelldatei und ohne Stahlsorte.
+        self._quelltabelle = bool(m.dickentabelle_aus_quelle()) if hasattr(m, "dickentabelle_aus_quelle") \
+            else bool(getattr(m, "fy_dicke", None) or getattr(m, "fu_dicke", None))
+        self._ueber_80_anfang = tuple(
+            (w / 1e6 if w else None) for w in ((m.erzeugnisnorm_wert("fy"), m.erzeugnisnorm_wert("fu"))
+                                               if hasattr(m, "erzeugnisnorm_wert") else (None, None)))
+        self.fy80 = NumEdit(self._ueber_80_anfang[0], 70)
+        self.fu80 = NumEdit(self._ueber_80_anfang[1], 70)
+        for feld, kenn in ((self.fy80, "f_y"), (self.fu80, "f_u")):
+            feld.setToolTip(f"{kenn} für Erzeugnisdicken über 80 mm nach der Erzeugnisnorm (etwa EN 10025-2), "
+                            "in N/mm². DIN EN 1993-1-1 Tab. 3.1 reicht bis 80 mm; ohne Eintrag gibt es "
+                            "darüber keinen Nachweis. Leer = nicht angegeben. Die Stahlsorte bleibt.")
+        f.addRow("f_y/f_u über 80 mm (Erzeugnisnorm) [N/mm²]", row("f_y", self.fy80, "f_u", self.fu80))
+        self._ueber_80_freigeben()
+        if self._quelltabelle:
             # aus der Quelldatei (RFEM): die Nachweise nehmen den Wert der Bauteildicke
             lbl = QtWidgets.QLabel("fy " + m.dickentext("fy") + ("\nfu " + m.dickentext("fu") if m.fu_dicke else ""))
             lbl.setWordWrap(True)
@@ -143,9 +161,32 @@ class MaterialDialog(QtWidgets.QDialog):
             self.name.setText(g)
             self.E.set(m.E / 1e9); self.nu.set(m.nu); self.rho.set(m.rho)
             self.fy.set(m.fy / 1e6); self.fu.set(m.fu / 1e6)
+        # die Werte ueber 80 mm gehoeren zur Sorte: bei einer anderen leer, zurueck bei der alten
+        anfang = g == self._grade_anfang
+        self.fy80.set(self._ueber_80_anfang[0] if anfang else None)
+        self.fu80.set(self._ueber_80_anfang[1] if anfang else None)
+        self._ueber_80_freigeben()
         if self.lbl_dicke is not None:
             self.lbl_dicke.setText(self._dicke_text if self._tabelle_gilt() else
                                    f"entfällt – die Werte der Stahlsorte {g} ersetzen die Tabelle aus der Quelldatei")
+
+    def _ueber_80_freigeben(self) -> None:
+        """Die Zeile ueber 80 mm gilt nur fuer eine Stahlsorte der Tabelle und ohne
+        Dickentabelle aus der Quelldatei."""
+        frei = not self._quelltabelle and self.grade.currentText() in STEEL_GRADES
+        for feld in (self.fy80, self.fu80):
+            feld.setEnabled(frei)
+
+    def _ueber_80(self) -> tuple:
+        """(f_y, f_u) ueber 80 mm aus der Zeile [Pa], leer = None."""
+        werte = []
+        for feld in (self.fy80, self.fu80):
+            try:
+                w = feld.wert(None)
+            except zl.Eingabefehler:
+                w = None                   # eine ungueltige Eingabe sperrt OK ohnehin (Waechter)
+            werte.append(float(w) * 1e6 if w and w > 0 else None)
+        return tuple(werte)
 
     def _tabelle_gilt(self) -> bool:
         """Gelten die Dickentabellen der Vorlage noch? Ja, solange die Stahlsorte die der
@@ -177,11 +218,13 @@ class MaterialDialog(QtWidgets.QDialog):
         vor = self._vorlage
         self.dicken_meldungen = []
         if vor is None:
-            return Material(self.name.text() or "Mat", self.E.value() * 1e9, self.nu.value(),
-                            self.rho.value(), self.alpha.value() * 1e-6,
-                            fy if fy > 0 else None, fu if fu > 0 else None,
-                            g if g in STEEL_GRADES else "",
-                            verfestigung=self._verfestigung, art=self._art)
+            mt = Material(self.name.text() or "Mat", self.E.value() * 1e9, self.nu.value(),
+                          self.rho.value(), self.alpha.value() * 1e-6,
+                          fy if fy > 0 else None, fu if fu > 0 else None,
+                          g if g in STEEL_GRADES else "",
+                          verfestigung=self._verfestigung, art=self._art)
+            self.dicken_meldungen = mt.erzeugnisnorm_setzen(*self._ueber_80())
+            return mt
         # Eine Kopie des Werkstoffs mit den Werten aus den Feldern, soweit sie sich von
         # der Vorlage unterscheiden (13.10.2026): alles Uebrige bleibt, wie es war
         if g in STEEL_GRADES:
@@ -198,7 +241,11 @@ class MaterialDialog(QtWidgets.QDialog):
             alt = getattr(mt, k)
             if not werte_gleich(alt, v) and not (k in ("fy", "fu") and not alt and v is None):
                 setattr(mt, k, v)
-        if self._tabelle_gilt():
+        if not self._quelltabelle:
+            # keine Tabelle aus der Quelldatei: die Stufe ueber 80 mm aus der Zeile des
+            # Dialogs; die Stufen bis 80 mm folgen f_y, f_u und der Sorte von oben
+            self.dicken_meldungen = mt.erzeugnisnorm_setzen(*self._ueber_80())
+        elif self._tabelle_gilt():
             self.dicken_meldungen = mt.dickentabellen_nachfuehren(vor.fy, vor.fu)
         elif mt.fy_dicke or mt.fu_dicke:
             mt.fy_dicke, mt.fu_dicke = [], []
@@ -1172,6 +1219,15 @@ class GelenkDialog(QtWidgets.QDialog):
                 "stiffness": [k.value() * 1e3 for _, k in self.zeilen]}
 
 
+def _zip_mit_kopfeinheit(path: str) -> bool:
+    """Ein ZIP-Behaelter mit IFC oder SDNF (importers._detect_zip)."""
+    try:
+        from ..importers import _detect_zip
+        return _detect_zip(path) in ("ifc_zip", "sdnf_zip")
+    except Exception:                                    # noqa: BLE001
+        return False
+
+
 class ImportDialog(QtWidgets.QDialog):
     def __init__(self, parent=None, path: str = "", model: Model = None):
         super().__init__(parent)
@@ -1191,6 +1247,26 @@ class ImportDialog(QtWidgets.QDialog):
                 self.unit.addItem(f"wie in der Datei: {datei[0]} (×{_de(datei[1])})")
                 self._faktoren.append(float(datei[1]))
                 self.unit.setCurrentIndex(self.unit.count() - 1)
+        elif ext in (".ifc", ".sdnf", ".sdn") or (ext == ".zip" and _zip_mit_kopfeinheit(path)):
+            # IFC und SDNF nennen ihre Einheit im Dateikopf; vorgewaehlt ist „wie in der
+            # Datei“, und dann geht kein Massstab an den Import - er liest den Kopf
+            # selbst (14.11.2026, Befund I1: bis dahin galt die Vorwahl „m (×1)“ vor dem
+            # Kopf, eine IFC-Datei in mm kam 1000fach zu gross an)
+            datei = None
+            try:
+                if ext == ".ifc":
+                    from ..importers.ifc import einheit_der_datei
+                    datei = einheit_der_datei(path)
+                elif ext in (".sdnf", ".sdn"):
+                    from ..importers.sdnf import einheit_der_datei
+                    datei = einheit_der_datei(path)
+            except Exception:                            # noqa: BLE001 - nur die Anzeige
+                datei = None
+            from ..importers.dxf import _de
+            self.unit.addItem(f"wie in der Datei: {datei[0]} (×{_de(datei[1])})" if datei
+                              else "wie in der Datei (Angabe im Dateikopf)")
+            self._faktoren.append(None)
+            self.unit.setCurrentIndex(self.unit.count() - 1)
         self.append = QtWidgets.QCheckBox("an vorhandenes Modell anhängen")
         self.section = QtWidgets.QComboBox()
         self.section.addItems(_namen(model.sections) + profiles.list_profiles("IPE")[:6]
@@ -1233,7 +1309,7 @@ class ImportDialog(QtWidgets.QDialog):
 
     def options(self) -> dict:
         scale = self._faktoren[self.unit.currentIndex()]
-        opt = {"unit_scale": scale, "section": self.section.currentText(),
+        opt = {"section": self.section.currentText(),
                "mat": self.material.currentText(), "material": self.material.currentText(),
                "shell_prop": self.shell.currentText(), "subdivide": self.subdiv.value(),
                "size": self.cad_size.value(),
@@ -1241,6 +1317,9 @@ class ImportDialog(QtWidgets.QDialog):
                "dim": 3 if self.cad_dim.currentIndex() == 0 else 2,
                "z_drehen": bool(self.z_unten.isChecked() and self.z_unten.isEnabled()
                                 and self.ext in (".rf6", ".rf5", ".rs6", ".rs5"))}
+        # „wie in der Datei“ bei IFC und SDNF: kein Massstab, der Import liest den Kopf
+        if scale is not None:
+            opt["unit_scale"] = scale
         return opt
 
 
@@ -1474,7 +1553,7 @@ class JointDialog(QtWidgets.QDialog):
         kopf.addRow("Anschlusstyp", self.cb_typ)
         e = model.elements[self.elem]
         kopf.addRow("Stab", QtWidgets.QLabel(
-            f"Element {self.elem + 1}, {e.sec or '-'} aus {e.mat}, "
+            f"Element {self.elem}, {e.sec or '-'} aus {e.mat}, "
             f"Ende {'A' if self.end == 0 else 'E'}"))
 
         self.sp = {}
@@ -2067,8 +2146,24 @@ class VerformungsgrenzeDialog(QtWidgets.QDialog):
             w.currentIndexChanged.connect(self._umschalten)
         self._umschalten()
 
+    def _groessen_fuellen(self, art) -> bool:
+        """Die Groessen zur Art: fuer „Stab“ keine Verdrehung (E2, 14.11.2026 -
+        bis dahin verglich der Stabnachweis dafuer eine Durchbiegung). Rueckgabe
+        True, wenn eine gewaehlte Verdrehung dabei herausfiel."""
+        from ..model import verformungsgroessen, VERDREHUNGEN
+        alt = self.cb_groesse.currentData()
+        self.cb_groesse.blockSignals(True)
+        self.cb_groesse.clear()
+        for k, text in verformungsgroessen(art).items():
+            self.cb_groesse.addItem(f"{k} – {text}", k)
+        i = self.cb_groesse.findData(alt)
+        self.cb_groesse.setCurrentIndex(i if i >= 0 else max(0, self.cb_groesse.findData("uz")))
+        self.cb_groesse.blockSignals(False)
+        return i < 0 and alt in VERDREHUNGEN
+
     def _umschalten(self):
         art = self.cb_art.currentData()
+        verdrehung_weg = self._groessen_fuellen(art)
         self.cb_stab.setEnabled(art == "stab")
         self.ed_knoten.setEnabled(art != "stab")
         lx = self.cb_grenzart.currentData() == "L/x"
@@ -2082,7 +2177,9 @@ class VerformungsgrenzeDialog(QtWidgets.QDialog):
                                  "Führungen und Fugen (DIN 19704).")
         elif art == "stab":
             self.hinweis.setText("Die Durchbiegung wird auf die Sehne zwischen den "
-                                 "Stabenden bezogen und aus der Momentenlinie gewonnen.")
+                                 "Stabenden bezogen und aus der Momentenlinie gewonnen."
+                                 + (" Eine Verdrehung lässt sich am Stab nicht nachweisen – "
+                                    "dafür die Art „Knoten“ wählen." if verdrehung_weg else ""))
         else:
             self.hinweis.setText("Verschiebung des Knotens gegenüber der Ausgangslage.")
 
