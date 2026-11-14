@@ -64,9 +64,12 @@ DEFAULT_UNIT_SCALE = 1.0
 class Sheet:
     """Blatt mit Kopfzeile: Spaltensuche ueber Muster auf normalisierten Namen."""
 
-    def __init__(self, name: str, rows: list[list]):
+    def __init__(self, name: str, rows: list[list], log: list = None):
         self.name = name
         self.rows = rows
+        #: Protokoll fuer Einheiten, die die Tabelle nicht kennt (je Spalte einmal)
+        self.log = log
+        self._gewarnt: set = set()
         self.header: list[str] = []
         self.start = 0
         for i, r in enumerate(rows[:10]):
@@ -88,7 +91,9 @@ class Sheet:
     def unit(self, col: Optional[int], default: float) -> float:
         if col is None:
             return default
-        return C.unit_factor(self.header[col], default)
+        log = self.log if col not in self._gewarnt else None
+        self._gewarnt.add(col)
+        return C.unit_factor(self.header[col], default, log, f"Blatt {self.name}")
 
     def data(self):
         for r in self.rows[self.start:]:
@@ -108,14 +113,14 @@ class Sheet:
         return C.parse_number(row[col])
 
 
-def find_sheets(tables: dict[str, list[list]]) -> dict[str, Sheet]:
+def find_sheets(tables: dict[str, list[list]], log: list = None) -> dict[str, Sheet]:
     """Blattnamen normalisieren: 'StructuralPointConnection' -> 'pointconnection'."""
     out = {}
     for name, rows in tables.items():
         key = re.sub(r"[^a-z]", "", name.lower())
         if key.startswith("structural"):
             key = key[len("structural"):]
-        out[key] = Sheet(name, rows)
+        out[key] = Sheet(name, rows, log)
     return out
 
 
@@ -263,11 +268,37 @@ def _direction_vector(text: str, row: list, sh: Sheet) -> Optional[np.ndarray]:
     return None
 
 
-_GROUP_TYPE_CAT = {"permanent": "G", "variable": "Q", "accidental": "A", "seismic": "A",
+# „Seismic“ ist Erdbeben (ERD), so schreibt der Export es (exporters/saf.SAF_LASTART,
+# SAF_GRUPPENLAST); bis zum 14.11.2026 wurde daraus die aussergewoehnliche Einwirkung A
+# (Befund B12)
+_GROUP_TYPE_CAT = {"permanent": "G", "variable": "Q", "accidental": "A", "seismic": "ERD",
                    "fatigue": "FAT", "moving": "Q", "prestress": "P"}
 _LOAD_TYPE_CAT = {"selfweight": "G", "prestress": "P", "wind": "W", "snow": "S",
-                  "temperature": "T", "seismic": "A", "fire": "A", "maintenance": "Q_H",
+                  "temperature": "T", "seismic": "ERD", "fire": "A", "maintenance": "Q_H",
                   "primaryeffect": "G", "water": "H", "settlement": "SET"}
+
+
+def _gruppenlast(text: str) -> Optional[str]:
+    """„Load type“ einer Lastgruppe (StructuralLoadGroup) bei Variable: die
+    Nutzlastkategorien nach EN 1991-1-1, wie der Export sie schreibt
+    (exporters/saf.SAF_GRUPPENLAST: Domestic -> Q_A ... Roofs -> Q_H, Others -> Q).
+    Bis zum 14.11.2026 wurde daraus ohne die Statik3D-Spalte „Category“ jede
+    Nutzlast Q (Befund B12). Die Fahrzeuge unterscheidet nur „<“ bzw. „>“."""
+    t = re.sub(r"\s+", "", str(text or "").lower())
+    if not t:
+        return None
+    if t.startswith("vehicle"):
+        if "<" in t:
+            return "Q_F"
+        if ">" in t:
+            return "Q_G"
+        return None
+    for k, v in (("domestic", "Q_A"), ("residential", "Q_A"), ("office", "Q_B"),
+                 ("congregation", "Q_C"), ("shopping", "Q_D"), ("storage", "Q_E"),
+                 ("roof", "Q_H"), ("others", "Q")):
+        if t.startswith(k):
+            return v
+    return None
 
 
 def _lookup(table: dict, text: str) -> Optional[str]:
@@ -278,6 +309,31 @@ def _lookup(table: dict, text: str) -> Optional[str]:
         if key.startswith(k):
             return v
     return None
+
+
+def statik3d_vor_1211(sheets: dict) -> str:
+    """Eine SAF-Datei, die Statik3D vor dem 12.11.2026 schrieb - und woran sie zu
+    erkennen ist ("" fuer jede andere Datei).
+
+    Bis zum 12.11.2026 schrieb der Export die Federn der Knotenlager in N/m bzw.
+    Nm/rad unter „Stiffness X“ ohne Einheit; SAF fuehrt dort MN/m, und so liest der
+    Import eine Spalte ohne Einheit - eine alte Datei kam mit 10⁶fach zu steifen
+    Federn an (Befund B11). Erkennbar ist die alte Datei an der Spalte „Yield
+    strength“ der Werkstoffe (bis 07.10.2026) oder an einem Kurzzeichen der
+    Statik3D-Kategorien (G, Q, S ...) in „Action type“ der Lastfaelle ohne die
+    Spalte „Category“ (07.10. bis 12.11.2026; SAF kennt dort nur Permanent,
+    Variable und Accidental, und das Modell traegt immer mindestens LF1)."""
+    from ..model import ACTION_CATEGORIES
+    sh = sheets.get("material")
+    if sh is not None and sh.col(r"^yield ?strength") is not None:
+        return "Spalte „Yield strength“ der Werkstoffe"
+    sh = sheets.get("loadcase")
+    if sh is not None and sh.col(r"^category$") is None:
+        c_act = sh.col(r"^action ?type")
+        for r in sh.data():
+            if Sheet.text(r, c_act).strip() in ACTION_CATEGORIES:
+                return f"Kurzzeichen „{Sheet.text(r, c_act).strip()}“ in „Action type“ ohne Spalte „Category“"
+    return ""
 
 
 def _leerer_vorgabelastfall(model: Model) -> Optional[str]:
@@ -310,7 +366,7 @@ def import_saf(path: str, model: Model = None, log: list = None,
         model = Model(os.path.splitext(os.path.basename(path))[0])
     if tables is None:
         tables = read_table_file(path)
-    sheets = find_sheets(tables)
+    sheets = find_sheets(tables, log)
     if not sheets:
         raise ValueError("SAF: keine Blaetter gefunden")
     scale = float(unit_scale)
@@ -631,6 +687,17 @@ def import_saf(path: str, model: Model = None, log: list = None,
                sh.col(r"^stiffness ?fiy$", r"stiffness (fiy|phi ?y|ry)"),
                sh.col(r"^stiffness ?fiz$", r"stiffness (fiz|phi ?z|rz)")]
         f_k = [sh.unit(c, 1e6) for c in c_k]
+        # Statik3D vor dem 12.11.2026: Federn ohne Einheit in N/m bzw. Nm/rad (B11)
+        woran = statik3d_vor_1211(sheets)
+        ohne_einheit = [c for c in c_k if c is not None
+                        and not re.search(r"[\[(][^\[\]()]+[\])]", sh.header[c])]
+        if woran and ohne_einheit:
+            f_k = [1.0 if c in ohne_einheit else f for c, f in zip(c_k, f_k)]
+            mit_feder = sum(1 for r in sh.data() for c in ohne_einheit if Sheet.num(r, c))
+            if mit_feder:
+                C.say(log, f"SAF-Datei von Statik3D vor dem 12.11.2026 erkannt ({woran}): die Federn der "
+                           f"Knotenlager ({mit_feder} Wert{'' if mit_feder == 1 else 'e'}, Spalten ohne Einheit) in N/m bzw. Nm/rad "
+                           "gelesen, wie sie damals geschrieben wurden - nicht in MN/m nach SAF")
         c_cs = sh.col(r"^coordinate ?system")
         n_sup = 0
         for r in sh.data():
@@ -830,6 +897,7 @@ def import_saf(path: str, model: Model = None, log: list = None,
                 continue
             groups[name] = {
                 "cat": _lookup(_LOAD_TYPE_CAT, Sheet.text(r, c_ltype))
+                       or _gruppenlast(Sheet.text(r, c_ltype))
                        or _lookup(_GROUP_TYPE_CAT, Sheet.text(r, c_gtype)),
                 "exclusive": Sheet.text(r, c_rel).lower().startswith("excl"),
             }

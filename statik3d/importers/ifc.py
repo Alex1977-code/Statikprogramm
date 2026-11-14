@@ -419,6 +419,53 @@ _SI_BASE = {"METRE": 1.0, "NEWTON": 1.0, "PASCAL": 1.0, "RADIAN": 1.0, "GRAM": 1
             "SECOND": 1.0, "HERTZ": 1.0, "JOULE": 1.0, "WATT": 1.0}
 
 
+#: Namen der Laengeneinheit fuer die Anzeige (Vorsatz -> Kurzzeichen)
+_LAENGE_NAME = {"": "m", "MILLI": "mm", "CENTI": "cm", "DECI": "dm", "KILO": "km", "MICRO": "µm"}
+#: umgerechnete Laengeneinheiten (IfcConversionBasedUnit) nach Name
+_LAENGE_UMGERECHNET = {"INCH": ("inch", 0.0254), "FOOT": ("ft", 0.3048), "YARD": ("yd", 0.9144),
+                       "MILE": ("mile", 1609.344)}
+
+
+def einheit_der_datei(path: str) -> Optional[tuple]:
+    """Die Laengeneinheit, die die IFC-Datei dem Projekt zuweist (IfcUnitAssignment
+    des IfcProject): (Kurzzeichen, Faktor nach m) - oder None, wenn sie nicht zu
+    finden ist. Fuer die Vorwahl im Importdialog (14.11.2026, Befund I1); der Import
+    selbst liest die Einheiten mit :class:`Units`. Gelesen wird nur der Text, ohne
+    das Modell aufzubauen."""
+    try:
+        raw = open(path, "rb").read()
+    except OSError:
+        return None
+    text = raw.decode("utf-8", errors="replace")
+    proj = re.search(r"IFCPROJECT\s*\(([^;]*)\)\s*;", text, re.IGNORECASE)
+    if not proj:
+        return None
+    refs = re.findall(r"#(\d+)", proj.group(1))
+    if not refs:
+        return None
+    ua = re.search(r"#%s\s*=\s*IFCUNITASSIGNMENT\s*\(\s*\(([^)]*)\)" % refs[-1], text, re.IGNORECASE)
+    if not ua:
+        return None
+    for nr in re.findall(r"#(\d+)", ua.group(1)):
+        ent = re.search(r"#%s\s*=\s*(IFC\w+)\s*\(([^;]*)\)\s*;" % nr, text, re.IGNORECASE)
+        if not ent or ".LENGTHUNIT." not in ent.group(2).upper():
+            continue
+        art, args = ent.group(1).upper(), ent.group(2)
+        if art == "IFCSIUNIT":
+            m = re.search(r"\.LENGTHUNIT\.\s*,\s*(\$|\.(\w+)\.)\s*,\s*\.METRE\.", args, re.IGNORECASE)
+            if not m:
+                return None
+            vors = (m.group(2) or "").upper()
+            if vors and vors not in _PREFIX:
+                return None
+            return (_LAENGE_NAME.get(vors, vors.lower() + "m"), _PREFIX.get(vors, 1.0) if vors else 1.0)
+        m = re.search(r"\.LENGTHUNIT\.\s*,\s*'([^']*)'", args, re.IGNORECASE)
+        if m and m.group(1).strip().upper() in _LAENGE_UMGERECHNET:
+            return _LAENGE_UMGERECHNET[m.group(1).strip().upper()]
+        return None
+    return None
+
+
 class Units:
     """Massstaebe Datei -> SI je Einheitentyp."""
 
@@ -450,6 +497,24 @@ class Units:
         self.pressure = self.scale.get("MODULUSOFELASTICITYUNIT",
                                        self.scale.get("PRESSUREUNIT", F / L ** 2))
         self.density = self.scale.get("MASSDENSITYUNIT", self.mass / L ** 3)
+
+    #: Einheitentyp der Querschnittswerte nach Potenz der Laenge (IFC: IfcAreaMeasure,
+    #: IfcSectionModulusMeasure, IfcMomentOfInertiaMeasure, IfcWarpingConstantMeasure)
+    _QUERSCHNITT = {2: "AREAUNIT", 3: "SECTIONMODULUSUNIT", 4: "MOMENTOFINERTIAUNIT",
+                    6: "WARPINGCONSTANTUNIT"}
+
+    def querschnitt(self, potenz: int) -> float:
+        """Massstab eines Querschnittswerts (A, W, I, I_w) Datei -> SI: die ausdruecklich
+        erklaerte Einheit (AREAUNIT, SECTIONMODULUSUNIT, MOMENTOFINERTIAUNIT,
+        WARPINGCONSTANTUNIT), sonst die Laengeneinheit hoch ``potenz``.
+
+        Bis zum 14.11.2026 galt immer die Laengeneinheit (Befund I5): eine Datei in mm
+        mit Flaecheneinheit m² (so schreibt etwa Tekla den Kopf) brachte HEA 200 mit
+        A = 5,38e-9 statt 5,38e-3 m²."""
+        art = self._QUERSCHNITT.get(int(potenz))
+        if art and art in self.scale:
+            return self.scale[art]
+        return self.length ** potenz
 
     def _unit_scale(self, u: IfcEntity) -> float:
         if u.type == "IFCSIUNIT":
@@ -804,16 +869,16 @@ class _Builder:
         """IfcStructuralProfileProperties (IFC2X3): Zahlenwerte -> freier Querschnitt."""
         if not pp.is_a("IfcStructuralProfileProperties"):
             return None
-        L = self.L
-        A = _num(pp[6]) * L ** 2
+        q = self.units.querschnitt
+        A = _num(pp[6]) * q(2)
         if A <= 0:
             return None
-        It = _num(pp[7]) * L ** 4
-        Iy = _num(pp[9]) * L ** 4
-        Iz = _num(pp[10]) * L ** 4
-        Iw = _num(pp[11]) * L ** 6
-        Asz = _num(pp[14]) * L ** 2
-        Asy = _num(pp[15]) * L ** 2
+        It = _num(pp[7]) * q(4)
+        Iy = _num(pp[9]) * q(4)
+        Iz = _num(pp[10]) * q(4)
+        Iw = _num(pp[11]) * q(6)
+        Asz = _num(pp[14]) * q(2)
+        Asy = _num(pp[15]) * q(2)
         return Section(name, A=A, Iy=Iy or 1e-8, Iz=Iz or 1e-8, It=It or 1e-9,
                        Asy=Asy, Asz=Asz, Iw=Iw)
 
@@ -831,7 +896,6 @@ class _Builder:
                 ziel = pp.ref(3)
                 if ziel is not None:
                     self._profilwerte_cache.setdefault(ziel.id, []).extend(pp.refs(2))
-        L = self.L
         potenz = {"CROSSSECTIONAREA": ("A", 2), "MOMENTOFINERTIAY": ("Iy", 4),
                   "MOMENTOFINERTIAZ": ("Iz", 4), "TORSIONALCONSTANTX": ("It", 4),
                   "SHEARDEFORMATIONAREAY": ("Asy", 2), "SHEARDEFORMATIONAREAZ": ("Asz", 2),
@@ -844,7 +908,7 @@ class _Builder:
             key = potenz.get(str(p[0] or "").upper().replace(" ", ""))
             val = _num(p[2], None)
             if key and val is not None:
-                aus[key[0]] = val * L ** key[1]
+                aus[key[0]] = val * self.units.querschnitt(key[1])
         return aus
 
     def _mit_profilwerten(self, sec: Optional[Section], pdef: Optional[IfcEntity],

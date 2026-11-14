@@ -36,9 +36,17 @@ def _member_type(model: Model, elems: list) -> int:
 
 def write_sdnf(model: Model, path: str, results=None, log: list = None,
                unit: str = "mm", projekt: str = "", **_) -> str:
-    """Modell als SDNF schreiben. Rueckgabe: Pfad."""
-    faktor = {"mm": 1000.0, "m": 1.0, "inch": 1.0 / 0.0254}.get(unit, 1000.0)
-    kennzahl = {"mm": 1, "inch": 2}.get(unit, 1)
+    """Modell als SDNF schreiben. Rueckgabe: Pfad.
+
+    ``unit``: Laengeneinheit der Datei, "mm" (Kennzahl 1, Vorgabe) oder "inch"
+    (Kennzahl 2) - mehr Kennzahlen fuehrt SDNF nicht. Bis zum 14.11.2026 nahm der
+    Export auch "m" an und schrieb Koordinaten in m mit der Kennzahl 1 fuer mm: ein
+    Stab von 8 m kam als 8 mm zurueck (Befund I7). Jetzt wird "m" abgelehnt."""
+    einheiten = {"mm": (1000.0, 1), "inch": (1.0 / 0.0254, 2)}
+    if str(unit).strip().lower() not in einheiten:
+        raise ValueError(f"SDNF: Längeneinheit „{unit}“ nicht möglich - SDNF kennt nur mm "
+                         "(Kennzahl 1) und inch (Kennzahl 2) in Paket 00.")
+    faktor, kennzahl = einheiten[str(unit).strip().lower()]
     ketten = C.member_chains(model)
     dreiecke = C.shell_elements(model)
     zeilen = []

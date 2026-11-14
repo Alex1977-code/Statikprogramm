@@ -1172,6 +1172,15 @@ class GelenkDialog(QtWidgets.QDialog):
                 "stiffness": [k.value() * 1e3 for _, k in self.zeilen]}
 
 
+def _zip_mit_kopfeinheit(path: str) -> bool:
+    """Ein ZIP-Behaelter mit IFC oder SDNF (importers._detect_zip)."""
+    try:
+        from ..importers import _detect_zip
+        return _detect_zip(path) in ("ifc_zip", "sdnf_zip")
+    except Exception:                                    # noqa: BLE001
+        return False
+
+
 class ImportDialog(QtWidgets.QDialog):
     def __init__(self, parent=None, path: str = "", model: Model = None):
         super().__init__(parent)
@@ -1191,6 +1200,26 @@ class ImportDialog(QtWidgets.QDialog):
                 self.unit.addItem(f"wie in der Datei: {datei[0]} (×{_de(datei[1])})")
                 self._faktoren.append(float(datei[1]))
                 self.unit.setCurrentIndex(self.unit.count() - 1)
+        elif ext in (".ifc", ".sdnf", ".sdn") or (ext == ".zip" and _zip_mit_kopfeinheit(path)):
+            # IFC und SDNF nennen ihre Einheit im Dateikopf; vorgewaehlt ist „wie in der
+            # Datei“, und dann geht kein Massstab an den Import - er liest den Kopf
+            # selbst (14.11.2026, Befund I1: bis dahin galt die Vorwahl „m (×1)“ vor dem
+            # Kopf, eine IFC-Datei in mm kam 1000fach zu gross an)
+            datei = None
+            try:
+                if ext == ".ifc":
+                    from ..importers.ifc import einheit_der_datei
+                    datei = einheit_der_datei(path)
+                elif ext in (".sdnf", ".sdn"):
+                    from ..importers.sdnf import einheit_der_datei
+                    datei = einheit_der_datei(path)
+            except Exception:                            # noqa: BLE001 - nur die Anzeige
+                datei = None
+            from ..importers.dxf import _de
+            self.unit.addItem(f"wie in der Datei: {datei[0]} (×{_de(datei[1])})" if datei
+                              else "wie in der Datei (Angabe im Dateikopf)")
+            self._faktoren.append(None)
+            self.unit.setCurrentIndex(self.unit.count() - 1)
         self.append = QtWidgets.QCheckBox("an vorhandenes Modell anhängen")
         self.section = QtWidgets.QComboBox()
         self.section.addItems(_namen(model.sections) + profiles.list_profiles("IPE")[:6]
@@ -1233,7 +1262,7 @@ class ImportDialog(QtWidgets.QDialog):
 
     def options(self) -> dict:
         scale = self._faktoren[self.unit.currentIndex()]
-        opt = {"unit_scale": scale, "section": self.section.currentText(),
+        opt = {"section": self.section.currentText(),
                "mat": self.material.currentText(), "material": self.material.currentText(),
                "shell_prop": self.shell.currentText(), "subdivide": self.subdiv.value(),
                "size": self.cad_size.value(),
@@ -1241,6 +1270,9 @@ class ImportDialog(QtWidgets.QDialog):
                "dim": 3 if self.cad_dim.currentIndex() == 0 else 2,
                "z_drehen": bool(self.z_unten.isChecked() and self.z_unten.isEnabled()
                                 and self.ext in (".rf6", ".rf5", ".rs6", ".rs5"))}
+        # „wie in der Datei“ bei IFC und SDNF: kein Massstab, der Import liest den Kopf
+        if scale is not None:
+            opt["unit_scale"] = scale
         return opt
 
 
