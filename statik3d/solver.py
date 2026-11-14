@@ -1885,6 +1885,9 @@ class Results:
         s += seil_querlast_gebuendelt([(self.name, self)])
         # Knicken: Last in Stabrichtung, Stab in weniger als vier Elementen (Runde k7)
         s += [f"Hinweis: {z}" for z in (self.info.get("laengslast_teilung") or [])]
+        # Knicken: kein positiver Faktor unter den angeforderten Formen (Stand 62)
+        if self.info.get("knickfaktor_hinweis"):
+            s.append(f"Hinweis: {self.info['knickfaktor_hinweis']}")
         if self.u is not None and self.u.size:
             i = int(np.argmax(self.umag))
             s.append(f"max. Verschiebung       : {_fest(self.umag[i] * 1000, 4)} mm (Knoten {i})")
@@ -11687,6 +11690,64 @@ def _soll_endkraefte(model: Model, res, factors: dict, aktiv=None) -> dict:
     return aus
 
 
+#: Hoechstens so viele Knickformen fordert solve_buckling nach, wenn unter den
+#: angeforderten kein positiver Faktor ist (:func:`_positiven_nachfordern`)
+KNICK_FORMEN_MAX = 100
+
+
+def _positiven_nachfordern(system: StaticSystem, Kgff, k: int, vals, vecs, progress=None) -> tuple:
+    """Unter den ``k`` betragskleinsten Knickfaktoren ``vals`` ist kein
+    positiver: weitere Formen nachfordern (die Zahl verdoppelt, hoechstens
+    :data:`KNICK_FORMEN_MAX`), bis einer dabei ist. Rueckgabe (Faktoren,
+    Eigenvektoren, Hinweistext); die Liste reicht bis zum ersten positiven
+    Faktor, mindestens ``k`` lang, aufsteigend nach Betrag wie bisher.
+
+    Behebung vom 15.11.2026 (Runde k7, Verfahrensstand 62, vom Anwender
+    freigegeben): bis dahin standen nur die ``k`` betragskleinsten Faktoren
+    im Ergebnis, auch wenn alle negativ waren - ein Fachwerk mit gezogenem
+    Untergurt lieferte mit drei Formen nur -64,38 / -64,38 / -130,78, der
+    kleinste positive Faktor 7765,80 ist erst der 35. nach Betrag.
+
+    Ob es ueberhaupt einen positiven gibt, sagt vorher theorie2.groesstes_mu
+    (dasselbe Verfahren wie alpha_cr „auto“): ohne ihn wird nichts
+    nachgefordert, der Hinweis sagt es im Klartext. Erreicht die Suche die
+    Obergrenze, haengt der Faktor aus groesstes_mu mit seiner Form an; die
+    Formen dazwischen fehlen dann, und der Hinweis sagt auch das."""
+    from .theorie2 import groesstes_mu
+    n = Kgff.shape[0]
+    lam_p, vec_p = None, None
+    try:
+        mu, v = groesstes_mu(system.Kff, Kgff, k=1)
+        if mu is None:
+            return vals, vecs, (f"Kein positiver Knickfaktor: unter dieser Last knickt das System nicht. "
+                                f"Die {len(vals)} berechneten Faktoren sind negativ, sie gehören zum "
+                                "Knicken unter umgekehrter Last.")
+        lam_p, vec_p = float(1.0 / mu[0]), np.asarray(v, float)[:, 0]
+    except Exception:                       # noqa: BLE001 - dann nur nachfordern
+        pass
+    kk = k
+    grenze = max(k, min(KNICK_FORMEN_MAX, n - 2))
+    while kk < grenze:
+        kk = min(2 * kk, grenze)
+        _melde(progress, f"Kein positiver Knickfaktor unter den ersten Formen – {kk} Formen werden gerechnet")
+        vals2, vecs2 = _verzweigung(system, Kgff, kk, progress)
+        pos = np.nonzero(np.isfinite(vals2) & (vals2 > 0))[0]
+        if len(pos):
+            j = max(k, int(pos[0]) + 1)
+            return vals2[:j], vecs2[:, :j], (
+                f"Unter den {k} angeforderten Knickformen war kein positiver Faktor; nachgefordert bis "
+                f"Form {int(pos[0]) + 1}, kleinster positiver Faktor {_fest(vals2[pos[0]], 2)}.")
+        vals, vecs = vals2, vecs2
+    if lam_p is not None:
+        return (np.concatenate([np.asarray(vals, float), [lam_p]]),
+                np.column_stack([np.asarray(vecs, float), vec_p]),
+                f"Unter den ersten {len(vals)} Knickformen war kein positiver Faktor (Obergrenze der Suche "
+                f"{KNICK_FORMEN_MAX}); der kleinste positive Faktor {_fest(lam_p, 2)} steht mit seiner Form "
+                "als letzter in der Liste, die Formen dazwischen fehlen.")
+    return vals, vecs, (f"Unter den ersten {len(vals)} Knickformen war kein positiver Faktor (Obergrenze der "
+                        f"Suche {KNICK_FORMEN_MAX}); ob es einen gibt, ist nicht bekannt.")
+
+
 def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = None,
                    combination: str = None, workers: int = None) -> Results:
     """Lineares Verzweigungsproblem: (K + lambda*Kg) v = 0 (Stabtragwerke).
@@ -11700,7 +11761,10 @@ def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = Non
 
     Die Faktoren sind die ``nmodes`` betragskleinsten, beiderlei Vorzeichens
     (negativ: Knicken bei umgekehrter Last), aufsteigend nach Betrag - siehe
-    :func:`_verzweigung`, warum mit K als Metrik geloest wird.
+    :func:`_verzweigung`, warum mit K als Metrik geloest wird. Ist darunter
+    kein positiver, werden Formen nachgefordert, bis einer dabei ist
+    (:func:`_positiven_nachfordern`, seit 15.11.2026); der Hinweis steht in
+    ``info["knickfaktor_hinweis"]``.
 
     Balken werden intern geteilt wie nach Theorie II. Ordnung
     (statik3d.stabteilung, seit 14.11.2026); ``buckling_modes`` steht an den
@@ -11784,6 +11848,10 @@ def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = Non
 
     k = min(nmodes, Kff.shape[0] - 2)
     vals_, vecs = _verzweigung(system, Kgff, k, progress)
+    knick_hinweis = ""
+    if not np.any(np.isfinite(vals_) & (vals_ > 0)):
+        vals_, vecs, knick_hinweis = _positiven_nachfordern(system, Kgff, k, vals_, vecs, progress)
+        k = len(vals_)
 
     modes = np.zeros((k, model.ndof))
     for i in range(k):
@@ -11810,5 +11878,8 @@ def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = Non
     res.info["time"] = time.time() - t0
     if ll_hinweise:
         res.info["laengslast_teilung"] = list(ll_hinweise)
+    if knick_hinweis:
+        res.info["knickfaktor_hinweis"] = knick_hinweis
+        _melde(progress, "Hinweis: " + knick_hinweis)
     _schalenlage_eintragen(res, schalenlage)
     return res

@@ -321,10 +321,13 @@ def _zugband(art, soll, F0=70e3, teile=16, arm=0.3):
 
 def _kurzstab_ungeteilt(arm):
     """Das Kurzstabmodell mit Sollkraft ohne interne Stabteilung (netz.stabteilung = 1):
-    seit Runde k7 (Agent „knick“) teilen Knicken und alpha_cr „auto“ das gezogene
-    Band (603,44 statt 801,59), den Stab mit Versatz nicht - verglichen wird hier
-    die Formulierung des Arms, also beide ungeteilt."""
+    verglichen wird die Formulierung des Arms, beide ungeteilt."""
     m = _zugband("kurzstab", True, arm=arm)[0]
+    m.netz.stabteilung = 1
+    return m
+
+
+def _ungeteilt(m):
     m.netz.stabteilung = 1
     return m
 
@@ -338,40 +341,52 @@ def _knick(m):
 
 def test_knicken_sollkraft():
     """Weg 1 das Kurzstabmodell mit Sollkraft, Weg 2 der Versatz mit einer
-    Anfangsdehnung, die dieselbe Bandkraft 70 kN gibt (feq trägt die Kraft)."""
+    Anfangsdehnung, die dieselbe Bandkraft 70 kN gibt (feq trägt die Kraft).
+
+    Zweimal: ungeteilt (netz.stabteilung = 1, die Formulierung des Arms) und
+    mit der Vorgabe 10 - seit Verfahrensstand 62 (Runde k7, Agent
+    „versatzknick“) teilt die interne Stabteilung auch den Stab mit Versatz,
+    wie das Band des Kurzstabmodells (603,44 / 437,44). Bis dahin verglich
+    diese Pruefung den Versatz mit Vorgabe 10 (ungeteilt, 801,59 / 817,69)
+    gegen den Kurzstab mit Stabteilung 1."""
     from statik3d import solver
     for arm, vorher in ((0.3, "88,34"), (-0.3, "1038,76")):
-        a = _knick(_zugband("versatz", True, arm=arm)[0])
-        b = _knick(_kurzstab_ungeteilt(arm))
         m1, band = _zugband("versatz", False, arm=arm)
         r1 = solver.solve_static(m1, case="V")
         be = np.asarray(r1.beam_end[band], float)
         N1 = 0.5 * (be[6] - be[0])
-        c = _knick(_zugband("versatz", False, F0=70e3 * 70e3 / N1, arm=arm)[0])
-        check(f"A3 Knicken, Zugband mit Sollkraft 70 kN, Arm {arm:+.1f} m längs des Bandes: Faktor wie "
-              f"Kurzstab und wie Anfangsdehnung (1e-3); vorher {vorher}",
-              abs(a / b - 1) < 1e-3 and abs(a / c - 1) < 1e-3,
-              f"Versatz/Soll {a:.4f}, Kurzstab/Soll {b:.4f}, Versatz/Anfangsdehnung {c:.4f}")
+        for text, teil in (("ungeteilt", _ungeteilt), ("intern geteilt", lambda m: m)):
+            a = _knick(teil(_zugband("versatz", True, arm=arm)[0]))
+            b = _knick(teil(_zugband("kurzstab", True, arm=arm)[0]))
+            c = _knick(teil(_zugband("versatz", False, F0=70e3 * 70e3 / N1, arm=arm)[0]))
+            check(f"A3 Knicken, Zugband mit Sollkraft 70 kN, Arm {arm:+.1f} m längs des Bandes, {text}: Faktor wie "
+                  f"Kurzstab und wie Anfangsdehnung (1e-3); vorher {vorher}",
+                  abs(a / b - 1) < 1e-3 and abs(a / c - 1) < 1e-3,
+                  f"Versatz/Soll {a:.4f}, Kurzstab/Soll {b:.4f}, Versatz/Anfangsdehnung {c:.4f}")
 
 
 def test_alpha_cr_auto_sollkraft():
     """alpha_cr im Modus „auto“ (check_theorie2) mit einer Sollkraft: wie das
-    Knicken derselben Kombination (solve_buckling) und wie das Kurzstabmodell.
+    Knicken derselben Kombination (solve_buckling) und wie das Kurzstabmodell
+    (ungeteilt und mit der Vorgabe 10, siehe test_knicken_sollkraft).
     Vorher fehlte die Verriegelung ganz: „keine Normalkräfte“, α_cr = ∞."""
     from statik3d import solver, theorie2
     for arm in (0.3, -0.3):
-        m, band = _zugband("versatz", True, arm=arm)
-        m.add_combination("K1", {"V": 1.0}, "ULS")
-        m.design.theorie2 = "auto"
-        rb = solver.solve_buckling(m, nmodes=4, combination="K1")
-        f = np.asarray(rb.buckling_factors, float)
-        lb = float(f[f > 0].min())
-        info = theorie2.check_theorie2(m, None, ["K1"]).kombinationen["K1"]
-        b = _knick(_kurzstab_ungeteilt(arm))
-        check(f"A3 α_cr im Modus „auto“ mit Sollkraft 70 kN, Arm {arm:+.1f} m: wie Knicken der Kombination "
-              "und wie Kurzstab (1e-3); vorher ∞",
-              math.isfinite(info.alpha_cr) and abs(info.alpha_cr / lb - 1) < 1e-3 and abs(info.alpha_cr / b - 1) < 1e-3,
-              f"auto {info.alpha_cr:.4f}, Knicken {lb:.4f}, Kurzstab {b:.4f}")
+        for text, teil in (("ungeteilt", _ungeteilt), ("intern geteilt", lambda m: m)):
+            m, band = _zugband("versatz", True, arm=arm)
+            teil(m)
+            m.add_combination("K1", {"V": 1.0}, "ULS")
+            m.design.theorie2 = "auto"
+            rb = solver.solve_buckling(m, nmodes=4, combination="K1")
+            f = np.asarray(rb.buckling_factors, float)
+            lb = float(f[f > 0].min())
+            info = theorie2.check_theorie2(m, None, ["K1"]).kombinationen["K1"]
+            b = _knick(teil(_zugband("kurzstab", True, arm=arm)[0]))
+            check(f"A3 α_cr im Modus „auto“ mit Sollkraft 70 kN, Arm {arm:+.1f} m, {text}: wie Knicken der "
+                  "Kombination und wie Kurzstab (1e-3); vorher ∞",
+                  math.isfinite(info.alpha_cr) and abs(info.alpha_cr / lb - 1) < 1e-3
+                  and abs(info.alpha_cr / b - 1) < 1e-3,
+                  f"auto {info.alpha_cr:.4f}, Knicken {lb:.4f}, Kurzstab {b:.4f}")
 
 
 # ---------------------------------------------------------------- A4 Konvergenz Th II
