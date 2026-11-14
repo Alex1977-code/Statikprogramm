@@ -591,8 +591,10 @@ def test_lasttabelle_vektoren():
     check("Flaechenlast mit Richtung: „(0,707; 0; -0,707)“", zelle("Flächenlast", 5) == "(0,707; 0; -0,707)"
           or any(str(z[5]) == "(0,707; 0; -0,707)" for z in zeilen),
           str([z[5] for z in zeilen]))
-    check("Linienlast: „q = (0,000; 0,000; -12,500) kN/m → (0,000; 0,000; -5,000)“",
-          zelle("Linienlast", 4) == "q = (0,000; 0,000; -12,500) kN/m → (0,000; 0,000; -5,000)",
+    # Seit 14.11.2026 (Befund E6) folgt die Lasttabelle der eingestellten Einheit
+    # und Genauigkeit (Vorgabe 2 Nachkommastellen); der Wert ist unverändert.
+    check("Linienlast: „q = (0,00; 0,00; -12,50) kN/m → (0,00; 0,00; -5,00)“",
+          zelle("Linienlast", 4) == "q = (0,00; 0,00; -12,50) kN/m → (0,00; 0,00; -5,00)",
           str(zelle("Linienlast", 4)))
     check("… im Bezugssystem „lokal“, Abschnitt „von 0,5 m bis 2 m“",
           zelle("Linienlast", 5) == "lokal" and zelle("Linienlast", 6) == "von 0,5 m bis 2 m",
