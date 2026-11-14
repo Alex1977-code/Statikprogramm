@@ -12123,13 +12123,18 @@ class MainWindow(QtWidgets.QMainWindow):
                 import copy
                 mt = copy.deepcopy(alt_mt)
                 mt.name = neuname
+                # eine andere Sorte leert die Werte ueber 80 mm wie der Dialog (Befund A'6)
+                sorte_zeilen = []
+                if "grade" in w and (geaendert is None or "grade" in geaendert) \
+                        and not werte_gleich(mt.grade, sorte):
+                    sorte_zeilen = mt.sorte_wechseln(sorte)
                 for k, v in werte_.items():
                     if k in w and (geaendert is None or k in geaendert) \
                             and not werte_gleich(getattr(mt, k, None), v):
                         setattr(mt, k, v)
                 # f_y oder f_u von Hand geaendert: die Tabelle bleibt, ihre duennste
                 # Stufe folgt (Material.dickentabellen_nachfuehren), das Protokoll sagt es
-                dicken_zeilen = mt.dickentabellen_nachfuehren(alt_mt.fy, alt_mt.fu)
+                dicken_zeilen = sorte_zeilen + mt.dickentabellen_nachfuehren(alt_mt.fy, alt_mt.fu)
                 # vom Volumennachweis ausnehmen (13.10.2026, Maskenfeld „ausnehmen“):
                 # wie die anderen Felder nur geschrieben, wenn die Maske es geaendert hat
                 if "ausnehmen" in w and (geaendert is None or "ausnehmen" in geaendert):
@@ -16567,8 +16572,11 @@ class MainWindow(QtWidgets.QMainWindow):
             # jedem Text Grossbuchstaben, aber „S 235“ blieb mit Leerzeichen
             sorte, sorte_art, sorte_text = _stahlsorte_lesen(wert, bool(v.fy))
             self.merken(f"Werkstoff {name}")
-            v.grade = sorte
+            # eine andere Sorte leert die Werte ueber 80 mm wie der Dialog (Befund A'6)
+            zeilen = v.sorte_wechseln(sorte)
             self._zelle_uebernommen(f"Werkstoff {name}: Sorte = {v.grade}")
+            for zeile in zeilen:
+                self.info(zeile)
             if sorte_art == "info":
                 self.info(sorte_text)
             return True

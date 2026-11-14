@@ -273,6 +273,19 @@ def vorkruemmung_noetig(model: Model, mem, Nc: float) -> dict:
         return {"noetig": True, "grund": "Knicklänge unbekannt - "
                                          "auf der sicheren Seite angesetzt"}
     Ncr = math.pi ** 2 * mat.E * sec.Iz / Lcr ** 2
+    meldung = mat.dicke_ohne_wert(sec.t_max, "fy") if hasattr(mat, "dicke_ohne_wert") else ""
+    if meldung:
+        # Ueber 80 mm ohne Dickentabelle kein f_y (Befund C4). Das Kriterium
+        # braucht es nicht: lambda / (0,5 sqrt(A f_y/N_Ed)) = 2 sqrt(N_Ed/N_cr),
+        # f_y kuerzt sich heraus. Bis zum 14.11.2026 stand hier still lambda und
+        # Grenze mit f_y = 235 N/mm² (Befund A'11 der zweiten Runde); die
+        # Entscheidung war dieselbe, die Zahlen nicht.
+        noetig = Nc > Ncr / 4.0
+        return {"noetig": noetig, "kurve": kurve, "L_cr": Lcr, "meldung": meldung,
+                "grund": (f"N_Ed = {Nc / 1e3:.0f} kN {'>' if noetig else '≤'} N_cr,z/4 = {Ncr / 4e3:.0f} kN "
+                          "(5.3.2(6) ohne f_y: λ̄ / (0,5 √(A f_y/N_Ed)) = 2 √(N_Ed/N_cr))"
+                          + ("" if noetig else " → nach 5.3.2(6) nicht erforderlich")
+                          + f"; {meldung}")}
     lam = math.sqrt(sec.A * fy / Ncr) if Ncr > 0 else 0.0
     grenze = 0.5 * math.sqrt(sec.A * fy / Nc)
     return {"noetig": lam > grenze, "lambda": lam, "grenze": grenze,
@@ -297,7 +310,7 @@ def ersatzlasten_vorkruemmung(model: Model, res, elastisch: bool = True,
     nur die nach 5.3.2(6) schlanken (``alle=True`` setzt sie fuer alle an).
     """
     F = np.zeros(model.ndof)
-    je_stab, uebersprungen = [], []
+    je_stab, uebersprungen, meldungen = [], [], []
     for name, mem in model.members.items():
         if not mem.elements:
             continue
@@ -311,6 +324,8 @@ def ersatzlasten_vorkruemmung(model: Model, res, elastisch: bool = True,
         if L <= 0:
             continue
         krit = vorkruemmung_noetig(model, mem, Nc)
+        if krit.get("meldung") and krit["meldung"] not in meldungen:
+            meldungen.append(krit["meldung"])
         if not alle and not krit["noetig"]:
             uebersprungen.append({"stab": name, "grund": krit["grund"]})
             continue
@@ -337,8 +352,13 @@ def ersatzlasten_vorkruemmung(model: Model, res, elastisch: bool = True,
                         "e_0": e0, "N_Ed": Nc, "q": q, "V": V,
                         "lambda": krit.get("lambda", 0.0),
                         "grenze": krit.get("grenze", 0.0)})
-    return F, {"je_stab": je_stab, "uebersprungen": uebersprungen,
-               "elastisch": elastisch, "anzahl": len(je_stab)}
+    aus = {"je_stab": je_stab, "uebersprungen": uebersprungen,
+           "elastisch": elastisch, "anzahl": len(je_stab)}
+    if meldungen:
+        # Staebe ohne f_y (ueber 80 mm, Befund C4): Kriterium ohne f_y, Knicklinie
+        # wie fuer f_y unter 460 N/mm² (14.11.2026)
+        aus["meldungen"] = meldungen
+    return F, aus
 
 
 def normalkraefte_kg(model: Model, u: np.ndarray, aktiv=None, n_anfang: dict = None,

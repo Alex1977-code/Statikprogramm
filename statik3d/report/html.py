@@ -2566,6 +2566,11 @@ class Report:
         if vk.get("uebersprungen"):
             b.append(("list", [f"{d['stab']}: {_pretty(d['grund'])}"
                                for d in vk["uebersprungen"][:20]]))
+        if vk.get("meldungen"):
+            # Staebe ohne f_y ueber 80 mm (14.11.2026): Kriterium 5.3.2(6) ohne f_y,
+            # Knicklinie wie fuer f_y unter 460 N/mm²
+            b.append(("list", [f"Vorkrümmung: {_pretty(t)} Das Kriterium 5.3.2(6) hängt nicht an f_y; die "
+                               "Knicklinie gilt wie für f_y unter 460 N/mm²." for t in vk["meldungen"][:20]]))
         alle_hinweise = []
         for i in t2.kombinationen.values():
             for h in i.hinweise:
@@ -4081,8 +4086,12 @@ class Report:
                                              if zyl.get("bereich_umfang") else "") + ")"),
                     ("Herstelltoleranz", zyl["qualitaet"]),
                     ("Beiwerte", f"C_x = {fmt(zyl.get('C_x') or 0, 3)}, "
-                                 f"C_θ = {fmt(zyl.get('C_theta') or 0, 3)}, "
-                                 f"C_τ = {fmt(zyl.get('C_tau') or 0, 3)}"),
+                                 # kurzer Zylinder: der verwendete C_θ,s (Tab. D.4), nicht C_θ
+                                 # (Befund A'11 der zweiten Runde, 14.11.2026)
+                                 + (f"C_θ,s = {fmt(zyl['C_theta_s'], 3)} (Tab. D.4), "
+                                    if zyl.get("C_theta_s") is not None else
+                                    f"C_θ = {fmt(zyl.get('C_theta') or 0, 3)}, ")
+                                 + f"C_τ = {fmt(zyl.get('C_tau') or 0, 3)}"),
                     ("Imperfektionsbeiwerte",
                      f"α_x = {zyl['alpha_x']['alpha']:.3f} "
                      f"(Δw_k/t = {zyl['alpha_x'].get('Delta_wk_t', 0):.3f}), "

@@ -280,6 +280,9 @@ def zylinder(r: float, t: float, l: float, fy: float, sigma_x: float = 0.0,
                "r_t": r / t, "meridian": dx, "umfang": dt, "schub": ds,
                "bereich_umfang": crt.get("bereich", ""),
                "C_x": crx.get("C_x"), "C_theta": crt.get("C_theta"),
+               # beim kurzen Zylinder rechnet sigma_theta,Rcr mit C_theta,s (Tab. D.4);
+               # der Bericht zeigte bis zum 14.11.2026 C_theta (Befund A'11 der zweiten Runde)
+               "C_theta_s": crt.get("C_theta_s"),
                "C_tau": crs.get("C_tau"),
                "alpha_x": ax, "alpha_theta": at, "alpha_tau": au,
                "k_x": kx, "k_theta": kt, "k_tau": ku, "k_i": ki,
