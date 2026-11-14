@@ -628,12 +628,33 @@ def _flaechen_teilstellen(model) -> bool:
 
 
 def _doppelte_randlinien(model) -> bool:
-    """Schalenflaechen mit eigenen Randlinien zwischen denselben Knoten (Befund 39)."""
+    """Schalenflaechen mit eigenen Randlinien zwischen denselben Knoten (Befund 39),
+    deren **vorhandenes Netz** dort getrennte Knoten hat (Befund A10 vom
+    14.11.2026): die Korrektur wirkt erst nach dem Neuvernetzen, bis dahin
+    rechnet das Netz der Datei weiter getrennt - bis zum 14.11.2026 hing das
+    Merkmal an der Geometrie und am Alter der Ergebnisdatei, und „neu rechnen“
+    loeschte den Status. Ist die Pruefung nicht moeglich (Ausnahme):
+    möglicherweise betroffen."""
     try:
         from . import mesher
-        return bool(mesher.doppelte_randlinien(model))
-    except Exception:                       # noqa: BLE001
-        return False
+        return bool(mesher.getrennte_doppellinien(model))
+    except Exception:                       # noqa: BLE001 - nicht pruefbar: möglicherweise betroffen
+        return True
+
+
+def _kurzliste(teile: list, n: int = 3) -> str:
+    return "; ".join(teile[:n]) + (f" und {len(teile) - n} weitere" if len(teile) > n else "")
+
+
+def _doppelte_randlinien_wo(model, _analyse) -> str:
+    """Wo das Netz an einer doppelten Randlinie getrennt ist (Text des Status)."""
+    from . import mesher
+    teile = []
+    for h, doppel, a, b, _n in mesher.getrennte_doppellinien(model):
+        t = f"Linie {h} = {'/'.join(doppel)}, Flächen {a}/{b}"
+        if t not in teile:
+            teile.append(t)
+    return _kurzliste(teile)
 
 
 def _elementbezogene_flaechenlager(model) -> bool:
@@ -841,6 +862,165 @@ def _wasserdruck_an_schalen(model) -> bool:
     return False
 
 
+def _alte_wasserdruckfelder(model) -> list:
+    """[(Lastfall, Wasserdruck, Flaeche)]: stroemungsnumerischer Wasserdruck auf
+    Flaechen, dessen Druckfeld vor dem 12.11.2026 erzeugt ist (Verlauf mit
+    ``feld``, ohne ``normale_flaeche``) und dessen Referenzflaeche des
+    Oberwassers eine Schale ist. „Oberseite“ bezog sich damals auf deren
+    Elemente; lagen sie gegen den Randumlauf, steht das Wasser im gespeicherten
+    Feld auf der anderen Seite (Wand 2 x 3 m: ΣF_y −61,22 statt +61,22 kN).
+    Das Feld steht im Modell: ein Neurechnen aendert nichts, und nach dem
+    Ausrichten der Schalen ist nicht mehr zu erkennen, wie die Elemente lagen
+    - darum möglicherweise betroffen, bis der Wasserdruck neu erzeugt ist
+    (Befund A10 vom 14.11.2026)."""
+    from . import elemente as _EL
+    elemente = getattr(model, "elements", None) or []
+    flaechen = getattr(model, "flaechen", None) or {}
+
+    def schale(name) -> bool:
+        f = flaechen.get(str(name))
+        return f is not None and any(0 <= int(e) < len(elemente) and elemente[int(e)].typ in _EL.SCHALEN_TYPEN
+                                     for e in (f.elemente or []))
+    aus = []
+    for fall, lc in (getattr(model, "load_cases", None) or {}).items():
+        for gl in getattr(lc, "geometrielasten", None) or []:
+            v = getattr(gl, "verlauf", None) or {}
+            if (v.get("art") != "wasser" or not v.get("feld") or "normale_flaeche" in v
+                    or getattr(gl, "art", "flaeche") != "flaeche"):
+                continue
+            ow = str((v.get("param") or {}).get("ow_flaeche") or "")
+            if ow and schale(ow):
+                aus.append((str(fall), str(v.get("name") or ""), str(gl.ziel)))
+    return aus
+
+
+def _wasserdruck_feld_alt(model) -> bool:
+    try:
+        return bool(_alte_wasserdruckfelder(model))
+    except Exception:                       # noqa: BLE001 - nicht pruefbar: möglicherweise betroffen
+        return True
+
+
+def _wasserdruck_feld_wo(model, _analyse) -> str:
+    teile = []
+    for fall, wd, f in _alte_wasserdruckfelder(model):
+        t = f"Wasserdruck {wd} in {fall}" if wd else f"Lastfall {fall}"
+        if t not in teile:
+            teile.append(t)
+    return _kurzliste(teile)
+
+
+#: Eine Kontaktfuge bindet einen Knoten an eine entferntere Gegenflaeche als die
+#: naechste, wenn der Unterschied diese Grenze ueberschreitet (1 mm)
+FUGE_FALSCH_TOL = 1e-3
+
+
+def _abstand_zu_dreiecken(P, A, B, C):
+    """Kleinster Abstand jedes Punkts zu den Dreiecken (A, B, C) - exakt, ueber die
+    Schwerpunkte vorsortiert."""
+    import numpy as np
+    from scipy.spatial import cKDTree
+    from .contact import naechste_punkte_dreiecke
+    S = (A + B + C) / 3.0
+    R = float(max(np.linalg.norm(A - S, axis=1).max(), np.linalg.norm(B - S, axis=1).max(),
+                  np.linalg.norm(C - S, axis=1).max()))
+    baum = cKDTree(S)
+    d0, _i = baum.query(P)
+    out = np.empty(len(P))
+    for i, p in enumerate(P):
+        idx = baum.query_ball_point(p, float(d0[i]) + R + 1e-12)
+        q, _w = naechste_punkte_dreiecke(p, A[idx], B[idx], C[idx])
+        out[i] = float(np.linalg.norm(q - p, axis=1).min())
+    return out
+
+
+def _dreiecke(facetten: list) -> list:
+    """Facetten (3/6 bzw. 4/8 Knoten) als Eckdreiecke."""
+    aus = []
+    for f in facetten:
+        f = [int(k) for k in f]
+        if len(f) in (4, 8):
+            aus += [(f[0], f[1], f[2]), (f[0], f[2], f[3])]
+        elif len(f) >= 3:
+            aus.append((f[0], f[1], f[2]))
+    return aus
+
+
+def _alte_fugen_an_schalen(model) -> list:
+    """[(Kontaktbedingung, Knoten, groesster Abstand zur gebundenen Gegenflaeche,
+    Abstand dort zur naechsten)] fuer ausgefuehrte Kontaktfugen an Schalen, die
+    Knoten an eine entferntere Gegenflaeche binden als die naechste.
+
+    Bis zum 12.11.2026 (d2711c7) richtete die Fuge Schalenfacetten nach ihrer
+    Knotenfolge und nahm Schalen der Gegenseite nur von einer Seite: ein Blech,
+    dessen Normale vom Block weg zeigte, band sich an die 200 mm entfernte
+    Unterseite des Blocks („0 % aufliegend, 16 durchdringend“; Ecke unter 8 kN
+    0,0000 statt 0,0011 mm). Das Kontaktpaar steht im Modell und rechnet nach
+    jedem Neurechnen so weiter, bis die Fuge neu ausgefuehrt ist (Befund A10 vom
+    14.11.2026). Gemessen wird am gespeicherten Paar: Abstand jedes Knotens der
+    Kontaktseite zur naechsten seiner Gegenfacetten gegen den Abstand zur
+    naechsten Randseite derselben Gegenbauteile - eine heute ausgefuehrte Fuge
+    bindet an die naechste."""
+    import numpy as np
+    paare = list(getattr(model, "contact_pairs", None) or [])
+    kbs = getattr(model, "kontaktbedingungen", None) or {}
+    if not paare or not kbs:
+        return []
+    from .elemente import SCHALEN_TYPEN
+    elemente = getattr(model, "elements", None) or []
+    schalenknoten = {int(k) for e in elemente if e.typ in SCHALEN_TYPEN for k in e.nodes}
+    if not schalenknoten:
+        return []
+    X = np.asarray(model.nodes, float).reshape(-1, 3)
+    nn = len(X)
+    rand = None
+    aus = []
+    for cp in paare:
+        kb = kbs.get(cp.name)
+        if kb is None or getattr(kb, "aus", False) or not getattr(kb, "ausgefuehrt", False):
+            continue
+        slave = sorted({int(k) for k in (cp.slave_nodes or []) if 0 <= int(k) < nn})
+        master = [d for d in _dreiecke(cp.master_faces or []) if all(0 <= k < nn for k in d)]
+        if not slave or not master:
+            continue
+        mknoten = {k for d in master for k in d}
+        if not (set(slave) & schalenknoten or mknoten & schalenknoten):
+            continue
+        if rand is None:
+            from .fugen import _randseiten_aller
+            rand = _randseiten_aller(model)
+        sset = set(slave)
+        gruppen = {g for _e, nd, _n, g in rand if mknoten.intersection(int(k) for k in nd)}
+        kand = list(master) + _dreiecke(
+            [nd for _e, nd, _n, g in rand if g in gruppen and not sset.intersection(int(k) for k in nd)])
+        P = X[slave]
+        M = np.asarray(master, int)
+        K = np.asarray(kand, int)
+        gebunden = _abstand_zu_dreiecken(P, X[M[:, 0]], X[M[:, 1]], X[M[:, 2]])
+        naechste = _abstand_zu_dreiecken(P, X[K[:, 0]], X[K[:, 1]], X[K[:, 2]])
+        falsch = np.flatnonzero(gebunden - naechste > FUGE_FALSCH_TOL)
+        if len(falsch):
+            j = int(falsch[np.argmax(gebunden[falsch])])
+            aus.append((str(cp.name), len(falsch), float(gebunden[j]), float(naechste[j])))
+    return aus
+
+
+def _fuge_an_schalen(model) -> bool:
+    try:
+        return bool(_alte_fugen_an_schalen(model))
+    except Exception:                       # noqa: BLE001 - nicht pruefbar: möglicherweise betroffen
+        return True
+
+
+def _mm(x: float) -> str:
+    return f"{x * 1e3:.1f}".replace(".", ",")
+
+
+def _fuge_an_schalen_wo(model, _analyse) -> str:
+    return _kurzliste([f"Kontaktbedingung {n}: {k} Knoten an einer bis {_mm(g)} mm entfernten Gegenfläche, "
+                       f"die nächste {_mm(d)} mm" for n, k, g, d in _alte_fugen_an_schalen(model)])
+
+
 def _theorie2_gerechnet_im_ergebnis(model, an) -> str:
     """Ergebnisse, die nach Theorie II. Ordnung gerechnet sind (nicht nur alpha_cr)."""
     th2 = getattr(an, "theorie2", None)
@@ -901,9 +1081,15 @@ def _schalen(model) -> bool:
 def _schalen_uneinheitlich(model) -> bool:
     """Schalenelemente, die gegen ihre Flaeche oder ihr zusammenhaengendes
     Stueck liegen (statik3d.schalenlage, Stand 31). Nach einer Rechnung mit
-    Stand 31 ist das Modell ausgerichtet und nicht mehr betroffen."""
-    from .schalenlage import uneinheitlich
-    return uneinheitlich(model)
+    Stand 31 ist das Modell ausgerichtet und nicht mehr betroffen. Ist die
+    Pruefung nicht moeglich (Ausnahme), gilt das Modell als möglicherweise
+    betroffen (Befund A10 vom 14.11.2026; schalenlage.uneinheitlich selbst
+    zaehlt eine Ausnahme als „nicht betroffen“)."""
+    from . import schalenlage
+    try:
+        return any(drehen for _a, _n, drehen, _w in schalenlage.plan(model))
+    except Exception:                       # noqa: BLE001 - nicht pruefbar: möglicherweise betroffen
+        return True
 
 
 def _quader_teilung_ungleich(model) -> bool:
@@ -1858,7 +2044,7 @@ MERKMALE: list = [
         name="anschluss_beta_w", titel="Korrelationsbeiwert β_w im Anschlussnachweis",
         texte={"alt": "β_w ohne Stahlsorte als S355 (0,9), mit unbekannter Sorte 1,0",
                "neu": "β_w aus der Stahlsorte, ohne Sorte kein Nachweis der Naht, mit Meldung"},
-        wechsel=(Wechsel(stand=36, datum="12.11.2026", commit="fix/k2-schale-beul", alt="alt", neu="neu",
+        wechsel=(Wechsel(stand=36, datum="12.11.2026", commit="fix/k2-schale_beul", alt="alt", neu="neu",
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Anschluss mit Kehlnähten, Werkstoff ohne bekannte Stahlsorte",
         betrifft=_anschluss_ohne_sorte),
@@ -1869,7 +2055,7 @@ MERKMALE: list = [
         name="laminat_randspannung", titel="Randspannungen geschichteter Schalen",
         texte={"alt": "σ oben/unten = n/t ± 6 m/t² wie bei homogener Schale",
                "neu": "σ oben/unten der äußersten Faser der obersten/untersten Lage nach der Laminattheorie"},
-        wechsel=(Wechsel(stand=36, datum="12.11.2026", commit="fix/k2-schale-beul", alt="alt", neu="neu",
+        wechsel=(Wechsel(stand=36, datum="12.11.2026", commit="fix/k2-schale_beul", alt="alt", neu="neu",
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Schale mit Schichtaufbau", betrifft=_laminat_schalen),
     # Nebenbefund Beulen (12.11.2026): feldspannungen/zylinderspannungen drehten die
@@ -1879,7 +2065,7 @@ MERKMALE: list = [
         name="beulen_flaechenachsen", titel="Spannungen im Beulnachweis",
         texte={"alt": "Flächenspannungen zusätzlich mit der ersten Elementkante gedreht",
                "neu": "Flächenspannungen aus dem Flächensystem in die Feldachsen gedreht"},
-        wechsel=(Wechsel(stand=36, datum="12.11.2026", commit="fix/k2-schale-beul", alt="alt", neu="neu",
+        wechsel=(Wechsel(stand=36, datum="12.11.2026", commit="fix/k2-schale_beul", alt="alt", neu="neu",
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Beulfeld mit Elementen, deren erste Kante gegen die Flächenachse x verdreht ist",
         betrifft=_beulfeld_achsen_verdreht),
@@ -1934,7 +2120,7 @@ MERKMALE: list = [
         name="versatz_starrer_arm", titel="Stab mit verschiedenem Versatz an Anfang und Ende",
         texte={"alt": "Stab auf der Knotenlinie (Länge und Achsen von dort), nur die Enden starr versetzt",
                "neu": "Stab zwischen den versetzten Enden (Länge und Achsen von dort), Versatz als starrer Arm"},
-        wechsel=(Wechsel(stand=38, datum="12.11.2026", commit="fix/k3-versatz", alt="alt", neu="neu",
+        wechsel=(Wechsel(stand=38, datum="14.11.2026", commit="fix/k3-versatz", alt="alt", neu="neu",
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Stab mit verschiedenem Versatz (Exzentrizität) an Anfang und Ende",
         betrifft=_stab_mit_ungleichem_versatz),
@@ -1992,6 +2178,26 @@ MERKMALE: list = [
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Wasserdruck des Generators auf einer Schalenfläche ohne globale Lastrichtung",
         betrifft=_wasserdruck_an_schalen),
+    # Befund A10 der Pruefagenten (14.11.2026): beim stroemungsnumerischen
+    # Wasserdruck steht das Druckfeld im Modell. Bezog sich „Oberseite“ der
+    # Referenzflaeche des Oberwassers vor dem 12.11.2026 auf Elemente gegen
+    # ihren Randumlauf, steht das Wasser im gespeicherten Feld auf der anderen
+    # Seite (Wand 2 x 3 m: ΣF_y −61,22 statt +61,22 kN); nach dem Ausrichten der
+    # Schalen und „neu rechnen“ verschwand der Status, die Last blieb verkehrt.
+    # Korrektur am Modell: bis der Wasserdruck neu erzeugt ist. Fehlerkorrektur
+    Merkmal(
+        name="wasserdruck_feld", titel="Strömungsnumerischer Wasserdruck mit Schale als Referenzfläche",
+        texte={"alt": "Druckfeld mit „Oberseite“ der Referenzfläche nach ihren Elementen – lagen sie gegen den "
+                      "Randumlauf, steht das Wasser auf der anderen Seite",
+               "neu": "Druckfeld mit „Oberseite“ nach dem Randumlauf der Fläche, Flächennormale im Verlauf"},
+        wechsel=(Wechsel(stand=32, datum="12.11.2026", commit="fix/k2-wasserdruck", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Strömungsnumerischer Wasserdruck des Generators auf Flächen, mit einer Schale als "
+                      "Referenzfläche des Oberwassers, erzeugt vor dem 12.11.2026 (Druckfeld ohne "
+                      "Flächennormale im Modell)",
+        betrifft=_wasserdruck_feld_alt, import_korrektur=True, im_ergebnis=_wasserdruck_feld_wo,
+        modellgrund="Druckfeld mit einem älteren Programmstand erzeugt",
+        vorschlag="Lasten › Wasserdruck: den Wasserdruck neu erzeugen"),
     # Befund 11 der Pruefagenten (11.11.2026): das Neuvernetzen in der
     # Oberflaeche (und das Loeschen ueber die Web-Schnittstelle) zog
     # elementbezogene Flaechenlager nicht nach - nach dem Neuvernetzen der
@@ -2012,15 +2218,22 @@ MERKMALE: list = [
     # Schalenflaechen zwischen denselben Knoten (Rippe mit eigener Linie auf
     # dem Plattenrand) wurden nur verbunden, wenn ein fremder Knoten darauf lag
     # - Platte 4 m aus zwei Flaechen mit doppelter Mittellinie 397,7 statt
-    # 149,6 mm. Wirkt erst nach dem Neuvernetzen. Fehlerkorrektur
+    # 149,6 mm. Wirkt erst nach dem Neuvernetzen. Fehlerkorrektur. Seit dem
+    # 14.11.2026 (Befund A10) eine Korrektur am Modell: betroffen ist ein
+    # vorhandenes Netz, das an der Doppellinie getrennt ist - bis dahin hing der
+    # Status am Alter der Ergebnisdatei und verschwand nach „neu rechnen“, obwohl
+    # das Netz weiter getrennt rechnete (397,70 statt 149,59 mm)
     Merkmal(
         name="doppelte_randlinien", titel="Doppelte Randlinien zwischen denselben Knoten",
-        texte={"alt": "im Netz nur an den Linienenden verbunden (ohne fremden Knoten darauf)",
+        texte={"alt": "im Netz nur an den Linienenden verbunden, ohne fremden Knoten darauf",
                "neu": "im Netz eine Linie, gemeinsame Netzknoten; gilt nach dem Neuvernetzen"},
         wechsel=(Wechsel(stand=37, datum="12.11.2026", commit="fix/k2-netz", alt="alt", neu="neu",
                          art=FEHLERKORREKTUR),),
-        modellmerkmal="Schalenflächen mit eigenen Randlinien zwischen denselben Knoten",
-        betrifft=_doppelte_randlinien),
+        modellmerkmal="Schalenflächen mit eigenen Randlinien zwischen denselben Knoten, deren Netz dort "
+                      "getrennte Knoten hat",
+        betrifft=_doppelte_randlinien, import_korrektur=True, im_ergebnis=_doppelte_randlinien_wo,
+        modellgrund="Netz mit einem älteren Programmstand erzeugt",
+        vorschlag="Netz › Vernetzen: das Netz neu erzeugen"),
     # Auftrag vom 12.11.2026 („die lage von schalenelementen sollte der user frei
     # bestimmen können und sie dürfte grundsätzlich nicht an der berechnung
     # ändern“): an einem gespiegelten Element wirkten Flaechenlast senkrecht zur
@@ -2036,6 +2249,27 @@ MERKMALE: list = [
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Schalenelemente, die gegen ihre Fläche oder ihr zusammenhängendes Stück liegen",
         betrifft=_schalen_uneinheitlich),
+    # Befund A10 der Pruefagenten (14.11.2026): seit d2711c7 (12.11.2026) richtet
+    # die Kontaktfuge Schalenfacetten zur naechsten Gegenflaeche und nimmt Schalen
+    # der Gegenseite von beiden Seiten. Eine vorher ausgefuehrte Fuge band ein
+    # Blech mit Normale vom Block weg an dessen 200 mm entfernte Unterseite (Ecke
+    # unter 8 kN 0,0000 statt 0,0011 mm); das Kontaktpaar steht im Modell und
+    # rechnet nach „neu rechnen“ weiter so. Korrektur am Modell, solange ein
+    # Knoten der Fuge an einer entfernteren Gegenflaeche haengt als der naechsten.
+    # Fehlerkorrektur
+    Merkmal(
+        name="fuge_an_schalen", titel="Kontaktfuge an Schalen",
+        texte={"alt": "Schalenfacetten nach ihrer Knotenfolge, Schalen der Gegenseite nur von einer Seite – "
+                      "ein Blech mit Normale vom Gegenkörper weg band sich an dessen abgewandte Seite",
+               "neu": "Schalenfacetten zur nächsten Gegenfläche, Schalen der Gegenseite von beiden Seiten"},
+        wechsel=(Wechsel(stand=31, datum="12.11.2026", commit="d2711c7, fix/k2-schalenlage", alt="alt",
+                         neu="neu", art=FEHLERKORREKTUR),),
+        modellmerkmal="Ausgeführte Kontaktfuge an Schalen, deren Kontaktpaar Knoten an eine entferntere "
+                      "Gegenfläche bindet als die nächste (mehr als 1 mm)",
+        betrifft=_fuge_an_schalen, import_korrektur=True, im_ergebnis=_fuge_an_schalen_wo,
+        modellgrund="Kontaktfuge mit einem älteren Programmstand ausgeführt",
+        vorschlag="Kontaktfugen neu ausführen (Netz › Vernetzen, oder die Kontaktbedingung öffnen und "
+                  "übernehmen)"),
     # Befund A19 (09.11.2026): Schalenflaechen, die sich ohne gemeinsame Linie
     # beruehren, waren im Netz nicht verbunden - Stoss mit ungeteilter Linie
     # 0,742 statt 0,143 mm, Rippe auf ungeteilter Platte 33,1 statt 0,52 mm.
