@@ -7469,6 +7469,16 @@ Unterwasser nicht trennen (80° geneigt bisher −2,6 statt 61,3 kN, waagerecht 
 statt 78,5 kN). Lotrechte Flächen und Volumenränder bleiben numerisch. Ein so
 erzeugter alter Wasserdruck ist neu zu erzeugen; das Programm meldet es.
 
+**Wasserdruck mit globaler Richtung, geneigte Volumenränder** (seit
+14.11.2026, Stand 55). Ein Wasserdruck mit vorgegebener globaler Lastrichtung
+wirkt auf die Projektion der Fläche senkrecht zu dieser Richtung, wie im
+Stahlwasserbau üblich (45°-Wand 2 m breit, 2,5 m Wasser: ½γh²b = 61,3 statt
+86,6 kN); Hubtor, Stemmtor und Fischbauchklappe bleiben unverändert. Der
+strömungsnumerische Wasserdruck rechnet auch geneigte und waagerechte
+Volumenränder analytisch (45°: bisher −7,1 %). Die Resultierende im Protokoll
+ist die Summe der Elementlasten, die Breite wird quer zur Strömung gemessen.
+Geprüft in `tests/test_wasserdruck_geneigt_k6.py`.
+
 ### Lastgenerierer Wind (DIN EN 1991-1-4)
 
 *Lasten → Generierer → Wind* (oder Modellbaum → Einwirkungen → Lastgenerierer
@@ -7584,6 +7594,15 @@ Zeile l/h ≤ 3; richtig sind 28,0 kN (l/h = 3,3) und 94,4 kN. Für Nordsee-Wind
 und l/h > 3 genügt ein Neurechnen; bei schräg oder parallel angeströmten Wänden
 und Nordsee-Stablasten sind die Windlasten neu zu erzeugen. Geprüft in
 `tests/test_wind_wasser_b_1411.py`.
+
+**Erhöhte freie Wand, alte Windlasten** (seit 14.11.2026, Stand 56). Für
+Tab. 7.9 gilt als h die Höhe der Wand selbst, q_p bleibt in der Höhe des
+jeweiligen Punkts: Eine Wand 30 × 3 m auf 10 bis 13 m hat l/h = 10 und erhält
+157,7 statt 140,2 kN. Steht die Wand mindestens h/4 über dem Gelände, nennt das
+Protokoll sie nach 7.4.3 eine Anzeigetafel (c_f = 1,8); die Rolle setzt der
+Anwender. Ältere Windlasten erhöhter Wände und schräg angeströmte freie Wände
+aus Dateien vor Stand 33 tragen den Status „Windlasten neu erzeugen“ (75°:
+bisher 82,7 statt 94,4 kN). Geprüft in `tests/test_status_luecken_1411.py`.
 
 **Numerischer Windkanal.** Mit *Verfahren → numerischer Windkanal* wird die
 Strömung um die gewählten Flächen und Stäbe in einem Schnitt gerechnet
@@ -8791,6 +8810,14 @@ sich das im Ergebnis zeigt, ist nicht gemessen. Im Ergebnis steht dann
 `start_vermerk` „Auftrag ohne Warmstart".
 
 ## 7 Import
+
+**Korrekturen vom 14.11.2026, zweite Runde (Import).** IFC: der Vorsatz einer
+Flächen- oder Volumeneinheit gilt für das Meter (MILLI SQUARE_METRE = mm²).
+SAF ohne Spalte „Category“: ständige Gruppen bleiben ständig. RFEM 6:
+Werkstoffe nur mit Wichte bestimmen g nicht mit; der Status „Eigengewicht aus
+RFEM“ vergleicht ρ·g des Modells mit γ und bleibt nach „neu rechnen“ stehen.
+Tabellen im RFEM-Aufbau: Seile bleiben Seile, Kombinationen werden mit
+übertragen (Blatt 2.5). Geprüft in `tests/test_import_runde2.py`.
 
 **Korrekturen vom 14.11.2026 an Import und Export (Stand 46).** Der RFEM-6-Import
 bildet das Eigengewicht aus der Wichte γ wie RFEM (Erdbeschleunigung der Datei,
@@ -11631,6 +11658,15 @@ Theorie III. Ordnung rechnet keine Wölbkrafttorsion; ein Lastfall nach
 Theorie III. Ordnung mit Wölbbalken wird in der Modellprüfung mit Klartext
 abgewiesen. Geprüft in `tests/test_laengsgelenk_woelb_1411.py`.
 
+**Theorie II. Ordnung bei Last in Stabrichtung** (seit 14.11.2026, Stand 58).
+Ein Stabelement rechnet in K_G, α_cr, Knicken und Feldanteil mit dem Mittel der
+Normalkraft über seine Länge, mit und ohne Längsgelenk und unabhängig von der
+Elementrichtung (ein Element, gleichmäßige Längslast: 4,95 kNm statt je nach
+Richtung 11,56 oder 3,13 kNm). Mit der Vorgabe-Stabteilung 10 ändern sich die
+Ergebnisse um höchstens etwa 0,1 %. Ein einzelnes Element bleibt bei stark
+ungleichmäßiger Längslast eine Näherung; dafür feiner teilen. Geprüft in
+`tests/test_laengslast_mittel_1411.py`.
+
 **Wölbkrafttorsion und Längsgelenk nach Theorie II. Ordnung** (seit
 12.11.2026). Balken mit Wölbkrafttorsion rechnen ihre Stabendkräfte jetzt mit
 der geometrischen Steifigkeit, (k + k_G)·u, und führen den Anteil N·w im Feld
@@ -11882,6 +11918,20 @@ Verformungsnachweis der Art „Stab“ führt nur Verschiebungen; eine Verdrehun
 wird als Knotennachweis angelegt (Stand 47). Geprüft in
 `tests/test_befunde_b_1411.py`, `tests/test_vorschlaege_1411.py` und
 `tests/test_anzeige_e1_e7.py`.
+
+**U-Profile, Kerbfälle, Anschlüsse über 80 mm, Verformungsnachweise** (seit
+14.11.2026, Stände 51, 53, 57). Die Stabmaske behält einen Kerbfall außerhalb
+ihrer Liste (Vorschlag mit k_s, Rund 40: 46,53 N/mm²) als eigenen Eintrag; bis
+dahin löschte OK ihn und der Ermüdungsnachweis entfiel. I_w der UPN enthält die
+Flanschneigung (UPN 200: 9 559,6 cm⁶), S_ω des U-Profils hat das richtige
+Vorzeichen (τ_w bisher etwa doppelt). Doppel-U werden beim Öffnen erkannt; die
+Frage kommt nur bei benutzten Profilen. Eine Kopfplatte über 80 mm ohne
+Dickentabelle behält ihre Drehfeder S_j (hängt nicht an f_y); M_j,Rd und der
+Nachweis bleiben ohne f_y unbestimmt. Ein Sortenwechsel in Tabelle oder Maske
+leert die Werte über 80 mm. Ein Verformungsnachweis „Stab“ führt nur uy, uz und
+u; Verdrehungen nur gegen einen absoluten Grenzwert in mrad. Geprüft in
+`tests/test_ermuedung_k6_1411.py`, `tests/test_werkstoff_k6_1411.py` und
+`tests/test_anzeige_runde2.py`.
 
 ### Verformungsnachweise (GZG)
 
@@ -13127,6 +13177,17 @@ auf derselben Strecke sind im Netz verbunden (407,0 statt 150,0 mm). Vor jeder
 Rechnung warnt die Eingabeprüfung bei einem getrennten Schalennetz; ein
 gespeichertes getrenntes Netz trägt den Status „Netz neu erzeugen“. Geprüft in
 `tests/test_netz_teilvernetzen.py`.
+
+**Mitvernetzte Nachbarflächen** (seit 14.11.2026, Stand 52). Wird eine Fläche
+neu vernetzt und ihre vernetzte Nachbarfläche mitvernetzt, behält diese ihre
+Elementlasten, Temperaturlasten, Abschaltungen in Situationen und Flächenlager
+mit Elementliste (über den Elementmittelpunkt, nur wo eindeutig, sonst mit
+Meldung); bis dahin gingen sie still verloren (Platte 6,2 statt 86,2 kN
+Auflagerkraft). Eine Kontaktbedingung zwischen zwei Schalen gilt als gewollte
+Trennung und nicht als „nicht verbunden“; getrennte Netze an Rippen und
+Polylinien werden gemeldet; der Hinweis „Flächenlager nach Neuvernetzen
+prüfen“ hängt an einer festen Kennung und übersteht das Umbenennen. Geprüft in
+`tests/test_nachbar_elementbezug.py` und `tests/test_netz_runde2_1411.py`.
 
 **Flächenlager nach Neuvernetzen prüfen** (seit 14.11.2026). Öffnen Sie eine
 Ergebnisdatei von vor dem 12.11.2026, bekommt jedes Flächenlager mit

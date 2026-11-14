@@ -31,6 +31,19 @@ Diese Fehler bestanden schon vor dem 12.11.2026; die Prüfagenten haben sie am 1
 
 Die Summen der freistehenden Wand in den Release-Notes vom 12.11.2026 (Stand 39: Wand 10 × 0,3 × 3 m 26,8 kN) und im ersten Teil oben (Stand 43: Wand 30 × 3 m 68,5 kN, 10 × 3 m 26,8 kN) rechneten mit der falschen Zeile l/h ≤ 3 der Tab. 7.9. Richtig sind 28,0 kN (l/h = 3,3) und 94,4 kN (l/h = 10). Die Aussagen „einmal statt doppelt“ und „als eine Wand“ bleiben richtig.
 
+## Dritter Teil: zweite Prüfrunde (Stände 51 bis 58)
+
+Zehn Prüfagenten haben den Sammelzweig nach PR #45 und #46 geprüft (Befundliste `BEFUNDE-2026-11-14-RUNDE2.md` auf dem Desktop). Acht Agenten haben die Befunde behoben; der Verfahrensstand steigt auf 58. Jede Zahl ist auf zwei Wegen geprüft.
+
+* **Ermüdung und U-Profile (Stand 51).** Die Stabmaske behält den Kerbfall-Vorschlag mit k_s (am Drehlager 16 Zugstäbe Rund 40, 46,53 N/mm²); bis dahin löschte OK ihn. I_w der UPN mit Flanschneigung (UPN 200: 9 559,6 statt 10 499,5 cm⁶, M_cr bis −2,4 %), S_ω des U-Profils mit richtigem Vorzeichen (τ_w bisher etwa doppelt), Doppel-U erkannt.
+* **Netz (Stand 52).** Mitvernetzte Nachbarflächen behalten Elementlasten, Abschaltungen und Teil-Flächenlager (bisher 6,2 statt 86,2 kN Auflagerkraft ohne Meldung). Fuge zwischen Schalen nicht mehr als „nicht verbunden“ gewarnt, Rippen und Polylinien gemeldet, Flächenlager-Hinweis übersteht Umbenennen.
+* **Werkstoff und Anschluss (Stand 53).** Kopfplatte über 80 mm behält ihre Drehfeder (Kragarm 39,97 statt 25,88 mm); Sortenwechsel leert die Werte über 80 mm; Kreisring meldet „Auflage nicht beurteilt“; Bericht zeigt C_θ,s; Anschlussorte ab 0.
+* **Import (ohne eigenen Stand).** IFC mm² richtig (vorher 1000-fach), SAF ständige Gruppen bleiben ständig, RFEM-Eigengewicht mit reinen Wichte-Werkstoffen, Tabellen-Rundlauf mit Seil und Kombinationen.
+* **Schalenlage und Wasserdruck (Stand 55).** Gewölbte Flächen mit Loch richtig ausgerichtet; Wasserdruck mit globaler Richtung auf die Projektion (Entscheidung des Anwenders, 45°: 61,3 statt 86,6 kN); geneigte Volumenränder analytisch (bisher −7,1 %); Protokoll mit richtiger Breite und Resultierender.
+* **Status und Wind (Stand 56).** Erhöhte freie Wand mit h = Wandhöhe (Entscheidung des Anwenders; 30 × 3 m auf 10–13 m: 157,7 statt 140,2 kN, Tafel-Hinweis bei Abstand ≥ h/4); alte schräge Wände vor Stand 33 und Importkorrekturen behalten ihren Status nach „neu rechnen“; Versatz mit nur Eigengewicht nach Th III gemeldet. „Kleinste Drehung“ heißt richtig „Projektion“ (Rechnung unverändert).
+* **Anzeige (Stand 57).** Verformungsnachweis „Stab“ nur uy, uz, u; Verdrehungen nur absolut; Browser behält das Antriebsmoment; Zählung ab 0; Umhüllende mit eingestellter Genauigkeit; Bericht ohne wissenschaftliche Schreibweise.
+* **Theorie II. Ordnung (Stand 58).** Mittel der Normalkraft bei Last in Stabrichtung, unabhängig von Gelenk und Elementrichtung (ein Element: 4,95 statt 11,56 bzw. 3,13 kNm); mit der Vorgabe-Teilung höchstens 0,1 % Änderung.
+
 ## Nicht enthalten
 
 * Nebenbefunde der Agenten, je eine Zeile in der Befundliste und in den Berichten, unter anderem: Schubbeulen von Zylindern mit den Bereichen des Meridiandrucks, Beulnachweise ohne Werkstoff fallen auf 235 zurück, Sonderregeln der Anzeigetafel nach 7.4.3, Feldanteil ohne Gelenk mit der Kraft am Stabanfang, Eckausbildung der freien Wand, Stellungsmaske zählt Knoten ab 1.
