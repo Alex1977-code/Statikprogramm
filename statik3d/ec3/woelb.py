@@ -124,8 +124,15 @@ def sektorwerte(sec: Section) -> Sektorwerte | None:
 
         e = 3 t_f b_s^2 /(6 t_f b_s + h_m t_w),   b_s = b - t_w/2
 
-    Dadurch verwoelbt sich auch der Steg. Groesste Woelbordinate ist die am
-    Flanschende oder am Steg, groesstes Woelbflaechenmoment liegt in Stegmitte.
+    (mit geneigten Flanschen - UPN - aus der veraenderlichen Flanschdicke,
+    model.u_mittellinie). Dadurch verwoelbt sich auch der Steg: omega = e z im
+    Steg, a (e - y) im Flansch (a = h_m/2, y ab Stegmitte). Groesste
+    Woelbordinate ist die am Flanschende oder am Steg. Das Woelbflaechenmoment
+    S(y) = Integral omega t ds vom Flanschende her ist im Flansch am groessten,
+    wo omega das Vorzeichen wechselt (y = e): |S| = t_f a (b_s - e)^2 / 2; im
+    Steg waechst es von der Ecke zur Mitte um + e t_w a^2/2 und ist dort nur
+    e t_w h_m^2/24. Bis zum 14.11.2026 stand hier das Minus und S_omega in
+    Stegmitte (UPN 200: S/t 197,2 statt 91,7 cm^3, tau_w 2,15-fach, Befund B'1).
     """
     h, b, tw, tf = sec.h, sec.b, sec.tw, sec.tf
     if sec.Iw <= 0 or min(h, b, tw, tf) <= 0:
@@ -140,21 +147,41 @@ def sektorwerte(sec: Section) -> Sektorwerte | None:
         return Sektorwerte(omega, S, tf, "Flanschende", "Flansch am Steg", Iw)
     if sec.typ == "U":
         # auf der Mittellinie: Flanschbreite bis Stegmitte (wie Section.channel,
-        # model.iw_u_profil; bis zum 14.11.2026 die volle Breite, Befund C6)
-        b = b - 0.5 * tw
-        a = hm / 2.0
-        e = 3.0 * tf * b ** 2 / (6.0 * tf * b + hm * tw)
-        omega = a * max(e, b - e)
-        ort = "Flanschende" if b - e >= e else "Steg (Flanschhöhe)"
-        # S_omega: vom Flanschende her aufsummiert, dann durch den halben Steg
-        S_flansch = tf * a * (e ** 2 - (b - e) ** 2) / 2.0
-        S_steg = S_flansch - e * tw * hm ** 2 / 8.0
-        if abs(S_steg) / tw >= abs(S_flansch) / tf:
-            S, t_S, ort_S = abs(S_steg), tw, "Stegmitte"
-        else:
-            S, t_S, ort_S = abs(S_flansch), tf, "Flansch am Steg"
-        Iw = (e ** 2 * tw * hm ** 3 / 12.0
-              + 2 * tf * a ** 2 * ((b - e) ** 3 + e ** 3) / 3.0)
+        # model.iw_u_profil; bis zum 14.11.2026 die volle Breite, Befund C6), die
+        # Flanschdicke mit der Neigung, mit der I_w gebildet ist (UPN, Befund B'2)
+        from ..model import u_mittellinie, u_neigung_aus_iw
+        from ..zahlen import zahl_text
+        u = u_mittellinie(h, b, tw, tf, u_neigung_aus_iw(sec))
+        if u is None:
+            return None
+        bs, e, a0, c = u["bs"], u["e"], u["a0"], u["c"]
+        a = u["hs"] / 2.0
+        omega = a * max(e, bs - e)
+        ort = "Flanschende" if bs - e >= e else "Steg (Flanschhöhe)"
+        # S_omega vom Flanschende her: S(y) = a [e (F0(b_s) - F0(y)) - (F1(b_s) - F1(y))]
+        # mit F0 = Integral t dy, F1 = Integral y t dy (t = a0 + c y)
+        y = np.union1d(np.linspace(0.0, bs, 2001), [min(max(e, 0.0), bs)])
+
+        def F0(x):
+            return a0 * x + c * x ** 2 / 2.0
+
+        def F1(x):
+            return a0 * x ** 2 / 2.0 + c * x ** 3 / 3.0
+        S_fl = a * (e * (F0(bs) - F0(y)) - (F1(bs) - F1(y)))
+        t_fl = a0 + c * y
+        i = int(np.argmax(np.abs(S_fl) / t_fl))
+        S_ecke = float(S_fl[0])
+        # durch den Steg: von der Ecke zur Mitte + e t_w a^2/2 (bis 14.11.2026 mit Minus)
+        S_mitte = S_ecke + e * tw * a ** 2 / 2.0
+        kandidaten = [(abs(float(S_fl[i])), float(t_fl[i]),
+                       f"Flansch, {zahl_text(round(float(y[i]) * 1e3, 1))} mm ab Stegmitte"),
+                      (abs(S_ecke), tw, "Steg am Flansch"),
+                      (abs(S_mitte), tw, "Stegmitte")]
+        S, t_S, ort_S = max(kandidaten, key=lambda k: k[0] / k[1])
+        # Probe: I_w = Integral omega^2 t ds (Steg e^2 t_w h_m^3/12, Flansche 2 a^2 Integral (e-y)^2 t dy)
+        Iw = (e ** 2 * tw * u["hs"] ** 3 / 12.0
+              + 2 * a ** 2 * (a0 * ((bs - e) ** 3 + e ** 3) / 3.0
+                              + c * (e ** 2 * bs ** 2 / 2.0 - 2.0 * e * bs ** 3 / 3.0 + bs ** 4 / 4.0)))
         return Sektorwerte(omega, S, t_S, ort, ort_S, Iw)
     return None
 

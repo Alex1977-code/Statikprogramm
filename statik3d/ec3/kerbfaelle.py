@@ -36,6 +36,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from ..begriffe import anzahl
+from ..zahlen import zahl_text
 
 #: Tabelle 8.1, Kerbfall 14: Stange mit Gewinde unter Zug [Pa]
 ZUGSTAB = 50e6
@@ -57,6 +58,9 @@ class Vorschlag:
     grund: str
     konzept: str = ""   # nur Koerper: Nennspannung | Strukturspannung | Kerbspannung
     kerbfall_naht: float = 0.0   # nur Koerper: an verschweissten Beruehrungsstellen
+    #: nur Zugstab ueber 30 mm: Durchmesser [m] und Groesseneinfluss k_s
+    durchmesser: float = 0.0
+    k_s: float = 1.0
 
 
 def vorschlag_stab(model, mem) -> Optional[Vorschlag]:
@@ -72,13 +76,18 @@ def vorschlag_stab(model, mem) -> Optional[Vorschlag]:
         return Vorschlag("stab", mem.name, ZUGSTAB * ks,
                          "Zugstab mit Rundquerschnitt: Stange mit Gewinde unter Zug "
                          "(Tab. 8.1, Kerbfall 14)"
-                         + (f", Größeneinfluss k_s = (30/{d * 1e3:.0f})^0,25 = {ks:.3f}"
-                            if ks < 1.0 else ""))
+                         + (f", Größeneinfluss {_ks_text(d, ks)}" if ks < 1.0 else ""),
+                         durchmesser=d, k_s=ks)
     if typ in GEWALZT:
         return Vorschlag("stab", mem.name, GRUNDWERKSTOFF,
                          f"gewalzter Querschnitt {getattr(sec, 'name', e.sec)}: Grundwerkstoff "
                          "(Tab. 8.1, Kerbfall 1) - Anschlüsse, Steifen und Nähte mindern")
     return None
+
+
+def _ks_text(d: float, ks: float) -> str:
+    """„k_s = (30/40)^0,25 = 0,931“ - mit Komma (bis zum 14.11.2026 „0.931“)."""
+    return f"k_s = (30/{zahl_text(round(d * 1e3, 1))})^0,25 = {zahl_text(round(ks, 3))}"
 
 
 def zugstab_durchmesser(sec) -> float:
@@ -130,6 +139,7 @@ def anwenden(model, log: Optional[list] = None, nur_leere: bool = True) -> dict:
             mem.kerbfall_vorschlag = False
             n["naht"] += 1
     behalten: list = []
+    mit_ks: dict = {}                   # (Durchmesser, k_s, Kerbfall) -> Anzahl
     for v in vorschlaege(model):
         if v.art == "stab":
             if v.name in naht:
@@ -141,6 +151,9 @@ def anwenden(model, log: Optional[list] = None, nur_leere: bool = True) -> dict:
             mem.detail_category = v.kerbfall
             mem.kerbfall_vorschlag = True
             n["zugstab" if v.kerbfall <= ZUGSTAB else "gewalzt"] += 1
+            if v.k_s < 1.0:
+                schl = (v.durchmesser, v.k_s, v.kerbfall)
+                mit_ks[schl] = mit_ks.get(schl, 0) + 1
         else:
             k = model.koerper[v.name]
             if nur_leere and float(k.kerbfall or 0.0) > 0 and not k.kerbfall_vorschlag:
@@ -154,9 +167,16 @@ def anwenden(model, log: Optional[list] = None, nur_leere: bool = True) -> dict:
     n["behalten"] = len(behalten)
     if log is not None:
         teile = []
-        if n["zugstab"]:
-            teile.append(f"{anzahl(n['zugstab'], 'Zugstab', 'Zugstäbe')}: Kerbfall 50 N/mm² (Tab. 8.1, Kerbfall 14: "
+        # Zugstaebe ueber 30 mm getrennt mit ihrem Wert (bis zum 14.11.2026 pauschal
+        # „Kerbfall 50“ fuer alle, Befund A'11 - am Drehlager 16 von 64 mit 46,53)
+        n50 = n["zugstab"] - sum(mit_ks.values())
+        if n50:
+            teile.append(f"{anzahl(n50, 'Zugstab', 'Zugstäbe')}: Kerbfall 50 N/mm² (Tab. 8.1, Kerbfall 14: "
                          "Stange mit Gewinde unter Zug)")
+        for (d, ks, kf), k in sorted(mit_ks.items()):
+            teile.append(f"{anzahl(k, 'Zugstab', 'Zugstäbe')} Ø {zahl_text(round(d * 1e3, 1))} mm: Kerbfall "
+                         f"{zahl_text(round(kf / 1e6, 2))} N/mm² (Kerbfall 50 mit Größeneinfluss "
+                         f"{_ks_text(d, ks)})")
         if n["gewalzt"]:
             teile.append(f"{anzahl(n['gewalzt'], 'Stab', 'Stäbe')} mit gewalztem Querschnitt: Kerbfall 160 N/mm² "
                          "(Tab. 8.1, Kerbfall 1: Grundwerkstoff)")

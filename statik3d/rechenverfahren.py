@@ -1055,17 +1055,15 @@ def _kerbfall_vorschlag_im_modell(model) -> str:
 
 
 def _u_profile_alt(model) -> list:
-    """Namen der benutzten U-Profile, deren I_w noch der Formel mit voller
-    Flanschbreite folgt (bis 14.11.2026, Befund C6)."""
-    from .model import iw_u_profil, iw_u_profil_alt
+    """Namen der benutzten U-Profile und Doppel-U, deren I_w noch einem frueheren
+    Formelwert folgt (model.iw_u_stand): volle Flanschbreite (bis 14.11.2026, Befund
+    C6) oder UPN ohne Flanschneigung (Stand 45 bis 50, Befund B'2). Unbenutzte zaehlen
+    nicht (Befund A'10)."""
+    from .model import iw_u_stand
     benutzt = {getattr(e, "sec", None) for e in (getattr(model, "elements", None) or [])}
     aus = []
     for name, sec in (getattr(model, "sections", None) or {}).items():
-        if getattr(sec, "typ", "") != "U" or name not in benutzt:
-            continue
-        alt = iw_u_profil_alt(sec.h, sec.b, sec.tw, sec.tf)
-        neu = iw_u_profil(sec.h, sec.b, sec.tw, sec.tf)
-        if alt > 0 and abs(float(sec.Iw or 0.0) - alt) <= 1e-6 * alt and abs(alt - neu) > 1e-6 * alt:
+        if name in benutzt and iw_u_stand(sec) is not None:
             aus.append(str(name))
     return aus
 
@@ -1074,8 +1072,47 @@ def _u_profile_im_modell(model) -> str:
     namen = _u_profile_alt(model)
     if not namen:
         return ""
-    return (f"die U-Profile {_kurz(namen)} tragen I_w mit voller Flanschbreite (zu groß) – den "
+    return (f"die U-Profile {_kurz(namen)} tragen I_w nach einer früheren Formel (volle Flanschbreite "
+            "bzw. UPN ohne Flanschneigung, zu groß) – beim Öffnen neu berechnen lassen oder den "
             "Querschnitt aus der Profiltabelle neu zuweisen, dann neu rechnen")
+
+
+def _woelb_u(model) -> bool:
+    """Ein Stab mit Woelbkrafttorsionsnachweis an einem U-Profil (Befund B'1)."""
+    for mem in (getattr(model, "members", None) or {}).values():
+        if not getattr(mem, "woelb_check", False) or not mem.elements:
+            continue
+        if mem.elements[0] >= len(model.elements):
+            continue
+        sec = (model.sections or {}).get(model.elements[mem.elements[0]].sec)
+        if getattr(sec, "typ", "") == "U":
+            return True
+    return False
+
+
+def _kerbfall_maske_geloescht(model) -> list:
+    """Zugstaebe mit Rundquerschnitt ueber 30 mm ohne Kerbfall in einem Modell mit
+    Ermuedungslasten: die Stabmaske hat bis zum 14.11.2026 den Vorschlag mit k_s
+    (46,53 fuer Rund 40) nicht gefunden und bei OK geloescht (Befund A'1)."""
+    if not (getattr(model, "fatigue_loads", None) or {}):
+        return []
+    from .ec3 import kerbfaelle as _kf
+    aus = []
+    for name, mem in (getattr(model, "members", None) or {}).items():
+        if getattr(mem, "detail_category", None) or getattr(mem, "kerbfall_vorschlag", False):
+            continue
+        v = _kf.vorschlag_stab(model, mem)
+        if v is not None and v.kerbfall < _kf.ZUGSTAB - 1e-6:
+            aus.append(str(name))
+    return aus
+
+
+def _kerbfall_maske_wo(model, analyse=None) -> str:
+    namen = _kerbfall_maske_geloescht(model)
+    if not namen:
+        return ""
+    return (f"die Zugstäbe {_kurz(namen)} haben keinen Kerbfall – war es der Vorschlag mit k_s, hat ihn "
+            "die Stabmaske gelöscht; „Kerbfälle vorschlagen“ oder die Stabmaske prüfen, dann neu rechnen")
 
 
 def _kontakt_nur_koerper(model) -> bool:
@@ -2884,10 +2921,15 @@ MERKMALE: list = [
     Merkmal(
         name="u_profil_iw", titel="Wölbwiderstand I_w der U-Profile",
         texte={"alt": "I_w mit voller Flanschbreite b",
-               "neu": "I_w auf der Mittellinie mit b − t_w/2"},
+               "neu": "I_w auf der Mittellinie mit b − t_w/2",
+               "neigung": "I_w auf der Mittellinie mit b − t_w/2, UPN mit Flanschneigung"},
         wechsel=(Wechsel(stand=45, datum="14.11.2026", commit="fix/k5-b-beulen", alt="alt", neu="neu",
-                         art=FEHLERKORREKTUR),),
-        modellmerkmal="benutztes U-Profil mit I_w nach der alten Formel",
+                         art=FEHLERKORREKTUR),
+                 # Befund B'2 (zweite Runde 14.11.2026): UPN mit Flanschneigung (UPN 200
+                 # 9 559,6 statt 10 499,5 cm⁶, M_cr bis 3,4 % zu hoch); Doppel-U ebenso
+                 Wechsel(stand=51, datum="14.11.2026", commit="fix/k6-ermuedung", alt="neu", neu="neigung",
+                         art=FEHLERKORREKTUR)),
+        modellmerkmal="benutztes U-Profil oder Doppel-U mit I_w nach einer früheren Formel",
         betrifft=lambda model: bool(_u_profile_alt(model)), im_modell=_u_profile_im_modell),
     # Befund I3 der Einheiten-Agenten (14.11.2026): der RFEM-6-Import bildete das
     # Eigengewicht aus rho * 9,81 statt aus der Wichte gamma - RFEM verbindet beide
@@ -3040,10 +3082,34 @@ MERKMALE: list = [
         betrifft=_schalennetz_getrennt, import_korrektur=True, im_ergebnis=_schalennetz_getrennt_wo,
         modellgrund="Netz getrennt erzeugt (einzelne Fläche neu vernetzt, Polylinie oder älterer Programmstand)",
         vorschlag="Netz › Vernetzen: das Netz neu erzeugen"),
+    # Befund B'1 (zweite Runde 14.11.2026): Woelbflaechenmoment S_omega des U-Profils
+    # mit falschem Vorzeichen des Steganteils und in Stegmitte statt im Flansch
+    # (UPN 200: S/t 197,2 statt 91,7 cm³, tau_w 2,15-fach); UPN zudem mit
+    # Flanschneigung (omega, e). Fehlerkorrektur am Ergebnis des Woelbnachweises
+    Merkmal(
+        name="woelb_u_schub", titel="Wölbkrafttorsion am U-Profil",
+        texte={"alt": "S_ω in Stegmitte mit falschem Vorzeichen des Steganteils (τ_w zu groß)",
+               "neu": "S_ω mit Größtwert im Flansch am Nulldurchgang von ω; UPN mit Flanschneigung"},
+        wechsel=(Wechsel(stand=51, datum="14.11.2026", commit="fix/k6-ermuedung", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Stab mit U-Profil und Wölbkrafttorsionsnachweis",
+        betrifft=_woelb_u),
+    # Befund A'1 (zweite Runde 14.11.2026): die Stabmaske fand den Kerbfall-Vorschlag
+    # mit k_s (46,53 fuer Rund 40) nicht in ihrer Liste und schrieb bei OK None - der
+    # Ermuedungsnachweis fiel still weg (16 Zugstaebe am Drehlager). Fehlerkorrektur
+    Merkmal(
+        name="kerbfall_maske_ks", titel="Kerbfall nach der Stabmaske",
+        texte={"alt": "Kerbfall-Vorschlag mit k_s bei OK in der Stabmaske gelöscht",
+               "neu": "Stabmaske behält einen Kerbfall außerhalb ihrer Liste"},
+        wechsel=(Wechsel(stand=51, datum="14.11.2026", commit="fix/k6-ermuedung", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Zugstab mit Rundquerschnitt über 30 mm ohne Kerbfall und Ermüdungslasten",
+        betrifft=lambda model: bool(_kerbfall_maske_geloescht(model)),
+        im_ergebnis=_kerbfall_maske_wo),
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 50
+VERFAHRENSSTAND = 51
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

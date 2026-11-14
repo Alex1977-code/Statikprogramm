@@ -105,6 +105,14 @@ def fmt(value, digits: int = 2) -> str:
     return s
 
 
+def _kerbfall_mpa(pa) -> str:
+    """Kerbfall [Pa] als Text in MPa: ganzzahlig ohne Nachkommastellen („71“), sonst mit
+    zwei („46.53“, Vorschlag mit k_s fuer Zugstaebe ueber 30 mm). Bis zum 14.11.2026
+    stand hier immer die ganze Zahl (46,53 als 47, Befund A'1)."""
+    v = float(pa) / 1e6
+    return fmt(v, 0) if abs(v - round(v)) < 1e-6 else fmt(v, 2)
+
+
 class Util:
     """Ausnutzungsgrad als Tabellenzelle (im HTML gruen/rot hervorgehoben)."""
 
@@ -1132,7 +1140,7 @@ class Report:
                              {"top": "Obergurt", "bottom": "Untergurt"}.get(
                                  mem.load_position, "Schubmittelpunkt"),
                              "ja" if mem.lt_check else "nein",
-                             fmt(mem.detail_category / 1e6, 0) if mem.detail_category else "–"])
+                             _kerbfall_mpa(mem.detail_category) if mem.detail_category else "–"])
             rows, note = self._truncate(rows)
             b.append(("table", rows, "Stäbe für die Nachweise (Knicklängen, "
                                      "Biegedrillknicken, Kerbfall)", None, "compact"))
@@ -4316,11 +4324,11 @@ class Report:
         for fm in f.members.values():
             if getattr(fm, "fehler", ""):
                 # nicht gefuehrt: keine Nullen, die wie ein Ergebnis aussehen
-                rows.append([fm.member, fmt(fm.category / 1e6, 0), fmt(fm.gamma_Mf, 2),
+                rows.append([fm.member, _kerbfall_mpa(fm.category), fmt(fm.gamma_Mf, 2),
                              "–", "–", "–", "–", "nicht geführt"]
                             + (["–"] if jahre else []) + [_pretty(fm.fehler)])
                 continue
-            zeile = [fm.member, fmt(fm.category / 1e6, 0), fmt(fm.gamma_Mf, 2),
+            zeile = [fm.member, _kerbfall_mpa(fm.category), fmt(fm.gamma_Mf, 2),
                      fmt(fm.dsig_max / 1e6, 1), fmt(fm.dsig_E2 / 1e6, 1), fmt(fm.D, 3),
                      fmt(fm.D_shear, 3), Util(fm.util)]
             if jahre:
@@ -4335,9 +4343,12 @@ class Report:
         for fm in f.members.values():
             mem = m.members.get(fm.member)
             b.append(self._h(3, f"Stab {fm.member}"))
-            cat_mpa = int(round(fm.category / 1e6))
-            kv = [("Kerbfall Normalspannung Δσ_C",
-                   f"{cat_mpa} MPa – {DETAIL_EXAMPLES.get(cat_mpa, 'Kerbfall nach Tabellen 8.1–8.10')}"),
+            cat_mpa = fm.category / 1e6
+            if abs(cat_mpa - round(cat_mpa)) < 1e-6:
+                cat_bez = DETAIL_EXAMPLES.get(int(round(cat_mpa)), "Kerbfall nach Tabellen 8.1–8.10")
+            else:
+                cat_bez = "Kerbfall nach Tabellen 8.1–8.10, abgemindert (z. B. Größeneinfluss k_s)"
+            kv = [("Kerbfall Normalspannung Δσ_C", f"{_kerbfall_mpa(fm.category)} MPa – {cat_bez}"),
                   ("Kerbfall Schub Δτ_C", f"{fm.category_shear / 1e6:.0f} MPa")]
             if mem is not None:
                 kv.append(("Bemessungskonzept / Schadensfolgen",

@@ -610,9 +610,21 @@ class MemberDialog(QtWidgets.QDialog):
         self.cat.addItem("kein Ermüdungsnachweis", None)
         for c in DETAIL_CATEGORIES:
             self.cat.addItem(f"{c}: {DETAIL_EXAMPLES.get(c, '')}", c)
+        # Ein Wert ausserhalb der Liste - der Kerbfall-Vorschlag mit k_s fuer Zugstaebe
+        # ueber 30 mm (Rund 40: 46,53) oder ein in der Tabelle eingegebener - steht als
+        # eigener Eintrag da und bleibt bei OK unveraendert. Bis zum 14.11.2026 fand die
+        # Maske ihn nicht und schrieb bei OK None: der Ermuedungsnachweis fiel still weg
+        # (Befund A'1, 16 Zugstaebe am Drehlager)
+        self._cat_eigen = None
         if m.detail_category:
-            idx = self.cat.findData(int(round(m.detail_category / 1e6)))
-            self.cat.setCurrentIndex(max(idx, 0))
+            wert = float(m.detail_category) / 1e6
+            idx = self.cat.findData(int(round(wert))) if abs(wert - round(wert)) < 1e-6 else -1
+            if idx < 0:
+                art = "Vorschlag mit k_s" if getattr(m, "kerbfall_vorschlag", False) else "eingegebener Wert"
+                self.cat.insertItem(1, f"{zl.zahl_text(round(wert, 2), tausender=False)} N/mm² – {art}", "eigen")
+                self._cat_eigen = float(m.detail_category)
+                idx = 1
+            self.cat.setCurrentIndex(idx)
         self.cat_s = QtWidgets.QComboBox()
         self.cat_s.addItems(["100", "80"])
         if m.detail_category_shear:
@@ -656,7 +668,10 @@ class MemberDialog(QtWidgets.QDialog):
         m.woelb_start = self.w_start.currentText()
         m.woelb_ende = self.w_ende.currentText()
         c = self.cat.currentData()
-        m.detail_category = float(c) * 1e6 if c else None
+        if c == "eigen":
+            m.detail_category = self._cat_eigen          # unveraendert zurueck
+        else:
+            m.detail_category = float(c) * 1e6 if c else None
         m.kerbfall_vorschlag = False                 # im Dialog bestaetigt
         m.detail_category_shear = float(self.cat_s.currentText()) * 1e6
         m.consequence = self.consequence.currentText()

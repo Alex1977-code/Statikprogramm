@@ -20391,7 +20391,9 @@ class MainWindow(QtWidgets.QMainWindow):
                          f"{m.member_length(mem):.2f}", e0.sec if e0 else "",
                          f"{zl.zahl_text(mem.beta_y, tausender=False, punkt=True)} / {zl.zahl_text(mem.beta_z, tausender=False, punkt=True)}",
                          zl.zahl_text(mem.L_LT, tausender=False, punkt=True) if mem.L_LT else "L",
-                         (f"{mem.detail_category/1e6:.0f}"
+                         # zwei Nachkommastellen (Vorschlag mit k_s: 46.53), ganze Werte ohne;
+                         # bis zum 14.11.2026 auf die ganze Zahl gerundet (Befund A'1)
+                         (zl.zahl_text(round(mem.detail_category / 1e6, 2), tausender=False, punkt=True)
                           + (" (Vorschlag)" if getattr(mem, "kerbfall_vorschlag", False) else ""))
                          if mem.detail_category else "-"])
         self._fill(self.tbl_mem, rows)
@@ -22866,14 +22868,20 @@ class MainWindow(QtWidgets.QMainWindow):
         Rueckgaengig-Schritt, Model.u_profile_iw_berichtigen (eigene Werte bleiben),
         Protokollzeile; geladene Ergebnisse gehoeren zum alten I_w und werden verworfen
         (Modell geaendert). Nein: alles bleibt, der Status bleibt. Rueckgabe: berichtigt?"""
-        namen = self.model.u_profile_iw_alt()
+        # gefragt wird nur, wenn ein benutztes Profil betroffen ist; unbenutzte werden dann
+        # mit berichtigt und eigens genannt (Befund A'10 vom 14.11.2026: ein unbenutztes
+        # U-Profil loeste Frage und Verwerfen aus, ohne Status)
+        namen = self.model.u_profile_iw_alt(nur_benutzt=True)
         if not namen:
             return False
+        unbenutzt = [n for n in self.model.u_profile_iw_alt() if n not in namen]
         ergebnisse = self.analysis is not None or self.results is not None
-        text = ("Die Datei enthält U-Profile, deren Wölbwiderstand I_w nach der Formel bis zum 14.11.2026 "
-                "berechnet ist (volle Flanschbreite, zu groß): " + ", ".join(namen[:6])
-                + (" …" if len(namen) > 6 else "") + ".\n\n"
-                "I_w der U-Profile nach der berichtigten Formel neu berechnen?\n\n"
+        text = ("Die Datei enthält U-Profile, deren Wölbwiderstand I_w nach einer früheren Formel "
+                "berechnet ist (volle Flanschbreite bzw. UPN ohne Flanschneigung, zu groß): " + ", ".join(namen[:6])
+                + (" …" if len(namen) > 6 else "") + ".\n"
+                + (("Unbenutzt, wird mit berichtigt: " + ", ".join(unbenutzt[:6])
+                    + (" …" if len(unbenutzt) > 6 else "") + ".\n") if unbenutzt else "")
+                + "\nI_w der U-Profile nach der berichtigten Formel neu berechnen?\n\n"
                 "Eigene I_w-Werte bleiben unverändert. Ein Rückgängig-Schritt."
                 + (" Die geladenen Ergebnisse gehören zum alten I_w und werden verworfen (neu rechnen); "
                    "Rückgängig holt sie nicht zurück." if ergebnisse else ""))
