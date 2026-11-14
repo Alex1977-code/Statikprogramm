@@ -285,8 +285,8 @@ def schalennetz_hinweis(model) -> list:
                  f"{dbsp}) bis zum 12.11.2026")
     text = (f"Schalennetz nicht verbunden: {len(paare)} Flächenpaar(e) an {len(linien)} gemeinsamen "
             f"Linie(n) haben verschiedene Netzknoten (z. B. {beispiel}). So vernetzte das Programm bis "
-            f"zum 09.11.2026{dtext}, beim Neuvernetzen einzelner Flächen und an Polylinien bis zum "
-            "14.11.2026 – die Flächen hängen nur an den Linienenden zusammen, das Ergebnis "
+            f"zum 09.11.2026{dtext}, beim Neuvernetzen einzelner Flächen, an Polylinien und an Rippen "
+            "(Linie in Fläche) bis zum 14.11.2026 – die Flächen hängen nur an den Linienenden zusammen, das Ergebnis "
             "ist zu weich. Bitte neu vernetzen.")
     vorschlag = "Netz › Vernetzen (alle Flächen)"
     hinweise = getattr(model, "importhinweise", None)
@@ -412,18 +412,50 @@ FLAECHENLAGER_HINWEIS = "flaechenlager_neuvernetzen"
 STAND_FLAECHENLAGER = 37
 
 
+def _flaechenlager_elementbezogen_lager(model) -> list:
+    """Die Flaechenlager mit Elementliste (ohne Flaechenbezug), die auf Elementen
+    einer vernetzten Flaeche oder eines vernetzten Koerpers liegen."""
+    netz = {int(e) for o in list((getattr(model, "flaechen", None) or {}).values())
+            + list((getattr(model, "koerper", None) or {}).values()) for e in (o.elemente or [])}
+    return [ss for ss in getattr(model, "surface_supports", None) or []
+            if ss.elements and not getattr(ss, "flaechen", None) and any(int(e) in netz for e in ss.elements)]
+
+
 def flaechenlager_elementbezogen(model) -> list:
     """Namen der Flaechenlager mit Elementliste (ohne Flaechenbezug), die auf
     Elementen einer vernetzten Flaeche oder eines vernetzten Koerpers liegen - nur
     deren Netz wird neu vernetzt (Befund 11 vom 11.11.2026)."""
-    netz = {int(e) for o in list((getattr(model, "flaechen", None) or {}).values())
-            + list((getattr(model, "koerper", None) or {}).values()) for e in (o.elemente or [])}
     aus = []
-    for ss in getattr(model, "surface_supports", None) or []:
-        if ss.elements and not getattr(ss, "flaechen", None) and any(int(e) in netz for e in ss.elements):
-            if str(ss.name) not in aus:
-                aus.append(str(ss.name))
+    for ss in _flaechenlager_elementbezogen_lager(model):
+        if str(ss.name) not in aus:
+            aus.append(str(ss.name))
     return aus
+
+
+def _flaechenlager_kennung(ss) -> str:
+    """Die feste Kennung des Flaechenlagers - vergeben, wenn es noch keine hat."""
+    if not getattr(ss, "kennung", ""):
+        import uuid
+        ss.kennung = uuid.uuid4().hex[:12]
+    return ss.kennung
+
+
+def _hinweis_lager(model, h) -> list:
+    """Die Flaechenlager, die ein Hinweis „Flächenlager nach Neuvernetzen prüfen“
+    meint - ueber die feste Kennung (Befund A'10 vom 14.11.2026), sonst (Hinweis
+    von Stand 50/51) ueber den Namen: dann bekommen die Lager mit diesem Namen
+    ihre Kennung, und der Hinweis merkt sie sich. So bleibt er beim Umbenennen
+    am Lager."""
+    lager = list(getattr(model, "surface_supports", None) or [])
+    kennungen = [str(k) for k in (h.get("kennungen") or []) if k]
+    if not kennungen:
+        namen = {str(o) for o in (h.get("objekte") or [])}
+        treffer = [ss for ss in lager if str(ss.name) in namen]
+        if not treffer:
+            return []
+        h["kennungen"] = [_flaechenlager_kennung(ss) for ss in treffer]
+        return treffer
+    return [ss for ss in lager if getattr(ss, "kennung", "") in kennungen]
 
 
 def flaechenlager_neuvernetzen_hinweis(model, stand) -> list:
@@ -442,35 +474,53 @@ def flaechenlager_neuvernetzen_hinweis(model, stand) -> list:
     hinweise = getattr(model, "importhinweise", None)
     if hinweise is None:
         hinweise = model.importhinweise = []
-    schon = {str(o) for h in hinweise if h.get("art") == FLAECHENLAGER_HINWEIS for o in (h.get("objekte") or [])}
+    schon = {id(ss) for h in hinweise if h.get("art") == FLAECHENLAGER_HINWEIS for ss in _hinweis_lager(model, h)}
     zeilen = []
-    for name in flaechenlager_elementbezogen(model):
-        if name in schon:
+    for ss in _flaechenlager_elementbezogen_lager(model):
+        if id(ss) in schon:
             continue
-        text = (f"Flächenlager nach Neuvernetzen prüfen: „{name}“ ist über eine Elementliste an das Netz "
+        name = str(ss.name)
+        wer = (f"„{name}“" if name else
+               f"das Flächenlager ohne Namen (Nr. {model.surface_supports.index(ss) + 1} im Modellbaum)")
+        text = (f"Flächenlager nach Neuvernetzen prüfen: {wer} ist über eine Elementliste an das Netz "
                 "gebunden, die Ergebnisdatei stammt von einem Programmstand vor dem 12.11.2026. Damals zog das "
                 "Neuvernetzen einer Fläche in der Oberfläche die Elementnummern solcher Lager nicht nach – wurde "
                 "eine Fläche danach neu vernetzt, kann das Lager auf anderen Elementen liegen (auch auf einer "
                 "anderen Fläche). Bitte prüfen, wo es liegt, und als geprüft bestätigen.")
         hinweise.append({"art": FLAECHENLAGER_HINWEIS, "text": text, "objekte": [name],
+                         "kennungen": [_flaechenlager_kennung(ss)],
                          "vorschlag": "Rechtsklick auf das Flächenlager › „Flächenlager geprüft“",
                          "erledigt": False, "datei": ""})
         zeilen.append(text)
     return zeilen
 
 
-def flaechenlager_neuvernetzen_offen(model) -> list:
-    """Namen der Flaechenlager mit offenem Hinweis „Flächenlager nach Neuvernetzen
-    prüfen“, die es noch gibt und die weiter eine Elementliste auf vernetzten Flaechen
-    tragen."""
-    da = set(flaechenlager_elementbezogen(model))
-    aus = []
+def flaechenlager_neuvernetzen_offen_lager(model) -> list:
+    """Die Flaechenlager mit offenem Hinweis „Flächenlager nach Neuvernetzen
+    prüfen“, die weiter eine Elementliste auf vernetzten Flaechen tragen - ueber
+    die feste Kennung, also auch nach dem Umbenennen und je Lager ohne Namen
+    (Befund A'10 vom 14.11.2026)."""
+    da = {id(ss) for ss in _flaechenlager_elementbezogen_lager(model)}
+    aus, gesehen = [], set()
     for h in getattr(model, "importhinweise", None) or []:
         if h.get("art") != FLAECHENLAGER_HINWEIS or h.get("erledigt"):
             continue
-        for o in h.get("objekte") or []:
-            if str(o) in da and str(o) not in aus:
-                aus.append(str(o))
+        for ss in _hinweis_lager(model, h):
+            if id(ss) in da and id(ss) not in gesehen:
+                gesehen.add(id(ss))
+                aus.append(ss)
+    return aus
+
+
+def flaechenlager_neuvernetzen_offen(model) -> list:
+    """Namen der Flaechenlager mit offenem Hinweis „Flächenlager nach Neuvernetzen
+    prüfen“, die es noch gibt und die weiter eine Elementliste auf vernetzten Flaechen
+    tragen (:func:`flaechenlager_neuvernetzen_offen_lager`) - der heutige Name, ein
+    Lager ohne Namen als „“."""
+    aus = []
+    for ss in flaechenlager_neuvernetzen_offen_lager(model):
+        if str(ss.name) not in aus:
+            aus.append(str(ss.name))
     return aus
 
 
@@ -1514,6 +1564,12 @@ class SurfaceSupport:
     #: Lager auf dessen Elemente (Befund 11 vom 11.11.2026). Gilt nur, solange
     #: das Lager noch der Rest von damals ist (wie die Meldung oben).
     folgt: list = field(default_factory=list)
+    #: Feste Kennung, an der ein Hinweis am Modell das Lager wiederfindet
+    #: (Befund A'10 vom 14.11.2026): der Hinweis „Flächenlager nach Neuvernetzen
+    #: prüfen“ hing am Namen - nach dem Umbenennen war er verschwunden, zwei Lager
+    #: ohne Namen teilten sich einen. Vergeben erst, wenn ein Hinweis sie braucht;
+    #: zaehlt nicht fuer die Rechnung (ergebnisse.ANZEIGEFELDER). "" = keine.
+    kennung: str = ""
 
     def dof_behaviour(self, dof: int) -> DofBehaviour:
         b = self.behaviour.get(dof) or self.behaviour.get(str(dof))
@@ -10956,19 +11012,31 @@ class Model:
         return ["I_w der U-Profile nach der berichtigten Formel neu berechnet (Mittellinie b − t_w/2, "
                 "Befund C6 vom 14.11.2026): " + "; ".join(teile)]
 
-    def flaechenlager_geprueft(self, name: Optional[str] = None) -> list:
+    def flaechenlager_geprueft(self, name: Optional[str] = None, lager=None) -> list:
         """Der Anwender bestaetigt den Hinweis „Flächenlager nach Neuvernetzen prüfen“
-        (:func:`flaechenlager_neuvernetzen_hinweis`) fuer das Flaechenlager ``name`` -
-        ohne Namen fuer alle. Der Hinweis wird erledigt und mit dem Modell gespeichert;
-        der Status „flaechenlager_neuvernetzen“ entfaellt. Rueckgabe: die Namen."""
+        (:func:`flaechenlager_neuvernetzen_hinweis`) fuer das Flaechenlager ``lager``
+        (das Objekt) oder fuer die Lager mit dem Namen ``name`` - ohne beides fuer
+        alle. Gefunden wird das Lager ueber seine feste Kennung (Befund A'10 vom
+        14.11.2026), also auch nach dem Umbenennen; ein Lager ohne Namen bestaetigt
+        nur seinen eigenen Hinweis, wenn es als ``lager`` kommt. Der Hinweis wird
+        erledigt und mit dem Modell gespeichert; der Status
+        „flaechenlager_neuvernetzen“ entfaellt. Rueckgabe: die heutigen Namen."""
         aus = []
         for h in getattr(self, "importhinweise", None) or []:
             if h.get("art") != FLAECHENLAGER_HINWEIS or h.get("erledigt"):
                 continue
-            objekte = [str(o) for o in (h.get("objekte") or [])]
-            if name is None or str(name) in objekte:
+            gemeint = _hinweis_lager(self, h)
+            if lager is not None:
+                treffer = any(ss is lager for ss in gemeint)
+            elif name is not None:
+                treffer = (any(str(ss.name) == str(name) for ss in gemeint)
+                           or (not gemeint and str(name) in [str(o) for o in (h.get("objekte") or [])]))
+            else:
+                treffer = True
+            if treffer:
                 h["erledigt"] = True
-                aus += [o for o in objekte if o not in aus]
+                namen = [str(ss.name) for ss in gemeint] or [str(o) for o in (h.get("objekte") or [])]
+                aus += [o for o in namen if o not in aus]
         return aus
 
     # ---------------- Speichern / Laden ----------------
@@ -11759,7 +11827,9 @@ NEUE_FELDER = {
     # vorspannung/je-anker (Definitionen der Vorspannung je Anker, 16.10.2026)
     # gruppe5/robustheit (Flaechenlager merkt sich entfallene Elemente, 09.11.2026)
     # netz/altbefunde (Flaechenlager folgt dem neuen Netz einer ganzen Flaeche, 12.11.2026)
-    "surface_supports": {"entfallen": 0, "entfallen_rest": [], "folgt": []},
+    "surface_supports": {"entfallen": 0, "entfallen_rest": [], "folgt": [],
+                         # netz/k6 (feste Kennung fuer Hinweise am Modell, 14.11.2026)
+                         "kennung": ""},
     "": {"stabeinleitung": asdict(Stabeinleitung()), "ansichten": [], "vorspann_definitionen": [],
          # ui/paket-b (eigene Koordinatensysteme, 08.11.2026)
          "koordinatensysteme": []},

@@ -22841,13 +22841,14 @@ class MainWindow(QtWidgets.QMainWindow):
     def _flaechenlager_hinweis_offen(self, idx) -> bool:
         """Hat das Flaechenlager Nummer ``idx`` den offenen Hinweis „Flächenlager nach
         Neuvernetzen prüfen“ (model.flaechenlager_neuvernetzen_offen)?"""
-        from ..model import flaechenlager_neuvernetzen_offen
+        from ..model import flaechenlager_neuvernetzen_offen_lager
         lager = self.model.surface_supports
         try:
             ss = lager[int(idx)]
         except (IndexError, TypeError, ValueError):
             return False
-        return str(ss.name) in flaechenlager_neuvernetzen_offen(self.model)
+        # ueber die feste Kennung, nicht den Namen (Befund A'10 vom 14.11.2026)
+        return any(x is ss for x in flaechenlager_neuvernetzen_offen_lager(self.model))
 
     def flaechenlager_geprueft(self, idx: int) -> None:
         """Rechtsklick „Flächenlager geprüft“ (Vorschlag vom 14.11.2026): der Anwender
@@ -22858,7 +22859,7 @@ class MainWindow(QtWidgets.QMainWindow):
         from .. import rechenverfahren as _rv
         ss = self.model.surface_supports[int(idx)]
         self.merken(f"Flächenlager {ss.name} geprüft", beschriftung=True)
-        self.model.flaechenlager_geprueft(ss.name)
+        self.model.flaechenlager_geprueft(lager=ss)
         info = getattr(self.analysis, "info", None)
         if isinstance(info, dict) and isinstance(info.get("rechenverfahren"), dict):
             bew = _rv.bewerten(self.model, info["rechenverfahren"], self.analysis)

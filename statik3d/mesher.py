@@ -813,7 +813,8 @@ def _teilplan(model: Model, schalen: list) -> dict:
             aus.extend(ersatz.get(x) or [umlegen.get(x, x)])
         return aus
     plan = {"teilstuecke": {}, "ersetzt": ersetzt, "zwang": {}, "geteilt": set(), "beteiligt": set(),
-            "meldungen": [], "warnungen": [], "aktiv": False, "doppelt": [], "umgelegt": umlegen}
+            "meldungen": [], "warnungen": [], "aktiv": False, "doppelt": [], "umgelegt": umlegen,
+            "polyketten": set()}
     lines = getattr(model, "lines", None) or {}
     if len(schalen) < 2 or not lines:
         return plan
@@ -872,7 +873,7 @@ def _teilplan(model: Model, schalen: list) -> dict:
             continue
         kn = [int(k) for k in ln.nodes]
         treffer = []
-        for a, b in zip(kn[:-1], kn[1:]):
+        for i_ab, (a, b) in enumerate(zip(kn[:-1], kn[1:])):
             d = X[b] - X[a]
             L2 = float(d @ d)
             if L2 <= 0:
@@ -889,42 +890,43 @@ def _teilplan(model: Model, schalen: list) -> dict:
                     continue
                 ab = float(np.linalg.norm(X[k] - (X[a] + t * d)))
                 if ab < TEIL_FANG:
-                    treffer.append((t, k, ab, fremd))
+                    treffer.append((i_ab, t, k, ab, fremd))
         if not treffer:
             continue
-        treffer.sort(key=lambda z: (z[0], z[1]))
-        if len(kn) > 2:
-            for _t, k, _ab, fremd in treffer:
+        treffer.sort(key=lambda z: (z[0], z[1], z[2]))
+        # Eine Polylinie mit Zwischenknoten wird seit dem 14.11.2026 ebenso an
+        # fremden Knoten geteilt, je Abschnitt (Befund B'8: F1 mit L7p = [1, 6, 4],
+        # F2 mit L7q = [1, 7, 4] auf derselben Strecke hingen nur an den Enden
+        # zusammen, 397,70 statt 149,59 mm; bis dahin nur eine Protokollwarnung).
+        # Die Teilstuecke heissen nach ihren Knoten - die Polylinien beider
+        # Flaechen teilen sie so wie eine gemeinsame Linie.
+        kette, gruende = [kn[0]], []
+        for i_ab, (a, b) in enumerate(zip(kn[:-1], kn[1:])):
+            ell = float(np.linalg.norm(X[b] - X[a]))
+            tol = STUETZKNOTEN_TOL * ell + 1e-9
+            for _i, _t, k, ab, fremd in (z for z in treffer if z[0] == i_ab):
                 stelle(wem, fremd)
-                plan["warnungen"].append(
-                    f"Knoten {k} ({fl(fremd)}) liegt auf der Linie {x} ({fl(wem)}): die Linie hat "
-                    "Zwischenknoten und wird im Netz nicht geteilt – dort nicht verbunden.")
-            continue
-        a, b = kn
-        ell = float(np.linalg.norm(X[b] - X[a]))
-        tol = STUETZKNOTEN_TOL * ell + 1e-9
-        kette, gruende = [a], []
-        for _t, k, ab, fremd in treffer:
-            stelle(wem, fremd)
-            if ab > tol:
-                plan["warnungen"].append(
-                    f"Knoten {k} ({fl(fremd)}) liegt {mm(ab)} mm neben der Linie {x} ({fl(wem)}) – "
-                    f"schleifend, über der Toleranz von {mm(tol)} mm: dort nicht verbunden.")
-                continue
-            nachbar = next((m for m in (kette[-1], b)
-                            if float(np.linalg.norm(X[k] - X[m])) < TEIL_MIN), None)
-            if nachbar is not None:
-                plan["warnungen"].append(
-                    f"Knoten {k} ({fl(fremd)}) liegt auf der Linie {x} ({fl(wem)}) weniger als 1 mm "
-                    f"neben dem Knoten {nachbar}: das Teilstück wäre zu kurz – dort nicht verbunden.")
-                continue
-            kette.append(k)
-            gruende.append(
-                f"Linie {x} ({fl(wem)}) im Netz am Knoten {k} geteilt (Knoten auf Linie): dort "
-                f"{'schließt' if len(fremd) == 1 else 'schließen'} {fl(fremd)} an – gemeinsamer Netzknoten.")
-        if len(kette) > 1:
+                if ab > tol:
+                    plan["warnungen"].append(
+                        f"Knoten {k} ({fl(fremd)}) liegt {mm(ab)} mm neben der Linie {x} ({fl(wem)}) – "
+                        f"schleifend, über der Toleranz von {mm(tol)} mm: dort nicht verbunden.")
+                    continue
+                nachbar = next((m for m in (kette[-1], b)
+                                if float(np.linalg.norm(X[k] - X[m])) < TEIL_MIN), None)
+                if nachbar is not None:
+                    plan["warnungen"].append(
+                        f"Knoten {k} ({fl(fremd)}) liegt auf der Linie {x} ({fl(wem)}) weniger als 1 mm "
+                        f"neben dem Knoten {nachbar}: das Teilstück wäre zu kurz – dort nicht verbunden.")
+                    continue
+                kette.append(k)
+                gruende.append(
+                    f"Linie {x} ({fl(wem)}) im Netz am Knoten {k} geteilt (Knoten auf Linie): dort "
+                    f"{'schließt' if len(fremd) == 1 else 'schließen'} {fl(fremd)} an – gemeinsamer Netzknoten.")
             kette.append(b)
+        if gruende:
             ketten[x] = kette
+            if len(kn) > 2:
+                plan["polyketten"].add(x)
             plan["geteilt"].update(wem)
             plan["meldungen"].extend(gruende)
     # Teilstuecke benennen: gibt es die Linie zwischen den zwei Knoten schon, ist sie es
@@ -1654,8 +1656,23 @@ def getrennte_schalenlinien(model: Model) -> list:
     Flaeche B, Knoten nur auf einer Seite)] - nach dem Neuvernetzen einer
     einzelnen Flaeche bis zum 14.11.2026 (Befund B9), an Abschnitten einer
     Polylinie (Befund B10) oder aus einem Stand vor dem 09.11.2026
-    (Verfahrensmerkmal „schalennetz_getrennt“). Leer, wenn verbunden."""
-    return [(x[0], x[5], x[1], x[2], x[3]) for x in _unverbunden(model) if not x[4]]
+    (Verfahrensmerkmal „schalennetz_getrennt“). Leer, wenn verbunden.
+    Zwangslinien und Polylinien, die erst seit Stand 52 im Netz geteilt bzw.
+    geprueft werden, stehen in :func:`getrennte_rippen_polylinien`."""
+    return [(x[0], x[5], x[1], x[2], x[3]) for x in _unverbunden(model) if not x[4] and not x[6]]
+
+
+def getrennte_rippen_polylinien(model: Model) -> list:
+    """Wie :func:`getrennte_schalenlinien`, aber nur die Stellen, die bis Stand 51
+    weder Eingabepruefung noch Status kannten (Befund B'8 vom 14.11.2026):
+    eine Zwangslinie (Rippe auf einer Platte, ``_teilplan`` „Linie in Flaeche“),
+    an der das Netz getrennt ist - nach dem Neuvernetzen nur der Rippe vor
+    Stand 50 (Platte mit Rippe 14,591 statt 11,826 mm) -, und eine Polylinie
+    gegen eine Polylinie mit anderen Zwischenknoten auf derselben Strecke
+    (Platte 4 m 397,70 statt 149,59 mm). Rueckgabe [(Linie im Netz, [Linien
+    des Modells], Flaeche A, Flaeche B, Knoten nur auf einer Seite, Art)] mit
+    Art "zwang" oder "polylinie" (Verfahrensmerkmal „schalennetz_rippe_polylinie“)."""
+    return [(x[0], x[5], x[1], x[2], x[3], x[6]) for x in _unverbunden(model) if not x[4] and x[6]]
 
 
 def schalenlinien_text(eintrag) -> str:
@@ -1668,8 +1685,20 @@ def schalenlinien_text(eintrag) -> str:
 
 def _unverbunden(model: Model, doppellinien: bool = True) -> list:
     """[(Linie, Flaeche A, Flaeche B, Knoten nur auf einer Seite, [Doppellinien],
-    [Linien des Modells])] - siehe :func:`unverbundene_schalenlinien`; ohne
-    ``doppellinien`` jede Linie fuer sich (wie bis zum 14.11.2026)."""
+    [Linien des Modells], Art)] - siehe :func:`unverbundene_schalenlinien`; ohne
+    ``doppellinien`` jede Linie fuer sich (wie bis zum 14.11.2026). Art: ""
+    (gemeinsame Linie, Doppellinie, Teilstueck, Abschnitt), "zwang" (die Linie
+    ist Zwangslinie einer der Flaechen) oder "polylinie" (Polylinie gegen
+    Polylinie, an fremden Knoten geteilt) - seit Stand 52 (Befund B'8).
+
+    Mit dabei sind seit dem 14.11.2026 (Befund B'8) die **Zwangslinien** einer
+    Flaeche (``_teilplan`` „Linie in Flaeche“): eine Rippe, deren Netz an der
+    Plattenlinie getrennt ist (14,591 statt 11,826 mm), blieb ungemeldet.
+    Nicht als getrennt zaehlt (Befund A'10): eine Linie, an der eine
+    **Kontaktbedingung** die Netze gewollt trennt - die Knotenpaare stehen in
+    ``Model.getrennte_knoten`` (Original, Doppel); bis dahin warnte die
+    Eingabepruefung dort „Schalennetz nicht verbunden“, und der Status liess
+    sich durch kein Neuvernetzen aufheben."""
     schalen = [f for f in (getattr(model, "flaechen", None) or {}).values()
                if _ist_schale(model, f) and f.elemente]
     if len(schalen) < 2 or not len(model.elements):
@@ -1685,7 +1714,13 @@ def _unverbunden(model: Model, doppellinien: bool = True) -> list:
     an_linie: dict = {}
     doppel: dict = {}
     herkunft: dict = {}                       # Netzlinie -> Modelllinien, aus denen sie kommt
+    zwang: set = set()                        # Netzlinien, die Zwangslinie einer Flaeche sind
     for f in schalen:
+        for h in (plan["zwang"].get(f.name, []) if plan else []):
+            if f.name not in an_linie.setdefault(h, []):
+                an_linie[h].append(f.name)
+            herkunft.setdefault(h, set()).add(h)
+            zwang.add(h)
         knoten_von[f.name] = {int(k) for e in f.elemente if 0 <= int(e) < len(model.elements)
                               for k in model.elements[int(e)].nodes}
         for x in set(list(f.linien or []) + [y for loch in (f.oeffnungen or []) for y in loch]):
@@ -1698,6 +1733,21 @@ def _unverbunden(model: Model, doppellinien: bool = True) -> list:
     out = []
     cache: dict = {}
     X = model.nodes
+    # Gewollt getrennt: Knotenpaare einer Kontaktbedingung zaehlen als ein Knoten
+    kanon: dict = {}
+    for paare in (getattr(model, "getrennte_knoten", None) or {}).values():
+        for paar in paare or []:
+            if len(paar) >= 2:
+                kanon[int(paar[1])] = int(paar[0])
+
+    def wurzel(k):
+        k = int(k)
+        for _ in range(16):
+            if k not in kanon:
+                break
+            k = kanon[k]
+        return k
+    polyketten = set(plan.get("polyketten") or ()) if plan else set()
     for linie, namen in an_linie.items():
         if len(namen) < 2 or linie not in linien:
             continue
@@ -1725,9 +1775,14 @@ def _unverbunden(model: Model, doppellinien: bool = True) -> list:
         seiten = [(n, auf & knoten_von[n]) for n in namen]
         a, ka = seiten[0]
         for b, kb in seiten[1:]:
-            if ka != kb:
-                out.append((linie, a, b, len(ka ^ kb), sorted(doppel.get(linie, ())),
-                            sorted(herkunft.get(linie, ()))))
+            if ka == kb:
+                continue
+            if kanon and {wurzel(k) for k in ka} == {wurzel(k) for k in kb}:
+                continue                       # Kontaktbedingung: gewollt getrennt
+            art = ("zwang" if linie in zwang else
+                   "polylinie" if herkunft.get(linie, set()) & polyketten else "")
+            out.append((linie, a, b, len(ka ^ kb), sorted(doppel.get(linie, ())),
+                        sorted(herkunft.get(linie, ())), art))
     return out
 
 
