@@ -7541,6 +7541,18 @@ Lasten › Wind neu zu erzeugen. Eine Schalenwand, ein Volumen mit nur einer
 gewählten Seitenfläche und Gebäude ohne freie Wand sind unverändert.
 Verfahrensstand 39; geprüft in `tests/test_wind_freie_wand_volumen.py`.
 
+**Freie Wand aus mehreren Flächen, quer angeströmte Volumenflächen** (seit
+14.11.2026). Besteht eine freie Wand oder Tafel aus mehreren Flächen, die sich
+berühren und in derselben Richtung stehen, rechnet das Programm sie als eine
+Wand: Zonen A bis D zählen ab den Enden der ganzen Wand, h ist die Höhe der
+ganzen Wand (Wand 30 × 3 m aus drei Flächen bisher 80,3 statt 68,5 kN, zwei
+Flächen übereinander 25,4 statt 26,8 kN). Flächen eines Volumens, die nahezu
+parallel zur Windrichtung liegen (|n·d| < 0,1, weniger als 5,7°), bekommen keine
+Nettolast; das Protokoll nennt sie (bisher 1,18 kN quer zum Wind an einer
+Stirnfläche). Der Ladehinweis „Abmessungen“ vergleicht an freien Wänden und
+Tafeln nur noch Höhe und Wandenden. Verfahrensstand 43; geprüft in
+`tests/test_wind_freie_wand_ganz.py`.
+
 **Numerischer Windkanal.** Mit *Verfahren → numerischer Windkanal* wird die
 Strömung um die gewählten Flächen und Stäbe in einem Schnitt gerechnet
 (Gitter-Boltzmann-Verfahren, siehe Theoriehandbuch 2.2a): *Grundriss*
@@ -11544,6 +11556,23 @@ gleichem Versatz an beiden Enden, nach Theorie II. Ordnung, mit α_cr oder als
 Knicken; Theorie I. und III. Ordnung und Modelle ohne Versatz sind bitgleich.
 Verfahrensstand 40; geprüft in `tests/test_versatz_arm_kg.py`.
 
+**Querschnittsachsen, Stablast und Sollkraft bei Versatz** (seit 14.11.2026).
+Hat ein Stab an Anfang und Ende verschiedenen Versatz, liegen seine
+Querschnittsachsen in den Achsen der Knotenlinie, nur so weit gedreht, dass sie
+auf der Stabachse zwischen den versetzten Enden senkrecht stehen. Seit Stand 38
+konnte der Querschnitt einer lotrechten Stütze dabei um 90° oder 180° springen
+(Kopfverdrehung 0,96 statt 3,82 mrad, Auflager unter lokaler Streckenlast +4,0
+statt −4,0 kN). Nach Theorie III. Ordnung dreht eine Stablast auf einem Stab mit
+Versatz mit dem Arm mit (Einspannmoment bisher bis 3,5 % zu klein: 3061 statt
+3171 kNm). Knicken und α_cr im Modus „automatisch“ berücksichtigen eine
+Sollkraft samt Verriegelung (Knickfaktor bisher bis 27 % zu hoch, α_cr im Modus
+„automatisch“ sogar „∞“). Stockt die Iteration nach Theorie II. Ordnung an einem
+Stab mit Versatz, rechnet das Programm mit der vollen Matrix weiter; bleibt sie
+unkonvergiert, gibt es eine Fehlermeldung statt eines Ergebnisses. Legt ein
+Versatz die Stabenden aufeinander, meldet die Modellprüfung einen FEHLER, kehrt
+er den Stab um, eine WARNUNG. Verfahrensstand 41; geprüft gegen Handrechnung und
+Kurzstabmodell in `tests/test_versatz_achsen_lotrecht.py`.
+
 **Wölbkrafttorsion und Längsgelenk nach Theorie II. Ordnung** (seit
 12.11.2026). Balken mit Wölbkrafttorsion rechnen ihre Stabendkräfte jetzt mit
 der geometrischen Steifigkeit, (k + k_G)·u, und führen den Anteil N·w im Feld
@@ -12982,6 +13011,32 @@ unten, m_x, m_y und n_xy wechselte das Vorzeichen. Geprüft wird das in
 `tests/test_schalenlage_invariant.py`, die jedes Prüfmodell einmal wie vernetzt
 und einmal mit gespiegelten Elementen rechnet und Verschiebungen, Lagerkräfte,
 Lastsummen, Schnittgrößen, Knotenmittel, Bericht und Beulnachweis vergleicht.
+
+**Gewölbte Flächen, Stellungen, Wasserdruck an Bögen** (seit 14.11.2026).
+Besteht eine gewölbte Fläche nach dem Löschen von Elementen aus mehreren
+Netzstücken, richtet das Programm jedes Stück nach dem Umlauf des Flächenrandes
+an seinem Ort aus; ein Stück ohne Randkante folgt seinen Nachbarn (bisher an
+einem Zylindersegment 300° mit gelöschtem Streifen 47,5 statt 21,8 kN). In einer
+Situation mit Stellung behalten die Schalenelemente die Lage aus dem
+Grundmodell, und die Stellung dreht die Geometrie der Bögen mit (bisher wirkte
+die Flächenlast in einer gedrehten Stellung in Gegenrichtung). Beim Wasserdruck
+an Schalen ohne globale Richtung folgt die benetzte Seite der Lage des Elements
+zu seiner Fläche (Mantel 270° bisher 78,4 statt 43,4 kN). Eine Kontaktfuge
+zwischen zwei Schalen mit Spalt meldet den Spalt unabhängig vom Umlauf, Wind und
+Wasserdruck schreiben ins Protokoll, wenn sie Elemente umdrehen.
+Verfahrensstand 42; geprüft in `tests/test_schalenlage_gewoelbt.py`.
+
+**Korrekturen am Modell im Status** (seit 14.11.2026). Manche Korrekturen wirken
+erst, wenn das Modell selbst erneuert wird: ein Netz, das an doppelten
+Randlinien noch getrennt ist, ein strömungsnumerischer Wasserdruck mit einem
+vor dem 12.11.2026 erzeugten Druckfeld an einer Schale und Kontaktfugen an
+Schalen, die vor dem 12.11.2026 ausgeführt wurden. Für solche Modelle bleibt
+„Ergebnis möglicherweise betroffen“ auch nach einer neuen Rechnung stehen und
+nennt den Weg („Netz neu erzeugen“, „Wasserdruck neu erzeugen“, „Kontaktfugen
+neu ausführen“); beim Öffnen meldet „Schalennetz nicht verbunden“ auch getrennte
+Netze an doppelten Randlinien. Kann das Programm eine dieser Prüfungen nicht
+ausführen, gilt das Ergebnis als möglicherweise betroffen. Geprüft in
+`tests/test_status_modellkorrektur.py`.
 
 ### Abnahme des Netzes vor dem Rechnen
 
