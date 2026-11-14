@@ -961,6 +961,20 @@ def _gzg_stab_verdrehung(model) -> bool:
     return False
 
 
+def _gzg_groesse_grenzart(model) -> bool:
+    """Ein Verformungsnachweis der Art „stab“ mit ux (bis zum 14.11.2026 die
+    Durchbiegung w_z, Befund B'3 der zweiten Runde) oder ein Punktpaar mit einer
+    Verdrehung und der Grenze L/x (Radiant gegen Meter, B'4); beide werden jetzt
+    nicht gefuehrt."""
+    for g in (getattr(model, "verformungsgrenzen", None) or {}).values():
+        art, groesse = getattr(g, "art", ""), str(getattr(g, "groesse", ""))
+        if art == "stab" and groesse == "ux":
+            return True
+        if art == "punktpaar" and groesse.startswith("phi") and getattr(g, "grenzart", "") == "L/x":
+            return True
+    return False
+
+
 def _laminat_schalen(model) -> bool:
     """Ein Schalenelement mit geschichtetem Aufbau - seine Randspannungen standen
     bis zum 12.11.2026 als n/t ± 6 m/t² da (Pruefbericht 11.11.2026, Befund 3)."""
@@ -3426,10 +3440,24 @@ MERKMALE: list = [
         betrifft=_wind_freie_wand_hoehe, import_korrektur=True, im_ergebnis=_wind_freie_wand_hoehe_im_ergebnis,
         modellgrund="Windlasten mit einem älteren Programmstand erzeugt",
         vorschlag="Lasten › Wind: den Wind öffnen und die Windlasten neu erzeugen"),
+    # Befunde B'3 und B'4 der zweiten Runde vom 14.11.2026: der Stabnachweis mit
+    # ux nahm die Durchbiegung w_z (Kragarm mit Laengskraft 5,30 statt 0,18 mm),
+    # ein Punktpaar mit einer Verdrehung und L/x verglich Radiant mit Metern
+    # (10,32 mrad gegen L/300 = 13,3 mm „erfüllt“). Beide werden jetzt nicht
+    # gefuehrt; neu anlegen laesst sich keiner. Fehlerkorrektur
+    Merkmal(
+        name="gzg_groesse_grenzart", titel="Verformungsnachweis am Stab mit ux oder Verdrehung mit L/x",
+        texte={"alt": "Stab mit ux: Durchbiegung w_z; Punktpaar mit Verdrehung und L/x: rad gegen m verglichen",
+               "neu": "nicht geführt; als Knoten- oder Punktpaarnachweis beziehungsweise mit absolutem "
+                      "Grenzwert anzulegen"},
+        wechsel=(Wechsel(stand=57, datum="14.11.2026", commit="fix/k6-anzeige", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Verformungsnachweis der Art „Stab“ mit ux oder Punktpaar mit φ und Grenze L/x",
+        betrifft=_gzg_groesse_grenzart),
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 56
+VERFAHRENSSTAND = 57
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

@@ -1221,6 +1221,9 @@ function lagerSchluesselHinweis() {
 function stellungForm(st) {
   const s = st || {};
   const achse = s.dreh_achse || [0, 1, 0], punkt = s.dreh_punkt || [0, 0, 0];
+  // Antrieb vorbelegen (Knoten ab 0, Momente in kNm): bis zum 14.11.2026 stand
+  // das Feld leer, und „Stellung ändern“ löschte das Antriebsmoment (B'5)
+  const am = s.antrieb_moment || [0, 0, 0];
   return `<form data-op="stellung" ${st ? 'data-close="1"' : 'data-reset="1"'}>
     ${st ? `<h2>Stellung ${esc(st.name)}</h2>` : ''}
     <div class="grid2">${inp('name', 'Name', s.name || '', 'required')}${num('winkel', 'Stellungswinkel [°]', s.winkel ?? 0)}</div>
@@ -1235,9 +1238,9 @@ function stellungForm(st) {
       <div class="grid3">${num('punkt_x', 'Drehpunkt x [m]', punkt[0])}${num('punkt_y', 'Drehpunkt y [m]', punkt[1])}${num('punkt_z', 'Drehpunkt z [m]', punkt[2])}</div>
       <div class="muted">Leere Gruppenliste: alles wird gedreht. Die Drehung wirkt nur in dieser Stellung.</div>
     </div></details>
-    <details><summary>Antriebsmoment</summary><div class="body">
-      ${inp('antrieb_knoten', 'Knoten des Antriebs (Auswahl in 3D-Ansicht)', '', 'data-sel="nodes" placeholder="z.B. 24"')}
-      <div class="grid3">${num('antrieb_mx', 'Mx [kNm]', 0, {scale: 1e3})}${num('antrieb_my', 'My [kNm]', 0, {scale: 1e3})}${num('antrieb_mz', 'Mz [kNm]', 0, {scale: 1e3})}</div>
+    <details${st && s.antrieb ? ' open' : ''}><summary>Antriebsmoment</summary><div class="body">
+      ${inp('antrieb_knoten', 'Knoten des Antriebs (ab 0, Auswahl in 3D-Ansicht; leer = kein Antrieb)', s.antrieb_knoten ?? '', 'data-sel="nodes" data-keep="1" placeholder="z.B. 24"')}
+      <div class="grid3">${num('antrieb_mx', 'Mx [kNm]', am[0], {scale: 1e3})}${num('antrieb_my', 'My [kNm]', am[1], {scale: 1e3})}${num('antrieb_mz', 'Mz [kNm]', am[2], {scale: 1e3})}</div>
     </div></details>
     <div class="btns"><button class="btn primary wide">${st ? 'Stellung ändern' : '+ Stellung anlegen'}</button></div>
   </form>`;
@@ -1269,7 +1272,7 @@ function renderBruecke() {
         <b>nur aktiv</b><span>${esc((gew.lager_aktiv || []).join(', ') || 'alle')}</span>
         <b>Lastfälle</b><span>${esc((gew.faelle || []).join(', ') || 'keine')}</span>
         <b>Drehung</b><span>${gew.dreh_winkel ? `${fmt(gew.dreh_winkel, 1)}° · ${esc((gew.gruppen || []).join(', ') || 'ganzes Modell')}` : 'keine'}</span>
-        <b>Antrieb</b><span>${gew.antrieb ? 'Moment angesetzt' : '–'}</span></div>
+        <b>Antrieb</b><span>${gew.antrieb ? `Knoten ${gew.antrieb_knoten} · Mx ${fmt((gew.antrieb_moment || [0])[0], 2)}, My ${fmt((gew.antrieb_moment || [0, 0])[1], 2)}, Mz ${fmt((gew.antrieb_moment || [0, 0, 0])[2], 2)} kNm` : '–'}</span></div>
       ${e ? (e.fehler ? `<div class="msg err">${esc(e.fehler)}</div>` : stellungMeldung(e))
         : '<div class="muted">Diese Stellung ist noch nicht gerechnet.</div>'}
     </div>`;

@@ -96,13 +96,14 @@ def test_e1_antrieb_browser():
     kn_last = int(m.load_cases["LF1"].nodal_loads[-1].node)
     check("E1 Browser: Knoten 8 bleibt Knoten 8 (Zählung ab 0 wie Auswahl und Knotenlast)",
           a is not None and a[0] == 8 == kn_last, f"Stellung {a}, Knotenlast an {kn_last}")
-    # zweiter Weg Moment: der Dialog der Arbeitsplatzoberflaeche mit 40 kNm (der zaehlt
-    # seine Knoten ab 1 - Nebenbefund 14.11.2026 -, darum dort 9 fuer den Knoten 8)
+    # zweiter Weg Moment: der Dialog der Arbeitsplatzoberflaeche mit 40 kNm (er zaehlt
+    # seine Knoten seit A'11 der zweiten Runde, 14.11.2026, ab 0 wie der Browser;
+    # bis dahin stand hier 9 fuer den Knoten 8)
     _app()
     from statik3d.gui.dialogs import StellungDialog
     dlg = StellungDialog(None, None, m)
     dlg.ed_name.setText("S1")
-    dlg.ed_knoten.setzen(9)
+    dlg.ed_knoten.setzen(8)
     dlg.ed_moment[1].setzen(40.0)
     b = dlg.stellung().antrieb
     dlg.deleteLater()
@@ -437,12 +438,17 @@ def test_e7_keine_wissenschaftliche_schreibweise():
     from statik3d import spannungen as spn
     from statik3d.gui import viewport as vp
     sk = spn.Werteskala(modus="fest", unten=0.0, oben=100.0)
-    for wmin, soll, soll2 in ((-0.00002, "0", "0"), (-12345.6, "-12346", "-1235"), (-1.2345, "-1.23", "-0.123")):
+    # seit A'11 der zweiten Runde (14.11.2026) vier geltende Ziffern wie das fruehere
+    # :.4g, ausgeschrieben - bis dahin dezimal() mit hoechstens drei Nachkommastellen,
+    # das -0,00002 als „0“ zeigte (alte Erwartung: „0“/„0“, „-12346“/„-1235“, „-1.23“/„-0.123“)
+    from decimal import Context, Decimal
+    for wmin, soll, soll2 in ((-0.00002, "-0.00002", "-0.000002"), (-12345.6, "-12350", "-1235"),
+                              (-1.2345, "-1.234", "-0.1235")):
         g = spn.grenzen(sk, np.array([wmin, 50.0, 80.0]))
         g2 = vp.skala_umrechnen(g, 0.1)
-        # zweiter Weg: spannungen.dezimal (ohne Nachkommanullen)
-        weg2 = [spn.dezimal(x).rstrip("0").rstrip(".") if "." in spn.dezimal(x) else spn.dezimal(x)
-                for x in (wmin, wmin * 0.1)]
+        # zweiter Weg: Decimal mit vier geltenden Ziffern aus dem genauen Binaerwert
+        weg2 = [format(Context(prec=4).create_decimal(Decimal(x)).normalize(), "f")
+                for x in (wmin, g2["wmin"])]
         check(f"E7 Farbskala, Wert unter der Skala {wmin:g}: „{soll}“, umgerechnet „{soll2}“",
               [g["below_label"], g2["below_label"]] == [soll, soll2] == weg2,
               f"{g['below_label']!r} / {g2['below_label']!r} / {weg2}")
