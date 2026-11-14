@@ -12,6 +12,7 @@ mit den Herstellertabellen auf < 1 % ueberein.
 from __future__ import annotations
 
 import re
+from typing import Optional
 
 from .model import Section
 
@@ -86,8 +87,10 @@ CHS = [(21.3, 2.3), (26.9, 2.3), (33.7, 2.6), (33.7, 3.2), (42.4, 2.6), (42.4, 3
        (457, 10), (457, 12.5), (457, 16), (508, 10), (508, 12.5), (508, 16), (610, 12.5), (610, 16)]
 
 # --------------------------------------------------------------------------
-# U-Profile:  (h, b, tw, tf, r) in mm.  UPN nach DIN 1026-1 (geneigte Flansche,
-# Neigung 8 %), UPE nach DIN 1026-2 (parallele Flansche).
+# U-Profile:  (h, b, tw, tf, r) in mm.  UPN nach DIN 1026-1 (geneigte Flansche:
+# h <= 300 Neigung 8 %, t bei b/2 vom Stegruecken; h > 300 Neigung 5 %, t bei
+# (b + s)/2; r = r1 Steg/Flansch, r2 an der Flanschspitze in UPN_R2), UPE nach
+# DIN 1026-2 (parallele Flansche).
 # --------------------------------------------------------------------------
 UPN = {
     50: (50, 38, 5, 7, 7), 65: (65, 42, 5.5, 7.5, 7.5), 80: (80, 45, 6, 8, 8),
@@ -104,24 +107,52 @@ UPE = {
     270: (270, 95, 7.5, 13.5, 15), 300: (300, 100, 9.5, 15, 15), 330: (330, 105, 11, 16, 18),
     360: (360, 110, 12, 17, 18), 400: (400, 115, 13.5, 18, 18),
 }
+#: Ausrundung r2 an der Flanschspitze der UPN [mm] nach DIN 1026-1
+UPN_R2 = {50: 3.5, 65: 4, 80: 4, 100: 4.5, 120: 4.5, 140: 5, 160: 5.5, 180: 5.5, 200: 6,
+          220: 6.5, 240: 6.5, 260: 7, 280: 7.5, 300: 8, 320: 8.75, 350: 8, 380: 8, 400: 9}
+
+
+def upn_din1026(h: float, b: float, tw: float, tf: float, r: float) -> Optional[dict]:
+    """Flanschgeometrie nach DIN 1026-1, wenn h, b, t_w, t_f, r [m] genau eine Zeile der
+    UPN-Tabelle sind - sonst None. Rueckgabe {taper, t_bei, r2} fuer Section.channel:
+    h <= 300 mm Neigung 8 % und t_f bei b/2 vom Stegruecken, h > 300 mm Neigung 5 % und
+    t_f bei (b + s)/2; r2 an der Flanschspitze (14.11.2026, Runde k7; bis Stand 59 galt
+    fuer alle Groessen 8 % mit t_f bei (b + s)/2 und ohne r2)."""
+    ist = (h, b, tw, tf, r)
+    for H, B, s, t, r1 in UPN.values():
+        if all(abs(a - w * 1e-3) <= 1e-9 for a, w in zip(ist, (H, B, s, t, r1))):
+            if H <= 300:
+                return {"taper": 0.08, "t_bei": 0.5 * b, "r2": UPN_R2[H] * 1e-3}
+            return {"taper": 0.05, "t_bei": 0.5 * (b + tw), "r2": UPN_R2[H] * 1e-3}
+    return None
+
+
+def u_flansch_tabelle(sec) -> Optional[dict]:
+    """Flanschgeometrie eines U-Querschnitts, dessen Masse h, b, t_w, t_f, r genau eine
+    Zeile der UPN-Tabelle (:func:`upn_din1026`) oder der AISC-C-Tabelle (Neigung 1/6,
+    ``t_bei`` None: I_w mit t_f bei b/2 wie in Runde k6) sind - sonst None (UPE, PFC,
+    geschweisste U)."""
+    if getattr(sec, "typ", "") != "U":
+        return None
+    f = upn_din1026(sec.h, sec.b, sec.tw, sec.tf, sec.r)
+    if f is not None:
+        return f
+    ist = (sec.h, sec.b, sec.tw, sec.tf, sec.r)
+    for d, bf, tw, tf in C_US.values():
+        if all(abs(a - w) <= 1e-9 for a, w in zip(ist, (d * INCH, bf * INCH, tw * INCH, tf * INCH,
+                                                          0.7 * tf * INCH))):
+            return {"taper": 1.0 / 6.0, "t_bei": None, "r2": 0.0}
+    return None
+
+
 def u_neigung_tabelle(sec) -> float:
     """Neigung der Flanschinnenseite eines U-Querschnitts, dessen Masse h, b, t_w, t_f, r
-    genau eine Zeile der UPN-Tabelle (0,08) oder der AISC-C-Tabelle (1/6) sind - sonst 0
-    (UPE, PFC, geschweisste U). Erkennt gespeicherte UPN, deren I_w noch ohne Neigung
-    gebildet ist (model.iw_u_stand, Befund B'2 vom 14.11.2026)."""
-    if getattr(sec, "typ", "") != "U":
-        return 0.0
-    ist = (sec.h, sec.b, sec.tw, sec.tf, sec.r)
-
-    def gleich(werte):
-        return all(abs(a - b) <= 1e-9 for a, b in zip(ist, werte))
-    for H, B, tw, tf, r in UPN.values():
-        if gleich((H * 1e-3, B * 1e-3, tw * 1e-3, tf * 1e-3, r * 1e-3)):
-            return 0.08
-    for d, bf, tw, tf in C_US.values():
-        if gleich((d * INCH, bf * INCH, tw * INCH, tf * INCH, 0.7 * tf * INCH)):
-            return 1.0 / 6.0
-    return 0.0
+    genau eine Zeile der UPN-Tabelle (0,08 bzw. 0,05 ueber h = 300 mm, DIN 1026-1) oder der
+    AISC-C-Tabelle (1/6) sind - sonst 0 (UPE, PFC, geschweisste U). Erkennt gespeicherte
+    UPN, deren I_w noch ohne Neigung gebildet ist (model.iw_u_stand, Befund B'2 vom
+    14.11.2026)."""
+    f = u_flansch_tabelle(sec)
+    return float(f["taper"]) if f else 0.0
 
 
 # Winkel EN 10056-1: gleichschenklig (a, t, r), ungleichschenklig (h, b, t, r) in mm
@@ -407,8 +438,11 @@ def make_section(designation: str, name: str = None) -> Section:
         if h not in tab:
             raise KeyError(f"{fam} {h} nicht in der Datenbank")
         H, B, tw, tf, r = tab[h]
-        return Section.channel(nm, H * 1e-3, B * 1e-3, tw * 1e-3, tf * 1e-3, r * 1e-3,
-                               taper=0.08 if fam == "UPN" else 0.0)
+        if fam == "UPN":
+            # DIN 1026-1: Neigung, Messstelle von t_f und r2 nach der Groesse (Runde k7)
+            m = [H * 1e-3, B * 1e-3, tw * 1e-3, tf * 1e-3, r * 1e-3]
+            return Section.channel(nm, *m, **upn_din1026(*m))
+        return Section.channel(nm, H * 1e-3, B * 1e-3, tw * 1e-3, tf * 1e-3, r * 1e-3)
     mm = re.match(r"L (\d+(?:\.\d+)?)X(\d+(?:\.\d+)?)X(\d+(?:\.\d+)?)$", s)
     if mm:
         h, b, t = (float(mm.group(i)) for i in (1, 2, 3))

@@ -1286,6 +1286,39 @@ def _u_profile_im_modell(model) -> str:
             "Querschnitt aus der Profiltabelle neu zuweisen, dann neu rechnen")
 
 
+def _upn_querschnitt_alt(model) -> tuple:
+    """(UPN, zusammengesetzte) - Namen der benutzten UPN, deren A, I_y, I_z, e_y genau
+    den Werten bis Stand 59 folgen (model.u_querschnitt_stand: t_f in der Flanschmitte
+    (b + t_w)/2 mit 8 % Neigung bzw. ohne Neigung aus dem DSTV-Import, ohne r2), und der
+    benutzten zusammengesetzten Querschnitte mit solchen UPN-Teilen
+    (model.u_zusammengesetzt_bis59). Unbenutzte zaehlen nicht (Befund A'10)."""
+    from .model import u_querschnitt_stand, u_zusammengesetzt_bis59
+    benutzt = {getattr(e, "sec", None) for e in (getattr(model, "elements", None) or [])}
+    einzeln, zus = [], []
+    for name, sec in (getattr(model, "sections", None) or {}).items():
+        if name not in benutzt:
+            continue
+        if u_querschnitt_stand(sec) is not None:
+            einzeln.append(str(name))
+        elif u_zusammengesetzt_bis59(sec):
+            zus.append(str(name))
+    return einzeln, zus
+
+
+def _upn_querschnitt_im_modell(model) -> str:
+    einzeln, zus = _upn_querschnitt_alt(model)
+    teile = []
+    if einzeln:
+        teile.append(f"die UPN {_kurz(einzeln)} tragen Querschnittswerte nach der früheren Formel (t_f in der "
+                     "Flanschmitte, ohne Ausrundung r2; UPN 200: A 32,86 statt 32,19 cm², I_y 1 966 statt "
+                     "1 911 cm⁴) – beim Öffnen neu berechnen lassen oder den Querschnitt aus der Profiltabelle "
+                     "neu zuweisen")
+    if zus:
+        teile.append(f"die zusammengesetzten Querschnitte {_kurz(zus)} enthalten UPN mit diesen früheren Werten "
+                     "– neu zusammensetzen")
+    return ("; ".join(teile) + ", dann neu rechnen") if teile else ""
+
+
 def _woelb_u(model) -> bool:
     """Ein Stab mit Woelbkrafttorsionsnachweis an einem U-Profil (Befund B'1)."""
     for mem in (getattr(model, "members", None) or {}).values():
@@ -3585,6 +3618,21 @@ MERKMALE: list = [
         modellmerkmal="Knicken (oder α_cr mit Vorspannkraft) mit Stäben, die die interne Stabteilung teilen "
                       "würde (weniger Elemente je Stab als die Stabteilung)",
         betrifft=_balken_teilbar, im_ergebnis=_knicken_im_ergebnis),
+    # Runde k7 (14.11.2026, vom Anwender freigegeben): Section.channel mass t_f eines UPN
+    # in der Flanschmitte (b + t_w)/2 mit 8 % fuer alle Groessen und liess r2 weg (UPN
+    # 200 A 32,86 statt 32,19 cm², I_y 1 966 statt 1 911 cm⁴, W_pl,z 43 statt 52 cm³);
+    # DIN 1026-1: t_f bei b/2 mit 8 %, ueber h = 300 mm bei (b + s)/2 mit 5 %, r1 und r2.
+    # Der DSTV-Import legte UPN ohne Neigung an. Der Wert steht im gespeicherten
+    # Querschnitt - erst ein neu berechneter wirkt. Fehlerkorrektur, Status am Modell
+    Merkmal(
+        name="upn_querschnitt", titel="Querschnittswerte der UPN (DIN 1026-1)",
+        texte={"alt": "UPN mit t_f in der Flanschmitte, 8 % Neigung, ohne r2",
+               "neu": "UPN nach DIN 1026-1: t_f bei b/2 (8 %), über h = 300 mm bei (b + s)/2 (5 %), r1 und r2"},
+        wechsel=(Wechsel(stand=60, datum="14.11.2026", commit="fix/k7-upn", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="benutzter UPN (auch als Teil eines zusammengesetzten Querschnitts) mit den "
+                      "Querschnittswerten bis Stand 59",
+        betrifft=lambda model: any(_upn_querschnitt_alt(model)), im_modell=_upn_querschnitt_im_modell),
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle

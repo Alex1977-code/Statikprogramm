@@ -939,13 +939,16 @@ class Material:
         return None
 
 
-def u_mittellinie(h: float, b: float, tw: float, tf: float, taper: float = 0.0) -> Optional[dict]:
+def u_mittellinie(h: float, b: float, tw: float, tf: float, taper: float = 0.0,
+                   t_bei: Optional[float] = None) -> Optional[dict]:
     """Duennwandiges U-Profil auf der Mittellinie (14.11.2026, Befund B'2): Steg in
     y = 0 (Stegmitte), Flansche in z = +-h_s/2 mit h_s = h - t_f, Flanschlaenge bis
     Stegmitte b_s = b - t_w/2, Flanschdicke linear t(y) = a0 + c y.
 
     Geneigte Flanschinnenseite (UPN: 8 %, DIN 1026-1): t_f gilt bei b/2 vom
-    Stegruecken, t(x) = t_f + taper (b/2 - x) mit x = y + t_w/2. Mit
+    Stegruecken, t(x) = t_f + taper (b/2 - x) mit x = y + t_w/2; ``t_bei`` setzt eine
+    andere Messstelle ab Stegruecken (DIN 1026-1 ueber h = 300 mm: 5 %, t_f bei
+    (b + t_w)/2, Runde k7). Mit
     M_k = Integral_0^b_s y^k t(y) dy (geschlossen, da t linear) liegt der
     Schubmittelpunkt um e = (h_s^2/2) M_1 / (t_w h_s^3/12 + (h_s^2/2) M_0)
     neben der Stegmitte, und I_w = e^2 t_w h_s^3/12 + (h_s^2/2)(e^2 M_0 - 2 e M_1 + M_2).
@@ -955,7 +958,8 @@ def u_mittellinie(h: float, b: float, tw: float, tf: float, taper: float = 0.0) 
     hs = h - tf
     if bs <= 0 or hs <= 0 or tf <= 0 or tw <= 0:
         return None
-    a0 = tf + float(taper or 0.0) * (0.5 * b - 0.5 * tw)
+    mess = 0.5 * b if t_bei is None else float(t_bei)
+    a0 = tf + float(taper or 0.0) * (mess - 0.5 * tw)
     c = -float(taper or 0.0)
     if a0 + c * bs <= 0:                       # Neigung groesser als die Dicke: ohne rechnen
         a0, c = tf, 0.0
@@ -968,7 +972,8 @@ def u_mittellinie(h: float, b: float, tw: float, tf: float, taper: float = 0.0) 
     return {"bs": bs, "hs": hs, "a0": a0, "c": c, "e": e, "M0": M0, "M1": M1, "M2": M2, "Iw": Iw}
 
 
-def iw_u_profil(h: float, b: float, tw: float, tf: float, taper: float = 0.0) -> float:
+def iw_u_profil(h: float, b: float, tw: float, tf: float, taper: float = 0.0,
+                t_bei: Optional[float] = None) -> float:
     """Woelbwiderstand I_w eines U-Profils [m^6] auf der Profilmittellinie:
     Flanschbreite bis Stegmitte b_s = b - t_w/2, Abstand der Flanschmitten
     h_s = h - t_f::
@@ -982,9 +987,10 @@ def iw_u_profil(h: float, b: float, tw: float, tf: float, taper: float = 0.0) ->
     ``taper``: Neigung der Flanschinnenseite (UPN 0,08). Dann wird ueber die
     veraenderliche Flanschdicke integriert (:func:`u_mittellinie`; UPN 200:
     9 559,6 statt 10 499,5 cm^6 mit gleich dicken Flanschen, Befund B'2 vom
-    14.11.2026). Ohne Neigung (UPE) bleibt die geschlossene Formel."""
+    14.11.2026). Ohne Neigung (UPE) bleibt die geschlossene Formel. ``t_bei``: Messstelle
+    von t_f ab Stegruecken, sonst b/2 (:func:`u_mittellinie`)."""
     if taper:
-        u = u_mittellinie(h, b, tw, tf, taper)
+        u = u_mittellinie(h, b, tw, tf, taper, t_bei)
         return u["Iw"] if u else 0.0
     bs = b - 0.5 * tw
     hs = h - tf
@@ -994,19 +1000,32 @@ def iw_u_profil(h: float, b: float, tw: float, tf: float, taper: float = 0.0) ->
             * (3 * tf * bs + 2 * hs * tw) / (6 * tf * bs + hs * tw))
 
 
-def u_neigung_aus_iw(sec) -> float:
-    """Neigung der Flanschinnenseite, mit der das I_w eines U-Querschnitts gebildet
-    ist (0,08 UPN, 1/6 AISC C) - erkannt am Wert selbst, sonst 0. Fuer die
-    Woelbordinaten (ec3.woelb.sektorwerte), die zum I_w des Querschnitts passen
-    muessen."""
+def u_flansch_aus_iw(sec) -> tuple:
+    """(Neigung, Messstelle t_bei oder None) der Flanschinnenseite, mit der das I_w eines
+    U-Querschnitts gebildet ist - erkannt am Wert selbst: die Flanschgeometrie der
+    UPN-Tabelle nach DIN 1026-1 (profiles.upn_din1026, Runde k7), 0,08 mit t_f bei b/2
+    (UPN bis Stand 59), 1/6 (AISC C), sonst (0, None). Fuer die Woelbordinaten
+    (ec3.woelb.sektorwerte), die zum I_w des Querschnitts passen muessen."""
     iw = float(getattr(sec, "Iw", 0.0) or 0.0)
     if iw <= 0:
-        return 0.0
-    for t in (0.08, 1.0 / 6.0):
-        w = iw_u_profil(sec.h, sec.b, sec.tw, sec.tf, t)
+        return 0.0, None
+    from .profiles import upn_din1026
+    kand = []
+    f = upn_din1026(sec.h, sec.b, sec.tw, sec.tf, sec.r)
+    if f is not None:
+        kand.append((f["taper"], f["t_bei"]))
+    kand += [(0.08, None), (1.0 / 6.0, None)]
+    for t, bei in kand:
+        w = iw_u_profil(sec.h, sec.b, sec.tw, sec.tf, t, bei)
         if w > 0 and abs(iw - w) <= 1e-9 * w:
-            return t
-    return 0.0
+            return t, bei
+    return 0.0, None
+
+
+def u_neigung_aus_iw(sec) -> float:
+    """Neigung der Flanschinnenseite, mit der das I_w eines U-Querschnitts gebildet
+    ist (:func:`u_flansch_aus_iw`), sonst 0."""
+    return u_flansch_aus_iw(sec)[0]
 
 
 def iw_u_stand(sec) -> Optional[tuple]:
@@ -1021,57 +1040,74 @@ def iw_u_stand(sec) -> Optional[tuple]:
     die U-Teile aus der Profiltabelle denselben alten Wert (Befund A'10)."""
     typ = getattr(sec, "typ", "")
     if typ == "U":
-        from .profiles import u_neigung_tabelle
-        neig = u_neigung_tabelle(sec)
-        neu = iw_u_profil(sec.h, sec.b, sec.tw, sec.tf, neig)
+        from .profiles import u_flansch_tabelle
+        f = u_flansch_tabelle(sec) or {"taper": 0.0, "t_bei": None}
+        neig = f["taper"]
+        neu = iw_u_profil(sec.h, sec.b, sec.tw, sec.tf, neig, f["t_bei"])
         alte = [iw_u_profil_alt(sec.h, sec.b, sec.tw, sec.tf)]
         if neig:
             alte.append(iw_u_profil(sec.h, sec.b, sec.tw, sec.tf))
+            # UPN ueber h = 300 mm: bis Stand 59 mit 8 % und t_f bei b/2 (Runde k7)
+            alte.append(iw_u_profil(sec.h, sec.b, sec.tw, sec.tf, 0.08))
+        varianten = [(neu, alte)]
     elif typ == "composite":
-        r = _iw_zusammengesetzt(sec)
-        if r is None:
+        varianten = _iw_zusammengesetzt(sec)
+        if not varianten:
             return None
-        neu, alte = r
     else:
         return None
     iw = float(getattr(sec, "Iw", 0.0) or 0.0)
-    for alt in alte:
-        if alt > 0 and abs(iw - alt) <= 1e-6 * alt and abs(alt - neu) > 1e-6 * alt:
-            return alt, neu
+    for neu, alte in varianten:
+        for alt in alte:
+            if alt > 0 and abs(iw - alt) <= 1e-6 * alt and abs(alt - neu) > 1e-6 * alt:
+                return alt, neu
     return None
 
 
-def _iw_zusammengesetzt(sec) -> Optional[tuple]:
-    """(I_w neu gebildet, [fruehere Werte]) eines zusammengesetzten Querschnitts mit
-    U-Teilen aus der Profiltabelle - sonst None. I_w der Teile geht additiv ein
+def _iw_zusammengesetzt(sec) -> list:
+    """[(I_w neu gebildet, [fruehere Werte]), ...] eines zusammengesetzten Querschnitts
+    mit U-Teilen aus der Profiltabelle - sonst []. I_w der Teile geht additiv ein
     (sections.build), die frueheren Werte unterscheiden sich darum nur um die Summe
-    der Unterschiede der U-Teile."""
+    der Unterschiede der U-Teile. Je eine Variante mit den heutigen Teilen und - bei
+    UPN-Teilen - mit den Teilen bis Stand 59 (:func:`u_bis59`; I_z der Teile geht in
+    I_w des Ganzen ein, Runde k7)."""
     from . import profiles, sections
     teile = [p for p in (getattr(sec, "parts", None) or []) if isinstance(p, dict) and "profil" in p]
     if not teile:
-        return None
-    daten, d41, d45, mit_u = [], 0.0, 0.0, False
-    for p in teile:
-        base = p.get("teil")
-        if base is None:
-            try:
-                base = profiles.make_section(p["profil"])
-            except Exception:            # noqa: BLE001 - unbekanntes Teil: nicht pruefbar
-                return None
-            if getattr(base, "typ", "") == "U":
-                mit_u = True
-                d41 += iw_u_profil_alt(base.h, base.b, base.tw, base.tf) - base.Iw
-                if profiles.u_neigung_tabelle(base):
-                    d45 += iw_u_profil(base.h, base.b, base.tw, base.tf) - base.Iw
-        daten.append((base, float(p.get("dy", 0.0)), float(p.get("dz", 0.0)),
-                      float(p.get("drehung", 0.0) or 0.0), bool(p.get("spiegeln", False))))
-    if not mit_u:
-        return None
-    try:
-        neu = sections.build(sec.name, daten, fabrication=getattr(sec, "fabrication", "welded")).Iw
-    except Exception:                    # noqa: BLE001
-        return None
-    return neu, [neu + d41] + ([neu + d45] if d45 else [])
+        return []
+    aus = []
+    for stand59 in (False, True):
+        daten, d41, d45, mit_u, mit_upn = [], 0.0, 0.0, False, False
+        for p in teile:
+            base = p.get("teil")
+            if base is None:
+                try:
+                    base = profiles.make_section(p["profil"])
+                except Exception:            # noqa: BLE001 - unbekanntes Teil: nicht pruefbar
+                    return []
+                if getattr(base, "typ", "") == "U":
+                    mit_u = True
+                    if stand59 and profiles.upn_din1026(base.h, base.b, base.tw, base.tf, base.r):
+                        base, mit_upn = u_bis59(base), True
+                    d41 += iw_u_profil_alt(base.h, base.b, base.tw, base.tf) - base.Iw
+                    if profiles.u_neigung_tabelle(base):
+                        d45 += iw_u_profil(base.h, base.b, base.tw, base.tf) - base.Iw
+            daten.append((base, float(p.get("dy", 0.0)), float(p.get("dz", 0.0)),
+                          float(p.get("drehung", 0.0) or 0.0), bool(p.get("spiegeln", False))))
+        if not mit_u or (stand59 and not mit_upn):
+            continue
+        try:
+            neu = sections.build(sec.name, daten, fabrication=getattr(sec, "fabrication", "welded")).Iw
+        except Exception:                    # noqa: BLE001
+            return []
+        aus.append((neu, [neu + d41] + ([neu + d45] if d45 else [])))
+    return aus
+
+
+def _zahl_text_k(x: float, stellen: int) -> str:
+    """Zahl gerundet auf ``stellen`` Nachkommastellen als Text („32,86“, „1 966,2“)."""
+    from .zahlen import zahl_text
+    return zahl_text(round(float(x), stellen))
 
 
 def _zahl_cm6(iw: float) -> str:
@@ -1089,6 +1125,188 @@ def iw_u_profil_alt(h: float, b: float, tw: float, tf: float) -> float:
         return 0.0
     return (tf * b ** 3 * hm ** 2 / 12.0
             * (3 * tf * b + 2 * hm * tw) / (6 * tf * b + hm * tw))
+
+
+def _u_umriss_din1026(h: float, b: float, tw: float, tf: float, r1: float, r2: float,
+                      taper: float, t_bei: float, n_bogen: int = 64) -> np.ndarray:
+    """Wahrer Umriss eines U-Profils mit geneigter Flanschinnenseite (DIN 1026-1) als
+    Polygon gegen den Uhrzeigersinn: x ab Stegruecken, z ab Profilmitte. Flanschdicke
+    t(x) = t_f + taper (t_bei - x); Ausrundung r1 zwischen Steg und Flansch (fuellt die
+    Ecke), r2 an der Flanschspitze innen (rundet die Kante ab); Boegen mit ``n_bogen``
+    Sehnen, Punkte bei z = 0 auf Stegruecken und Steginnenseite (fuer W_pl,y)."""
+    w = float(np.sqrt(1.0 + taper ** 2))
+
+    def zi(x):                                   # Flanschinnenseite oben
+        return h / 2.0 - (tf + taper * (t_bei - x))
+    oben = [(tw, 0.0)]
+    if r1 > 0:
+        cx, cz = tw + r1, zi(tw + r1) - r1 * w   # Mittelpunkt im Hohlraum
+        a0, a1 = np.pi, np.arctan2(1.0, -taper)  # vom Steg zur Flanschinnenseite
+        for a in np.linspace(a0, a1, n_bogen + 1):
+            oben.append((cx + r1 * np.cos(a), cz + r1 * np.sin(a)))
+    else:
+        oben.append((tw, zi(tw)))
+    if r2 > 0:
+        cx, cz = b - r2, zi(b - r2) + r2 * w     # Mittelpunkt im Werkstoff
+        a0, a1 = np.arctan2(-1.0, taper), 0.0    # von der Flanschinnenseite zur Spitze
+        for a in np.linspace(a0, a1, n_bogen + 1):
+            oben.append((cx + r2 * np.cos(a), cz + r2 * np.sin(a)))
+    else:
+        oben.append((b, zi(b)))
+    oben += [(b, h / 2.0), (0.0, h / 2.0), (0.0, 0.0)]
+    # untere Haelfte gespiegelt; zusammen gegen den Uhrzeigersinn ab (0, 0) nach unten
+    unten = [(x, -z) for (x, z) in reversed(oben)]
+    ring = [(0.0, 0.0)] + unten[1:-1] + oben[:-1]
+    P = np.array(ring, dtype=float)
+    if _polygon_flaeche(P) < 0:
+        P = P[::-1]
+    return P
+
+
+def _polygon_flaeche(P: np.ndarray) -> float:
+    x, z = P[:, 0], P[:, 1]
+    return 0.5 * float(np.sum(x * np.roll(z, -1) - np.roll(x, -1) * z))
+
+
+def _polygon_kennwerte(P: np.ndarray) -> dict:
+    """Flaeche, Schwerpunkt und Flaechenmomente eines Polygons (Gausssche Formeln):
+    A, xs, zs, Ixx = Integral (x - xs)^2 dA, Izz = Integral (z - zs)^2 dA,
+    Sabs_x = Integral |x - x_p| dA mit der flaechenhalbierenden Linie x = x_p (W_pl um
+    eine Achse parallel zu z), Sabs_z = Integral |z - z_p| dA entsprechend."""
+    x, z = P[:, 0], P[:, 1]
+    x1, z1 = np.roll(x, -1), np.roll(z, -1)
+    cr = x * z1 - x1 * z
+    A = 0.5 * float(cr.sum())
+    Sx = float(((x + x1) * cr).sum()) / 6.0
+    Sz = float(((z + z1) * cr).sum()) / 6.0
+    xs, zs = Sx / A, Sz / A
+    Ixx = float(((x * x + x * x1 + x1 * x1) * cr).sum()) / 12.0 - A * xs * xs
+    Izz = float(((z * z + z * z1 + z1 * z1) * cr).sum()) / 12.0 - A * zs * zs
+    return {"A": A, "xs": xs, "zs": zs, "Ixx": Ixx, "Izz": Izz,
+            "Sabs_x": _polygon_wpl(x, z, A), "Sabs_z": _polygon_wpl(z, x, -A)}
+
+
+def _polygon_wpl(u: np.ndarray, v: np.ndarray, A: float) -> float:
+    """Integral |u - c| dA ueber das Polygon (u, v) mit c so, dass die Linie u = c die
+    Flaeche halbiert. Gauss: Integral f'(u) dA = Umlauf f(u) dv (A > 0 gegen den
+    Uhrzeigersinn in (u, v); sonst A < 0 uebergeben). Kanten werden bei u = c geteilt;
+    c durch Halbierung."""
+    u0, v0 = u, v
+    u1, v1 = np.roll(u, -1), np.roll(v, -1)
+
+    def teile(c):
+        # Teilpunkt jeder Kante bei u = c (wenn sie c kreuzt)
+        du = u1 - u0
+        with np.errstate(divide="ignore", invalid="ignore"):
+            s = np.where(np.abs(du) > 0, (c - u0) / du, 2.0)
+        kreuzt = (s > 0) & (s < 1)
+        um = np.where(kreuzt, c, u1)
+        vm = np.where(kreuzt, v0 + s * (v1 - v0), v1)
+        # zwei Teilkanten (u0,v0)-(um,vm) und (um,vm)-(u1,v1); die zweite ist leer, wenn
+        # die Kante nicht kreuzt
+        ua = np.r_[u0, um]
+        va = np.r_[v0, vm]
+        ub = np.r_[um, u1]
+        vb = np.r_[vm, v1]
+        return ua, va, ub, vb
+
+    def links(c):
+        ua, va, ub, vb = teile(c)
+        m = 0.5 * (ua + ub)
+        # Integral min(u - c, 0) dv ueber die Teilkanten = Flaeche links von c
+        return float(np.sum(np.minimum(m - c, 0.0) * (vb - va)))
+    sgn = 1.0 if A > 0 else -1.0
+    lo, hi = float(np.min(u)), float(np.max(u))
+    for _ in range(100):
+        c = 0.5 * (lo + hi)
+        if sgn * links(c) < 0.5 * abs(A):
+            lo = c
+        else:
+            hi = c
+    c = 0.5 * (lo + hi)
+    ua, va, ub, vb = teile(c)
+    # f(u) = (u - c)|u - c|/2, f' = |u - c|; je Teilkante liegt u - c ganz auf einer Seite
+    da, db = ua - c, ub - c
+    sgnk = np.sign(da + db)
+    integ = sgnk * (da * da + da * db + db * db) / 6.0 * (vb - va)
+    return sgn * float(np.sum(integ))
+
+
+def u_bis59(sec: "Section") -> "Section":
+    """Ein UPN der Profiltabelle mit den Werten bis Stand 59 (Section.channel mit 8 %
+    Neigung, t_f bei (b + t_w)/2, ohne r2; I_w mit t_f bei b/2 wie in Runde k6) - um
+    gespeicherte Querschnitte und Teile zusammengesetzter Querschnitte mit dem alten
+    Wert zu erkennen (Runde k7, Merkmal „upn_querschnitt“)."""
+    return Section.channel(sec.name, sec.h, sec.b, sec.tw, sec.tf, sec.r, taper=0.08,
+                           fabrication=getattr(sec, "fabrication", "rolled"))
+
+
+#: Felder eines U-Querschnitts, die aus den Massen folgen und bei der Korrektur der
+#: UPN (Runde k7) neu gesetzt werden; I_w gesondert (eigene Werte bleiben)
+U_QUERSCHNITT_FELDER = ("A", "Iy", "Iz", "It", "Asy", "Asz", "zmax", "ymax", "Wel_y", "Wel_z",
+                        "Wpl_y", "Wpl_z", "yc")
+
+
+def u_querschnitt_stand(sec) -> Optional[tuple]:
+    """(alter Querschnitt, neuer Querschnitt), wenn ``sec`` ein U-Profil mit den Massen
+    einer Zeile der UPN-Tabelle ist und A, I_y, I_z und e_y genau den Werten bis Stand
+    59 folgen (mit 8 % Neigung aus der Profiltabelle oder einem Import mit Neigung, oder
+    ohne Neigung aus dem DSTV-Import) - sonst None (auch fuer eigene Werte). Neu: die
+    Werte der Profiltabelle nach DIN 1026-1 (Runde k7)."""
+    if getattr(sec, "typ", "") != "U":
+        return None
+    from .profiles import upn_din1026
+    f = upn_din1026(sec.h, sec.b, sec.tw, sec.tf, sec.r)
+    if f is None:
+        return None
+    fab = getattr(sec, "fabrication", "rolled")
+    neu = Section.channel(sec.name, sec.h, sec.b, sec.tw, sec.tf, sec.r, fabrication=fab, **f)
+    for taper in (0.08, 0.0):
+        alt = Section.channel(sec.name, sec.h, sec.b, sec.tw, sec.tf, sec.r, taper=taper, fabrication=fab)
+        if all(abs(float(getattr(sec, k)) - getattr(alt, k)) <= 1e-9 * abs(getattr(alt, k))
+               for k in ("A", "Iy", "Iz", "yc")):
+            return alt, neu
+    return None
+
+
+def u_zusammengesetzt_bis59(sec) -> bool:
+    """True, wenn ``sec`` ein zusammengesetzter Querschnitt mit UPN-Teilen aus der
+    Profiltabelle ist, dessen A, I_y und I_z genau dem Aufbau mit den UPN-Werten bis
+    Stand 59 folgen (:func:`u_bis59`) und sich vom heutigen unterscheiden (Runde k7).
+    Nur ein Status: die Lage der Teile (dy aus dem frueheren e_y) gehoert dem Anwender,
+    der Querschnitt wird neu zusammengesetzt, nicht still umgerechnet."""
+    if getattr(sec, "typ", "") != "composite":
+        return False
+    from . import profiles, sections
+    teile = [p for p in (getattr(sec, "parts", None) or []) if isinstance(p, dict) and "profil" in p]
+    if not teile:
+        return False
+    alt, neu, mit_upn = [], [], False
+    for p in teile:
+        base = p.get("teil")
+        b59 = base
+        if base is None:
+            try:
+                base = profiles.make_section(p["profil"])
+            except Exception:            # noqa: BLE001 - unbekanntes Teil: nicht pruefbar
+                return False
+            b59 = base
+            if profiles.upn_din1026(base.h, base.b, base.tw, base.tf, base.r) and getattr(base, "typ", "") == "U":
+                b59, mit_upn = u_bis59(base), True
+        lage = (float(p.get("dy", 0.0)), float(p.get("dz", 0.0)), float(p.get("drehung", 0.0) or 0.0),
+                bool(p.get("spiegeln", False)))
+        alt.append((b59,) + lage)
+        neu.append((base,) + lage)
+    if not mit_upn:
+        return False
+    try:
+        fab = getattr(sec, "fabrication", "welded")
+        a, n = sections.build(sec.name, alt, fabrication=fab), sections.build(sec.name, neu, fabrication=fab)
+    except Exception:                    # noqa: BLE001
+        return False
+    gleich_alt = all(abs(float(getattr(sec, k)) - getattr(a, k)) <= 1e-9 * abs(getattr(a, k))
+                     for k in ("A", "Iy", "Iz"))
+    return gleich_alt and abs(a.A - n.A) > 1e-9 * n.A
 
 
 @dataclass
@@ -1225,13 +1443,23 @@ class Section:
     @staticmethod
     def channel(name: str, h: float, b: float, tw: float, tf: float,
                 r: float = 0.0, taper: float = 0.0,
-                fabrication: str = "rolled") -> "Section":
+                fabrication: str = "rolled", r2: float = 0.0,
+                t_bei: Optional[float] = None) -> "Section":
         """U-Profil (Rinne). h Gesamthoehe, b Flanschbreite, tw Stegdicke,
         tf Flanschdicke (bei geneigten Flanschen in Flanschmitte gemessen),
         taper = Neigung der Flanschinnenseite (UPN: 0.08, UPE: 0).
         Die lokale y-Achse ist die starke Achse (Biegung in x-z), z liegt in der
         Stegebene. yc ist der Schwerpunktabstand von der Stegaussenkante,
-        ymax der groessere Randabstand."""
+        ymax der groessere Randabstand.
+
+        Mit ``t_bei`` (Messstelle von t_f ab Stegruecken) rechnet der wahre Umriss nach
+        DIN 1026-1 mit Ausrundung r (= r1, Steg/Flansch) und ``r2`` (Flanschspitze), siehe
+        :meth:`_channel_umriss` (UPN aus der Profiltabelle, profiles.upn_din1026; Runde
+        k7 vom 14.11.2026: bis Stand 59 mass t_f auch beim UPN in der Flanschmitte
+        (b + t_w)/2 ohne r2, UPN 200 A 32,86 statt 32,19 cm², I_y 1 966 statt 1 911 cm⁴).
+        Ohne ``t_bei`` (UPE, PFC, AISC C, geschweisste U) gilt die Streifenformel."""
+        if t_bei is not None:
+            return Section._channel_umriss(name, h, b, tw, tf, r, taper, r2, t_bei, fabrication)
         hw = h - 2 * tf
         A_w = h * tw
         A_f = 2 * (b - tw) * tf
@@ -1267,6 +1495,29 @@ class Section:
                        typ="U", h=h, b=b, tw=tw, tf=tf, r=r, Iw=Iw,
                        Wel_y=Iy / (h / 2), Wel_z=Iz / ymax,
                        Wpl_y=Wpl_y, Wpl_z=Wpl_z, fabrication=fabrication, yc=ey)
+
+    @staticmethod
+    def _channel_umriss(name: str, h: float, b: float, tw: float, tf: float, r1: float,
+                        taper: float, r2: float, t_bei: float, fabrication: str) -> "Section":
+        """U-Profil aus dem wahren Umriss (DIN 1026-1): A, Schwerpunkt, I_y, I_z, W_el und
+        W_pl aus dem Polygon (:func:`_u_umriss_din1026`), Flanschdicke t(x) = t_f +
+        taper (t_bei - x) ab Stegruecken. I_T wie bisher (h t_w^3 + 2 b t_f^3)/3, A_v,z
+        = h_w t_w, A_v,y = Flaeche der Flansche ohne Ausrundungen, I_w auf der
+        Mittellinie mit derselben Flanschgeometrie (:func:`iw_u_profil`)."""
+        P = _u_umriss_din1026(h, b, tw, tf, r1, r2, taper, t_bei)
+        k = _polygon_kennwerte(P)
+        A, ey = k["A"], k["xs"]
+        Iy, Iz = k["Izz"], k["Ixx"]
+        hw = h - 2 * tf
+        It = (h * tw ** 3 + 2 * b * tf ** 3) / 3.0
+        A_f = 2 * (b - tw) * (tf + taper * (t_bei - 0.5 * (b + tw)))
+        Iw = iw_u_profil(h, b, tw, tf, taper, t_bei)
+        ymax = max(ey, b - ey)
+        return Section(name, A=A, Iy=Iy, Iz=Iz, It=It,
+                       Asy=A_f, Asz=hw * tw, zmax=h / 2, ymax=ymax,
+                       typ="U", h=h, b=b, tw=tw, tf=tf, r=r1, Iw=Iw,
+                       Wel_y=Iy / (h / 2), Wel_z=Iz / ymax,
+                       Wpl_y=k["Sabs_z"], Wpl_z=k["Sabs_x"], fabrication=fabrication, yc=ey)
 
     @staticmethod
     def angle(name: str, h: float, b: float, t: float, r: float = 0.0,
@@ -11176,15 +11427,17 @@ class Model:
         """Namen der U-Profile und der zusammengesetzten Querschnitte mit U-Teilen
         (Doppel-U), deren I_w genau einem frueheren Formelwert folgt (:func:`iw_u_stand`:
         volle Flanschbreite, Befund C6; UPN ohne Flanschneigung, Befund B'2) und vom
-        berichtigten Wert abweicht. Ein anderer Wert ist ein eigener des Anwenders und
-        zaehlt nicht. ``nur_benutzt``: nur die, die ein Element traegt - nur sie
-        loesen Frage und Status aus (Befund A'10)."""
+        berichtigten Wert abweicht, und der UPN, deren A, I_y, I_z, e_y genau den Werten
+        bis Stand 59 folgen (:func:`u_querschnitt_stand`, DIN 1026-1, Runde k7). Ein
+        anderer Wert ist ein eigener des Anwenders und zaehlt nicht. ``nur_benutzt``:
+        nur die, die ein Element traegt - nur sie loesen Frage und Status aus (Befund
+        A'10)."""
         benutzt = {getattr(e, "sec", None) for e in (self.elements or [])} if nur_benutzt else None
         aus = []
         for name, sec in (self.sections or {}).items():
             if benutzt is not None and name not in benutzt:
                 continue
-            if iw_u_stand(sec) is not None:
+            if iw_u_stand(sec) is not None or u_querschnitt_stand(sec) is not None:
                 aus.append(str(name))
         return aus
 
@@ -11192,19 +11445,50 @@ class Model:
         """I_w der U-Profile nach der berichtigten Formel (:func:`iw_u_profil`) neu
         rechnen - nur fuer die aus :meth:`u_profile_iw_alt`, eigene Werte bleiben
         (Vorschlag vom 14.11.2026, vom Anwender freigegeben; die Frage stellt die
-        Oberflaeche beim Oeffnen). Rueckgabe: die Zeile fuers Protokoll (leer, wenn
-        nichts zu tun war). Danach entfaellt der Status „u_profil_iw“."""
-        teile = []
+        Oberflaeche beim Oeffnen). Rueckgabe: die Zeilen fuers Protokoll (leer, wenn
+        nichts zu tun war). Danach entfallen die Status „u_profil_iw“ und
+        „upn_querschnitt“.
+
+        UPN mit den Querschnittswerten bis Stand 59 (:func:`u_querschnitt_stand`, Runde
+        k7) bekommen alle Werte der Profiltabelle nach DIN 1026-1 (A, I_y, I_z, W, e_y,
+        A_v; I_T unveraendert); ihr I_w nur, wenn es ein Formelwert ist - ein eigener
+        bleibt."""
+        teile, teile_q = [], []
         for name in self.u_profile_iw_alt():
             sec = self.sections[name]
-            _alt, neu = iw_u_stand(sec)
+            q = u_querschnitt_stand(sec)
+            stand = iw_u_stand(sec)
+            if q is not None:
+                alt_q, neu_q = q
+                iw_formel = (stand is not None
+                             or any(abs(float(sec.Iw) - w) <= 1e-9 * abs(w) for w in (alt_q.Iw, neu_q.Iw)))
+                a0, iy0 = float(sec.A), float(sec.Iy)
+                for k in U_QUERSCHNITT_FELDER:
+                    setattr(sec, k, getattr(neu_q, k))
+                text = (f"{name} A {_zahl_text_k(a0 * 1e4, 2)} → {_zahl_text_k(sec.A * 1e4, 2)} cm², "
+                        f"I_y {_zahl_text_k(iy0 * 1e8, 1)} → {_zahl_text_k(sec.Iy * 1e8, 1)} cm⁴")
+                if iw_formel and abs(float(sec.Iw) - neu_q.Iw) > 1e-9 * neu_q.Iw:
+                    text += f", I_w {_zahl_cm6(sec.Iw)} → {_zahl_cm6(neu_q.Iw)} cm⁶"
+                    sec.Iw = neu_q.Iw
+                elif not iw_formel:
+                    text += " (eigener I_w bleibt)"
+                teile_q.append(text)
+                continue
+            if stand is None:
+                continue
+            _alt, neu = stand
             alt = float(sec.Iw)
             sec.Iw = neu
             teile.append(f"{name} {_zahl_cm6(alt)} → {_zahl_cm6(neu)} cm⁶")
-        if not teile:
-            return []
-        return ["I_w der U-Profile nach der berichtigten Formel neu berechnet (Mittellinie b − t_w/2, "
-                "UPN mit Flanschneigung; Befunde C6 und B'2 vom 14.11.2026): " + "; ".join(teile)]
+        aus = []
+        if teile:
+            aus.append("I_w der U-Profile nach der berichtigten Formel neu berechnet (Mittellinie b − t_w/2, "
+                       "UPN mit Flanschneigung; Befunde C6 und B'2 vom 14.11.2026): " + "; ".join(teile))
+        if teile_q:
+            aus.append("Querschnittswerte der UPN nach DIN 1026-1 neu berechnet (t_f bei b/2 mit 8 % Neigung, "
+                       "über h = 300 mm bei (b + s)/2 mit 5 %, Ausrundungen r1 und r2; 14.11.2026): "
+                       + "; ".join(teile_q))
+        return aus
 
     def flaechenlager_geprueft(self, name: Optional[str] = None, lager=None) -> list:
         """Der Anwender bestaetigt den Hinweis „Flächenlager nach Neuvernetzen prüfen“
