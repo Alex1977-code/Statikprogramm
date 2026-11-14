@@ -357,7 +357,8 @@ def normalkraefte_kg(model: Model, u: np.ndarray, aktiv=None, n_anfang: dict = N
 # ==========================================================================
 # alpha_cr (5.2.1)
 # ==========================================================================
-def alpha_cr(model: Model, system, u: np.ndarray, nmodes: int = 1, n_anfang: dict = None) -> dict:
+def alpha_cr(model: Model, system, u: np.ndarray, nmodes: int = 1, n_anfang: dict = None,
+             feq: dict = None) -> dict:
     """
     Kleinster positiver Verzweigungslastfaktor zum Verformungszustand ``u``.
 
@@ -388,12 +389,17 @@ def alpha_cr(model: Model, system, u: np.ndarray, nmodes: int = 1, n_anfang: dic
 
     Rueckgabe {"alpha_cr": ..., "modus": Eigenvektor, "fehler": "",
     "einzelstaebe": [...], "alpha_cr_stab": ..., "stab": ...}.
+
+    ``feq`` (solver.case_loads): die Stablasten fuer den Armanteil der Staebe
+    mit Versatz (asm.versatz_arm_kg, seit dem 14.11.2026); alpha_cr nimmt
+    davon den symmetrischen Teil - eine untere Schranke, siehe dort.
     """
     einzel = einzelstab_knicken(model, u, getattr(system, "aktiv", None), n_anfang)
     stab = {"einzelstaebe": einzel,
             "alpha_cr_stab": einzel[0]["alpha_cr"] if einzel else math.inf,
             "stab": einzel[0]["stab"] if einzel else ""}
-    Kg = asm.geometric_stiffness(model, u, getattr(system, "aktiv", None), n_anfang=n_anfang)
+    Kg = asm.geometric_stiffness(model, u, getattr(system, "aktiv", None), n_anfang=n_anfang,
+                                 feq=feq, symmetrisch=True)
     fi = system.fi
     Kgff = Kg[fi][:, fi].tocsc()
     if Kgff.shape[0] < 3 or abs(Kgff).max() == 0:
@@ -758,7 +764,7 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
     postprocess(model, u1, res1, feq, q, temp, aktiv=aktiv)
 
     info = Th2Info(kombination=name, u_max_I=float(np.abs(u1).max()))
-    ac = alpha_cr(model, system, u1, n_anfang=n_anf)
+    ac = alpha_cr(model, system, u1, n_anfang=n_anf, feq=feq)
     info.alpha_cr = ac["alpha_cr"]
     info.stab_aus(ac)
     if ac.get("fehler"):
@@ -793,12 +799,18 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
             Fimp = Fs + Fv
             info.schiefstellung, info.vorkruemmung = s_info, v_info
         Fges = F + Fimp
-        Kg = asm.geometric_stiffness(model, u, aktiv, n_anfang=n_anf)
+        # mit dem Armanteil der Staebe mit Versatz (14.11.2026): voll, die
+        # Statik des gedrehten Arms wie nach Theorie III. Ordnung - der
+        # symmetrische Teil in der Matrix, der schiefsymmetrische als Last aus
+        # dem vorigen Schritt (die Matrix bleibt symmetrisch, ama); ohne
+        # Versatz ist K_schief None und alles wie bisher
+        Kg = asm.geometric_stiffness(model, u, aktiv, n_anfang=n_anf, feq=feq, symmetrisch=True)
+        K_schief = asm.versatz_arm_schief(model, u, aktiv, feq)
         # dieselben Normalkraefte wie in K_g fuer die Stabendkraefte und das
         # Feld (A8, 09.11.2026: postprocess rechnet sie mit k + k_G)
         n_geo = normalkraefte_kg(model, u, aktiv, n_anf)
         try:
-            u_neu = system.solve(Fges, K_extra=Kg, us=us)
+            u_neu = system.solve(Fges if K_schief is None else Fges - K_schief @ u, K_extra=Kg, us=us)
         except Exception as exc:
             info.fehler = f"Gleichungssystem singulär (α_cr ≈ 1?): {exc}"
             break
@@ -806,7 +818,8 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
         bezug = max(float(np.abs(u_neu).max()), 1e-12)
         u = u_neu
         res = Results(name=name, kind="combination", model=model)
-        verschiebungen_eintragen(model, res, u, system.reactions(u, Fges, K_extra=Kg))
+        verschiebungen_eintragen(model, res, u, system.reactions(
+            u, Fges, K_extra=Kg if K_schief is None else Kg + K_schief))
         auto_gehalten_abtrennen(model, getattr(system, "auto", None), res, Fges, aktiv)
         postprocess(model, u, res, feq, q, temp, aktiv=aktiv, n_geo=n_geo)
         info.iterationen = it
@@ -1005,7 +1018,8 @@ def check_theorie2(model: Model, analysis, combos: list = None, system=None,
             F, _feq, _q, _temp = case_loads(m_a, faktoren, getattr(s_a, "aktiv", None))
             u1 = s_a.solve(F, us=case_prescribed(m_a, faktoren))
             ac = alpha_cr(m_a, s_a, u1,
-                          n_anfang=anfangsnormalkraefte(m_a, faktoren, getattr(s_a, "aktiv", None)))
+                          n_anfang=anfangsnormalkraefte(m_a, faktoren, getattr(s_a, "aktiv", None)),
+                          feq=_feq)
             info = Th2Info(kombination=zeile, alpha_cr=ac["alpha_cr"], grenze=grenze,
                            u_max_I=float(np.abs(u1).max()))
             info.stab_aus(ac)

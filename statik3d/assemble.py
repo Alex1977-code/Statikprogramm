@@ -1852,9 +1852,153 @@ def stab_normalkraft(model: Model, e, u: np.ndarray, n_anfang: float = 0.0, _ach
     return N + float(n_anfang) if n_anfang else N
 
 
-def geometric_stiffness(model: Model, u: np.ndarray, aktiv=None, n_anfang: dict = None) -> sparse.csr_matrix:
+def versatz_arme_global(model: Model, e):
+    """Die starren Arme (2, 3) global vom Knoten zum Stabende fuer **jeden**
+    Versatz ungleich null, auch gleichen an beiden Enden (anders als
+    :func:`stab_arme`, das nur den verschiedenen meldet) - None ohne Versatz.
+    a_i = T3_Knotenlinie^T r_i wie bm.versatz_arme und theorie3._Stab."""
+    if e.typ not in LINE_TYPES or len(e.nodes) < 2:
+        return None
+    rr = bm.versatz_vektoren(getattr(e, "exzentrizitaet", None))
+    if rr is None:
+        return None
+    X = model.nodes[e.nodes]
+    T3n, _L = bm.local_axes(X[0], X[1], e.roll)
+    return np.vstack([T3n.T @ rr[0], T3n.T @ rr[1]])
+
+
+def stab_endkraefte_linear(model: Model, e, u: np.ndarray, f0=None):
+    """(f_l (12,), T3): die Stabendkraefte eines Stabelements nach Theorie I.
+    Ordnung aus dem Verschiebungsvektor ``u`` (ndof,) in den Achsen des Stabs
+    (:func:`stab_achsen`), hinter dem Versatz, mit Gelenken, Federgelenken und
+    den Stablasten ``f0`` (lokale Festeinspannkraefte, unkondensiert, wie
+    solver.case_loads sie als feq liefert) - derselbe Weg wie die
+    Ergebnisrueckrechnung (solver.postprocess, Stabendkraefte ohne k_G). Mit
+    T3 (die Achsen des Stabs) wird f_l global."""
+    d = element_dofs(e, model)
+    f0 = np.zeros(12) if f0 is None else np.asarray(f0, float)
+    u = np.asarray(u, float)
+    if model.stab_woelbt(e):
+        kl, T3, _L = beam_woelb_local(model, e)
+        ul = transform14(T3) @ u[d]
+        A = stab_versatz(model, e)
+        if A is not None:
+            A14 = np.eye(14)
+            A14[:12, :12] = A
+            ul = A14 @ ul
+        f14 = np.zeros(14)
+        f14[:12] = f0
+        return (kl @ ul - f14)[:12], T3
+    kl, T3, T, _L = beam_local(model, e)
+    ul = T @ u[d[:12]]
+    A = stab_versatz(model, e)
+    if A is not None:
+        ul = A @ ul
+    kl_s, f_s, rec = kl, f0, None
+    if getattr(e, "hinge_springs", None):
+        kl_s, f_s, rec = hinge_springs(kl, f0, e.hinge_springs)
+    if e.hinges:
+        _k, _f, cond = condense(kl_s, f_s, e.hinges)
+        if cond is not None:
+            c, r, Kcc_inv, Kcr = cond
+            ul = ul.copy()
+            ul[c] = Kcc_inv @ (f_s[c] - Kcr @ ul[r])
+    if rec is not None:
+        ul = hinge_local_disp(rec, ul)
+    return kl @ ul - f0, T3
+
+
+# Armanteil der geometrischen Steifigkeit (14.11.2026, Verfahrensstand 40).
+# Der Versatz eines Stabendes ist ein starrer Arm a vom Knoten zum Stabende
+# (stab_versatz, seit Stand 38 auch nach Theorie I. und II. Ordnung). Dreht
+# sich der Knoten um theta, liegt das Stabende bei x + R(theta) a; die
+# Stabendkraft F greift dort an, und der Knoten bekommt das Moment
+# R(theta) a x F. Linear in theta:
+#
+#     delta (R a x F) = (delta_theta x a) x F = [F]x [a]x delta_theta,
+#
+# ein Beitrag K_a = [F]x [a]x = a F^T - (a . F) I zum Drehblock des Knotens -
+# wie die Tangente der Theorie III. Ordnung (theorie3._Stab.knoten). Bis
+# dahin blieb das Moment a x F beim unverdrehten Arm: Kragarm 4 m, Versatz bis
+# 0,11 m, Druck 200 kN mit Momenten an der Spitze - Einspannmoment Mz nach
+# Theorie II. Ordnung 1,355 statt 1,301 kNm (Theorie III.), das Gleichgewicht
+# am verformten System fehlte um (theta x a) x F; Gelenkstuetze mit axialen
+# Armen 0,5 m an beiden Enden alpha_cr 129,54 (Euler des Stabs allein) statt
+# 83,96 - 54 % auf der unsicheren Seite (tests/test_versatz_arm_kg.py).
+#
+# K_a ist unsymmetrisch, sobald F nicht laengs des Arms liegt (der
+# schiefsymmetrische Teil -1/2 [a x F]x gehoert zum Moment des Arms). Die
+# Iteration nach Theorie II. Ordnung nimmt K_a voll: das ist die Statik des
+# gedrehten Arms, dieselbe wie nach Theorie III. Ordnung. Den symmetrischen
+# Teil hat sie in der Matrix, den schiefsymmetrischen als Last aus dem
+# vorigen Schritt (:func:`versatz_arm_schief`) - die Matrix bleibt
+# symmetrisch (ama verlangt das), im konvergierten Zustand gilt
+# (K + K_G + K_a) u = F wie mit der vollen Matrix. alpha_cr und das
+# Knicken nehmen den symmetrischen Teil: ihre Eigenwertloeser (eigsh, die
+# Zerlegung ohne Tausch in theorie2.groesstes_mu) setzen Symmetrie voraus,
+# und fuer jeden reellen Eigenvektor v des vollen Problems ist v^T K_a v =
+# v^T sym(K_a) v - nach Rayleigh liegt alpha_cr aus dem symmetrischen Teil
+# darum nie ueber dem kleinsten reellen Verzweigungsfaktor des vollen
+# Problems (sichere Seite). Liegt F laengs des Arms, sind beide gleich.
+def versatz_arm_kg(model: Model, u: np.ndarray, aktiv=None, feq: dict = None,
+                   teil: str = "voll"):
+    """Der Armanteil der geometrischen Steifigkeit (siehe oben) als
+    (rows, cols, vals) fuer alle wirkenden Stabelemente mit Versatz, oder
+    None ohne einen solchen. F ist die Stabendkraft nach Theorie I. Ordnung
+    des Zustands ``u`` mit den Stablasten ``feq`` (:func:`stab_endkraefte_linear`)
+    global, aus den Achsen des Stabs zwischen seinen versetzten Enden.
+    ``teil``: "voll", "symmetrisch" (alpha_cr, Knicken, Matrix der Theorie II.
+    Ordnung) oder "schief" (der Rest, :func:`versatz_arm_schief`)."""
+    feq = feq or {}
+    rows, cols, vals = [], [], []
+    for i, e in enumerate(model.elements):
+        if e.typ not in LINE_TYPES or not _wirkt(aktiv, i):
+            continue
+        arme = versatz_arme_global(model, e)
+        if arme is None:
+            continue
+        fl, T3 = stab_endkraefte_linear(model, e, u, feq.get(i))
+        d = element_dofs(e, model)
+        for k in range(2):
+            F = T3.T @ fl[6 * k:6 * k + 3]
+            Ka = bm._skew(F) @ bm._skew(arme[k])
+            if teil == "symmetrisch":
+                Ka = 0.5 * (Ka + Ka.T)
+            elif teil == "schief":
+                Ka = 0.5 * (Ka - Ka.T)
+            dd = d[6 * k + 3:6 * k + 6]
+            r, c = np.meshgrid(dd, dd, indexing="ij")
+            rows.append(r.ravel())
+            cols.append(c.ravel())
+            vals.append(Ka.ravel())
+    if not rows:
+        return None
+    return rows, cols, vals
+
+
+def versatz_arm_schief(model: Model, u: np.ndarray, aktiv=None, feq: dict = None):
+    """Der schiefsymmetrische Teil des Armanteils (:func:`versatz_arm_kg`) als
+    Matrix (ndof, ndof), oder None ohne Stab mit Versatz. Die Iteration nach
+    Theorie II. Ordnung setzt ihn als Last -K_s u des vorigen Schritts an."""
+    arm = versatz_arm_kg(model, u, aktiv, feq, "schief")
+    if arm is None:
+        return None
+    n = model.ndof
+    return sparse.coo_matrix(
+        (np.concatenate(arm[2]), (np.concatenate(arm[0]), np.concatenate(arm[1]))),
+        shape=(n, n)).tocsr()
+
+
+def geometric_stiffness(model: Model, u: np.ndarray, aktiv=None, n_anfang: dict = None,
+                        feq: dict = None, symmetrisch: bool = False) -> sparse.csr_matrix:
     """Geometrische Steifigkeit aus vorhandenem Verformungszustand (nur Staebe);
     abgeschaltete Elemente (``aktiv`` False) bleiben weg.
+
+    Stabelemente mit Versatz bekommen den Armanteil (:func:`versatz_arm_kg`,
+    seit dem 14.11.2026) mit den Stablasten ``feq`` (solver.case_loads) in
+    ihrer Stabendkraft; ``symmetrisch`` nimmt davon nur den symmetrischen
+    Teil (alpha_cr, Knicken, Matrix der Theorie II. Ordnung). Ohne Stab mit
+    Versatz wie bisher.
 
     ``n_anfang`` {Element: Normalkraft der Anfangsdehnung} (seit dem
     13.10.2026, solver.anfangsnormalkraefte): Temperatur, Vorspannung und
@@ -1904,6 +2048,12 @@ def geometric_stiffness(model: Model, u: np.ndarray, aktiv=None, n_anfang: dict 
         rows.append(r.ravel())
         cols.append(c.ravel())
         vals.append(kg.ravel())
+    # der Armanteil der Staebe mit Versatz (14.11.2026); ohne Versatz None
+    arm = versatz_arm_kg(model, u, aktiv, feq, "symmetrisch" if symmetrisch else "voll")
+    if arm is not None:
+        rows.extend(arm[0])
+        cols.extend(arm[1])
+        vals.extend(arm[2])
     if not rows:
         return sparse.csr_matrix((n, n))
     return sparse.coo_matrix(

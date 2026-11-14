@@ -11636,8 +11636,14 @@ def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = Non
         faktoren = {} if c_.ist_umhuellende else dict(c_.factors)
     else:
         faktoren = _lastfall_faktoren(model, case)[0]
+    # Stablasten fuer den Armanteil der Staebe mit Versatz (14.11.2026), davon
+    # der symmetrische Teil wie in theorie2.alpha_cr; ohne Versatz nicht gebraucht
+    feq = None
+    if any(asm.versatz_arme_global(model, e) is not None for e in model.elements):
+        feq = case_loads(model, faktoren, system.aktiv)[1]
     Kg = asm.geometric_stiffness(model, u, system.aktiv,
-                                 n_anfang=_anfang_im_ergebnis(model, static, faktoren, system.aktiv))
+                                 n_anfang=_anfang_im_ergebnis(model, static, faktoren, system.aktiv),
+                                 feq=feq, symmetrisch=True)
     fi = system.fi
     Kff = system.Kff
     Kgff = Kg[fi][:, fi].tocsc()

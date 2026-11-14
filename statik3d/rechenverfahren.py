@@ -1865,6 +1865,23 @@ MERKMALE: list = [
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Stab mit verschiedenem Versatz (Exzentrizität) an Anfang und Ende",
         betrifft=_stab_mit_ungleichem_versatz),
+    # Auftrag vom 14.11.2026: nach Theorie II. Ordnung fehlte die
+    # geometrische Steifigkeit des starren Versatz-Arms - das Moment a x F
+    # blieb beim unverdrehten Arm (Kragarm 4 m, Versatz bis 0,11 m, Druck
+    # 200 kN mit Momenten: Einspannmoment Mz 1,355 statt 1,301 kNm nach
+    # Theorie III. Ordnung; Gelenkstuetze mit axialen Armen 0,5 m: alpha_cr
+    # 129,54 statt 83,96). Seither der Armanteil [F]x [a]x, in alpha_cr und
+    # Knicken sein symmetrischer Teil. Fehlerkorrektur
+    Merkmal(
+        name="versatz_arm_kg", titel="Geometrische Steifigkeit des Versatz-Arms nach Theorie II. Ordnung",
+        texte={"alt": "Moment a × F des Versatzes beim unverdrehten Arm (Arm ohne geometrische Steifigkeit)",
+               "neu": "Arm dreht mit dem Knoten: Armanteil [F]× [a]× in Theorie II. Ordnung, sein "
+                      "symmetrischer Teil in α_cr und Knicken"},
+        wechsel=(Wechsel(stand=40, datum="14.11.2026", commit="fix/k4-armkg", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Stab mit Versatz der Stabenden (auch gleichem), mit α_cr, Knicken oder Theorie II. "
+                      "Ordnung",
+        betrifft=_stab_mit_versatz, im_ergebnis=_alpha_cr_im_ergebnis),
     # Befund vom 11.11.2026 (Pruefung der Testmodelle): der Wasserdruck an
     # Schalen ohne globale Lastrichtung hatte das falsche Vorzeichen - „gegen
     # die Normale (in den Körper)“ wirkte mit der Elementnormale, numerisch
@@ -2036,7 +2053,7 @@ MERKMALE: list = [
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 39
+VERFAHRENSSTAND = 40
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

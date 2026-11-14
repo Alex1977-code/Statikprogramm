@@ -231,31 +231,46 @@ def test_theorie2_und_3():
     """Druck 200 kN mit Momenten an der Spitze. Die Kurzstaebe tragen dabei
     keine Normalkraft: mit Normalkraft N_k bekaemen sie nach Theorie II.
     Ordnung eine eigene geometrische Steifigkeit (N_k mal Laenge bei ihrer
-    Drehung), die der Versatz als Matrix A nicht hat - gemessen 1,5e-3 der
-    Verdrillung mit N_k = 3 kN am 0,1-m-Arm, wie N_k l/(G I_T/L) = 1,49e-3;
-    nach Theorie I. Ordnung 1e-7 (Nebenbefund, ausserhalb dieser Kur)."""
+    Drehung) - gemessen 1,5e-3 der Verdrillung mit N_k = 3 kN am 0,1-m-Arm,
+    wie N_k l/(G I_T/L) = 1,49e-3; nach Theorie I. Ordnung 1e-7.
+
+    Seit dem 14.11.2026 (Stand 40) hat der Versatz-Arm seine geometrische
+    Steifigkeit [F]x [a]x (asm.versatz_arm_kg, tests/test_versatz_arm_kg.py):
+    der Kurzstab mit N_k ist ihr Anteil laengs des Arms. Quer zum Arm (hier
+    F laengs des Stabs, der Arm quer dazu) kennt Theorie II. Ordnung beim
+    Kurzstab keine geometrische Steifigkeit aus Querkraft und Moment - der
+    Vergleich laeuft darum gegen Theorie III. Ordnung. Bis dahin stand hier
+    „Spitze, Einspannmomente und alpha_cr wie mit Kurzstaeben (auf 1e-4)“;
+    die Einspannmomente wichen dabei um 2 % von Theorie III. ab."""
     from statik3d.theorie3 import solve_theorie3
     r1, r2 = (0, 0, 0), (0, 0.05, 0.1)
     last = {"Fx": -200e3, "Mx": 0.5e3, "My": 2e3, "Mz": -1e3}
     mv, iv, ev = _kragarm("versatz", r1, r2, 8, last, "II")
     mk, ik, ek = _kragarm("kurzstab", r1, r2, 8, last, "II")
+    m3, i3, e3 = _kragarm("versatz", r1, r2, 8, last, "III")
     rv, rk = _rechnen(mv), _rechnen(mk)
+    r3, info = solve_theorie3(m3, {"LF1": 1.0}, "LF1", schritte=10, imperfektionen=False, stabteilung=False)
     check("Th II, Druck 200 kN mit Momenten, Versatz linear 0 → (0; 0,05; 0,1) m in 8 Elementen: "
-          "Spitze wie mit Kurzstäben (auf 1e-4)", _rel(rv.u[iv[-1]], rk.u[ik[-1]]) < 1e-4,
-          f"Versatz {np.round(rv.u[iv[-1]] * 1e3, 5)}, Kurzstab {np.round(rk.u[ik[-1]] * 1e3, 5)}")
-    check("… Einspannmomente wie mit Kurzstäben (auf 1e-4)",
-          _rel(rv.reactions[iv[0], 3:], rk.reactions[ik[0], 3:]) < 1e-4,
-          f"Versatz {np.round(rv.reactions[iv[0], 3:] / 1e3, 5)}, Kurzstab "
+          "Verschiebung der Spitze wie nach Th III (auf 2e-3, vorher 5,6e-3; u_x kürzt Th III um die "
+          "Bogenlänge; bis Stand 39 gegen Kurzstäbe)",
+          not info.fehler and _rel(rv.u[iv[-1], :3], r3.u[i3[-1], :3]) < 2e-3,
+          f"Versatz {np.round(rv.u[iv[-1]] * 1e3, 5)}, Th III {np.round(r3.u[i3[-1]] * 1e3, 5)}, "
+          f"Kurzstab {np.round(rk.u[ik[-1]] * 1e3, 5)}")
+    check("… Einspannmomente wie nach Th III (auf 1e-3; bis Stand 39 gegen Kurzstäbe)",
+          _rel(rv.reactions[iv[0], 3:], r3.reactions[i3[0], 3:]) < 1e-3,
+          f"Versatz {np.round(rv.reactions[iv[0], 3:] / 1e3, 5)}, Th III "
+          f"{np.round(r3.reactions[i3[0], 3:] / 1e3, 5)}, Kurzstab "
           f"{np.round(rk.reactions[ik[0], 3:] / 1e3, 5)} kNm")
     av, ak = rv.info.get("alpha_cr"), rk.info.get("alpha_cr")
-    check("… alpha_cr wie mit Kurzstäben (auf 1e-4)",
-          av is not None and ak is not None and abs(av / ak - 1) < 1e-4, f"Versatz {av}, Kurzstab {ak}")
+    check("… alpha_cr höchstens das des Kurzstabmodells (symmetrischer Teil des Armanteils, sichere Seite; "
+          "bis Stand 39 gleich auf 1e-4)",
+          av is not None and ak is not None and av <= ak * (1 + 1e-9) and av > 0.9 * ak,
+          f"Versatz {av}, Kurzstab {ak}")
     # Theorie III. Ordnung mit Kraeften an der Spitze. Mit den Momenten von
-    # oben weicht Theorie III. um 2 % in den Einspannmomenten ab (ohne Versatz
-    # 1,5e-5): Theorie III. dreht den Arm mit, (θ × a) × F mit der
-    # Stabendkraft F ≈ 200 kN, a bis 0,11 m und θ ≈ 2,5 mrad gibt die
-    # gemessenen 54 Nm; Theorie II. Ordnung kennt diesen Anteil weder beim
-    # Versatz noch beim Kurzstab (Nebenbefund, ausserhalb dieser Kur)
+    # oben wich Theorie III. bis Stand 39 um 2 % in den Einspannmomenten ab
+    # (ohne Versatz 1,5e-5): Theorie III. dreht den Arm mit, (θ × a) × F mit
+    # der Stabendkraft F ≈ 200 kN, a bis 0,11 m und θ ≈ 2,5 mrad gab die
+    # gemessenen 54 Nm; seit Stand 40 hat Theorie II. Ordnung diesen Anteil
     last = {"Fx": -200e3, "Fz": -3e3, "Fy": 1e3}
     mv, iv, ev = _kragarm("versatz", r1, r2, 8, last, "II")
     rv = _rechnen(mv)
