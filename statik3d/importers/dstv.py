@@ -156,7 +156,10 @@ def section_from_part(part: dict, log: list = None) -> Section:
         if code == "I" and h and b and tw and tf:
             return Section.i_profile(name, h, b, tw, tf, r)
         if code in ("U", "C") and h and b and tw and tf:
-            return Section.channel(name, h, b, tw, tf, r)
+            # Tabellenmasse eines UPN: Flanschneigung und r2 nach DIN 1026-1 wie aus der
+            # Profiltabelle (14.11.2026, Runde k7: bis dahin ohne Neigung); sonst ohne
+            from ..profiles import upn_din1026
+            return Section.channel(name, h, b, tw, tf, r, **(upn_din1026(h, b, tw, tf, r) or {}))
         if code == "L" and h and b and tf:
             return Section.angle(name, h, b, tf, r)
         if code == "M" and h and b and tf:

@@ -317,7 +317,13 @@ def _from_shape(table: dict, row, cols, name: str):
         if "U-PROFIL" in kat:
             h, b, tw, tf, r = g("H"), g("B"), g("TS"), g("TG"), g("R1")
             taper = 0.08 if "GENEIGTE" in kat else 0.0
-            return Section.channel(name, h, b, tw, tf, r, taper) if h and b and tw and tf else None
+            if not (h and b and tw and tf):
+                return None
+            # Masse eines UPN der Tabelle: Flanschgeometrie nach DIN 1026-1 wie aus der
+            # Profiltabelle (14.11.2026, Runde k7)
+            from ..profiles import upn_din1026
+            din = upn_din1026(h, b, tw, tf, r) if taper else None
+            return Section.channel(name, h, b, tw, tf, r, **din) if din else                 Section.channel(name, h, b, tw, tf, r, taper)
         if "FLACHSTAHL" in kat:
             b, t = g("B"), g("S")
             return Section.rectangle(name, t, b) if b and t else None

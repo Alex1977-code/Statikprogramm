@@ -22899,12 +22899,17 @@ class MainWindow(QtWidgets.QMainWindow):
             return False
         unbenutzt = [n for n in self.model.u_profile_iw_alt() if n not in namen]
         ergebnisse = self.analysis is not None or self.results is not None
+        # UPN mit Querschnittswerten bis Stand 59 kommen ueber dieselben Model-Methoden dazu
+        # (Runde k7, DIN 1026-1)
         text = ("Die Datei enthält U-Profile, deren Wölbwiderstand I_w nach einer früheren Formel "
-                "berechnet ist (volle Flanschbreite bzw. UPN ohne Flanschneigung, zu groß): " + ", ".join(namen[:6])
+                "berechnet ist (volle Flanschbreite bzw. UPN ohne Flanschneigung, zu groß), oder UPN mit "
+                "Querschnittswerten nach der früheren Formel (t_f in der Flanschmitte, ohne Ausrundung r2): "
+                + ", ".join(namen[:6])
                 + (" …" if len(namen) > 6 else "") + ".\n"
                 + (("Unbenutzt, wird mit berichtigt: " + ", ".join(unbenutzt[:6])
                     + (" …" if len(unbenutzt) > 6 else "") + ".\n") if unbenutzt else "")
                 + "\nI_w der U-Profile nach der berichtigten Formel neu berechnen?\n\n"
+                "UPN bekommen die Werte der Profiltabelle nach DIN 1026-1. "
                 "Eigene I_w-Werte bleiben unverändert. Ein Rückgängig-Schritt."
                 + (" Die geladenen Ergebnisse gehören zum alten I_w und werden verworfen (neu rechnen); "
                    "Rückgängig holt sie nicht zurück." if ergebnisse else ""))
