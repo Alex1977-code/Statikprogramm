@@ -657,6 +657,29 @@ def _doppelte_randlinien_wo(model, _analyse) -> str:
     return _kurzliste(teile)
 
 
+def _schalennetz_getrennt(model) -> bool:
+    """Ein vorhandenes Schalennetz, das an einer gemeinsamen Linie (keine
+    Doppellinie - die hat ihr eigenes Merkmal) oder an Abschnitten einer
+    Polylinie getrennte Knoten hat (Befunde B9 und B10 vom 14.11.2026). Ist die
+    Pruefung nicht moeglich (Ausnahme): möglicherweise betroffen."""
+    try:
+        from . import mesher
+        return bool(mesher.getrennte_schalenlinien(model))
+    except Exception:                       # noqa: BLE001 - nicht pruefbar: möglicherweise betroffen
+        return True
+
+
+def _schalennetz_getrennt_wo(model, _analyse) -> str:
+    """Wo das Schalennetz getrennt ist (Text des Status)."""
+    from . import mesher
+    teile = []
+    for linie, namen, a, b, n in mesher.getrennte_schalenlinien(model):
+        t = mesher.schalenlinien_text((linie, a, b, n, [], namen))
+        if t not in teile:
+            teile.append(t)
+    return _kurzliste(teile)
+
+
 def _elementbezogene_flaechenlager(model) -> bool:
     """Ein Flaechenlager mit Elementliste (ohne Flaechenbezug), das auf Elementen
     einer Flaeche oder eines Koerpers liegt - nur deren Netz wird neu vernetzt
@@ -2770,10 +2793,32 @@ MERKMALE: list = [
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Verformungsnachweis der Art „Stab“ mit φx, φy oder φz",
         betrifft=_gzg_stab_verdrehung),
+    # Befunde B9 und B10 der Befundliste vom 14.11.2026: eine einzeln neu
+    # vernetzte Schalenflaeche bekam auf der gemeinsamen Linie neue Knoten, die
+    # vernetzte Nachbarflaeche behielt die alten (Platte 4 m aus zwei Flaechen
+    # 397,70 statt 149,59 mm); eine gerade Linie gegen eine Polylinie mit
+    # Zwischenknoten auf derselben Strecke blieb unverbunden (407,02 statt
+    # 149,99 mm). Der Vernetzer nimmt vernetzte Nachbarn mit und teilt die
+    # Polylinie in ihre Abschnitte. Das Netz steht in der Datei und rechnet
+    # weiter getrennt, bis neu vernetzt wird: Korrektur am Modell, solange es
+    # getrennt ist. Fehlerkorrektur
+    Merkmal(
+        name="schalennetz_getrennt", titel="Schalennetz an gemeinsamen Linien",
+        texte={"alt": "eine einzeln neu vernetzte Fläche von ihren vernetzten Nachbarn getrennt; gerade Linie "
+                      "gegen Polylinie auf derselben Strecke nur an den Enden verbunden",
+               "neu": "vernetzte Nachbarflächen werden mitvernetzt, Abschnitte von Polylinien sind gemeinsame "
+                      "Linien; gilt nach dem Neuvernetzen"},
+        wechsel=(Wechsel(stand=50, datum="14.11.2026", commit="fix/k5-b-netz", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Schalenflächen an einer gemeinsamen Linie oder an Abschnitten einer Polylinie, deren "
+                      "Netz dort getrennte Knoten hat",
+        betrifft=_schalennetz_getrennt, import_korrektur=True, im_ergebnis=_schalennetz_getrennt_wo,
+        modellgrund="Netz getrennt erzeugt (einzelne Fläche neu vernetzt, Polylinie oder älterer Programmstand)",
+        vorschlag="Netz › Vernetzen: das Netz neu erzeugen"),
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 47
+VERFAHRENSSTAND = 50
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

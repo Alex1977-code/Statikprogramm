@@ -14257,6 +14257,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._grenze_warnung = ""
         # Zeilen von _vernetzen (Sweep „immer“, Sperre der Stufe, Fein) vorn
         log = list(vorab or [])
+        # Schon vernetzte Nachbarflaechen gehen mit, sonst trennt das neue Netz
+        # sie an der gemeinsamen Linie (Befund B9, mesher.mit_vernetzten_nachbarn)
+        flaechen = mesher.mit_vernetzten_nachbarn(self.model, flaechen, log)
         n = 0
         prozesse = 1
         zeiten: dict = {}          # Sekunden je Phase, fuer die Schlusszeile
