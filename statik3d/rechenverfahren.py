@@ -2903,6 +2903,10 @@ MERKMALE: list = [
         modellmerkmal="RFEM-6-Import ohne Merkmal rfem_eigengewicht, Lastfall mit Eigengewicht, "
                       "ρ · g kleiner als die Wichte γ der RFEM-Datei",
         betrifft=_import_eigengewicht, import_korrektur=True, im_ergebnis=_import_eigengewicht_im_ergebnis,
+        # Befund A'9 (14.11.2026): der Grund steht im Modell (ρ · g der Lastfaelle) -
+        # auch eine neue Rechnung traegt den Status, bis er dort behoben ist
+        modellgrund="Modell vor dem 14.11.2026 aus RFEM übernommen, ρ · g im Modell kleiner als die "
+                    "Wichte γ der RFEM-Datei",
         vorschlag="neu importieren (oder im Lastfall das Eigengewicht mit der Erdbeschleunigung der "
                   "RFEM-Datei ansetzen, meist g = 10 m/s²)"),
     # Befundliste 14.11.2026, E2: Verformungsnachweis „Stab“ mit phiy/phiz verglich

@@ -895,9 +895,13 @@ def import_saf(path: str, model: Model = None, log: list = None,
             name = Sheet.text(r, c_name)
             if not name:
                 continue
+            # Die Nutzlastkategorie aus dem „Load type“ nur bei „Variable“: bis zum
+            # 14.11.2026 wurde eine staendige Gruppe mit Load type „Others“ Q, mit
+            # „Domestic“ Q_A (Befund A'5)
+            variabel = re.sub(r"\s+", "", Sheet.text(r, c_gtype).lower()).startswith("variable")
             groups[name] = {
                 "cat": _lookup(_LOAD_TYPE_CAT, Sheet.text(r, c_ltype))
-                       or _gruppenlast(Sheet.text(r, c_ltype))
+                       or (_gruppenlast(Sheet.text(r, c_ltype)) if variabel else None)
                        or _lookup(_GROUP_TYPE_CAT, Sheet.text(r, c_gtype)),
                 "exclusive": Sheet.text(r, c_rel).lower().startswith("excl"),
             }

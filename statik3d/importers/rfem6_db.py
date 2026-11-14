@@ -2030,11 +2030,18 @@ def _eigengewicht_aus_wichte(db: Db, m: Model, log: list) -> float:
     Sind die Verhaeltnisse verschieden, gilt die Erdbeschleunigung der Datei, sonst
     9,81, und jeder Werkstoff, dessen gamma davon abweicht, wird gemeldet. Ein
     Werkstoff nur mit gamma bekommt rho = gamma / g. Gewichtslos (0) bleibt
-    gewichtslos. Rueckgabe g [m/s^2], auch in ``db.g_last``."""
+    gewichtslos. Rueckgabe g [m/s^2], auch in ``db.g_last``.
+
+    Ein Werkstoff ohne Dichte in der Datei (nur gamma) bestimmt g nicht mit: seine
+    vorlaeufige Dichte (gamma / 9,81 oder die der Querschnittskennwerte) ist keine
+    Angabe der Datei. Die Warnung rechnet mit der Dichte, die am Ende gilt. Bis zum
+    14.11.2026 (Befund A'9) zaehlte er mit: ohne g in der Datei fiel g auf 9,81 und
+    der Nachbar S355 trug 77,0 statt 78,5 kN/m³ samt falscher Warnung, mit g = 10
+    nannte die Warnung den Werkstoff mit der ueberholten Dichte 7 850."""
     from ..zahlen import zahl_text
     g_datei = _g_der_datei(db)
-    paare = [(n, rho, gamma) for n, (rho, gamma, _r) in db.wichten.items()
-             if rho and gamma and rho > 0.0 and gamma > 0.0]
+    paare = [(n, rho, gamma) for n, (rho, gamma, rho_datei) in db.wichten.items()
+             if rho and gamma and rho_datei and rho > 0.0 and gamma > 0.0 and rho_datei > 0.0]
     if paare and max(gm / r for _n, r, gm in paare) <= min(gm / r for _n, r, gm in paare) * 1.001:
         g = sum(gm / r for _n, r, gm in paare) / len(paare)
         woher = "Verhältnis Wichte/Dichte der Werkstoffe" + (
@@ -2050,8 +2057,11 @@ def _eigengewicht_aus_wichte(db: Db, m: Model, log: list) -> float:
         if not rho_datei and gamma and gamma > 0.0 and n in m.materials:
             m.materials[n].rho = float(gamma) / g
     abw = []
-    for n, rho, gamma in paare:
-        if abs(rho * g - gamma) > 1e-3 * gamma:
+    for n, (rho, gamma, _r) in db.wichten.items():
+        if not (gamma and gamma > 0.0):
+            continue
+        rho = float(m.materials[n].rho) if n in m.materials else float(rho or 0.0)
+        if rho > 0.0 and abs(rho * g - gamma) > 1e-3 * gamma:
             abw.append(f"{n} (γ = {zahl_text(gamma / 1e3, stellen=4)} kN/m³, ρ·g = "
                        f"{zahl_text(rho * g / 1e3, stellen=4)} kN/m³)")
     db.g_text = (f"Eigengewicht aus der Wichte γ wie in RFEM: g = {zahl_text(g, stellen=4)} m/s² ({woher}), "
@@ -2077,7 +2087,14 @@ def eigengewicht_abweichung(model: Model) -> Optional[tuple]:
     Datei gesetzt, ist nichts mehr zu klein), und mit gamma und rho der Datei. Liegt die
     Datei nicht mehr dort, zaehlt jeder Lastfall mit Eigengewicht, mit der RFEM-Vorgabe
     g = 10 m/s^2 (rho = gamma / 10) und dem Faktor 1. Das Gelesene haengt am Modell
-    (``_rfem_eigengewicht_abw``), die Datei wird einmal gelesen."""
+    (``_rfem_eigengewicht_abw``), die Datei wird einmal gelesen.
+
+    Verglichen wird je Werkstoff rho des Modells mal g des Lastfalls mit gamma der Datei
+    (Werkstoff ueber den Namen, sonst ueber die unveraenderte Dichte der Datei): hat der
+    Anwender die Dichte angepasst (rho = gamma / 9,81), ist nichts mehr zu klein. Bis
+    zum 14.11.2026 (Befund A'9) zaehlte nur gamma/rho der Datei, eine angepasste Dichte
+    blieb „1,9 % zu klein“. Laesst sich kein Werkstoff zuordnen, gilt das Verhaeltnis
+    gamma/rho der Datei wie bisher."""
     meta = getattr(model, "meta", None) or {}
     quelle = str(meta.get("quelle", "") or "")
     if not quelle.lower().endswith(".rf6") or meta.get(EIGENGEWICHT_MERKMAL):
@@ -2090,8 +2107,8 @@ def eigengewicht_abweichung(model: Model) -> Optional[tuple]:
     if not mit_g or not any(float(getattr(mt, "rho", 0.0) or 0.0) > 0.0 for mt in model.materials.values()):
         return None
     zwischen = getattr(model, "_rfem_eigengewicht_abw", None)
-    if not (isinstance(zwischen, tuple) and zwischen[0] == quelle):
-        verh, woher, faktoren = None, "", None
+    if not (isinstance(zwischen, tuple) and len(zwischen) == 5 and zwischen[0] == quelle):
+        verh, woher, faktoren, werkstoffe = None, "", None, []
         if os.path.isfile(quelle):
             tmp = None
             try:
@@ -2102,9 +2119,23 @@ def eigengewicht_abweichung(model: Model) -> Optional[tuple]:
                     db = Db(con)
                     g_d = _g_der_datei(db)
                     werte = []
-                    for _h, impl in db.impls("Material"):
+                    for h_m, impl in db.impls("Material"):
                         pr = _material_props(db, impl)
                         rho, gamma = pr.get("rho"), pr.get("gamma")
+                        # je Werkstoff die Wichte, mit der RFEM rechnet (gamma, sonst
+                        # rho * g der Datei), mit Namen und Dichte der Datei
+                        gamma_eff = gamma if (gamma and gamma > 0.0) else (
+                            rho * g_d if (rho and rho > 0.0 and g_d) else None)
+                        if gamma_eff:
+                            name = (impl.get("name") or "").strip()
+                            if not name:
+                                try:
+                                    name = _material_name(pr.get("E", 210e9), pr.get("f_y"),
+                                                          h_m.get("userID") or h_m.get("id"),
+                                                          impl.get("databaseMaterialId"))[0]
+                                except Exception:                # noqa: BLE001
+                                    name = ""
+                            werkstoffe.append((name, float(rho or 0.0), float(gamma_eff)))
                         if not (rho and rho > 0.0):
                             continue
                         # RFEM rechnet mit gamma; ohne gamma mit rho * g der Datei
@@ -2123,22 +2154,39 @@ def eigengewicht_abweichung(model: Model) -> Optional[tuple]:
                 finally:
                     con.close()
             except Exception:                            # noqa: BLE001 - Datei unlesbar
-                verh, faktoren = None, None
+                verh, faktoren, werkstoffe = None, None, []
             finally:
                 if tmp:
                     shutil.rmtree(tmp, ignore_errors=True)
         if verh is None:
-            verh, faktoren = 10.0, None
+            verh, faktoren, werkstoffe = 10.0, None, []
             woher = "RFEM-Vorgabe g = 10 m/s², die RFEM-Datei liegt nicht mehr unter " + quelle
-        model._rfem_eigengewicht_abw = (quelle, verh, woher, faktoren)
-    _q, verh, woher, faktoren = model._rfem_eigengewicht_abw
+        model._rfem_eigengewicht_abw = (quelle, verh, woher, faktoren, werkstoffe)
+    _q, verh, woher, faktoren, werkstoffe = model._rfem_eigengewicht_abw
+    # Werkstoffe des Modells -> Wichte der Datei: ueber den Namen, sonst ueber die Dichte,
+    # solange sie die der Datei ist
+    wichte = {}
+    for mname, mt in model.materials.items():
+        rho_m = float(getattr(mt, "rho", 0.0) or 0.0)
+        if rho_m <= 0.0:
+            continue
+        treffer = next((gm for n_f, _r, gm in werkstoffe if n_f and n_f == mname), None)
+        if treffer is None:
+            treffer = next((gm for _n, r_f, gm in werkstoffe
+                            if r_f > 0.0 and abs(r_f - rho_m) <= 1e-9 * r_f), None)
+        if treffer is not None:
+            wichte[mname] = (rho_m, treffer)
     anteile = {}
     for name, g in mit_g.items():
         if faktoren is not None and name not in faktoren:
             continue                    # Eigengewicht nicht aus der RFEM-Datei
-        soll = float(verh) * (faktoren[name] if faktoren is not None else 1.0)
-        if 1.0 - g / soll > 1e-3:
-            anteile[name] = 1.0 - g / soll
+        z = faktoren[name] if faktoren is not None else 1.0
+        if wichte:
+            anteil = max(1.0 - rho_m * g / (gm * z) for rho_m, gm in wichte.values())
+        else:
+            anteil = 1.0 - g / (float(verh) * z)
+        if anteil > 1e-3:
+            anteile[name] = anteil
     if not anteile:
         return None
     return (min(anteile.values()), woher, sorted(anteile))

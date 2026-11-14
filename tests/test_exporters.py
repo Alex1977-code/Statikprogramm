@@ -212,8 +212,10 @@ def test_rueckweg():
         # Tabellen
         p = os.path.join(tmp, "tabellen")
         out = export_model(m, p + ".csv")
-        check("Tabellen: zehn Blätter", len(os.listdir(out)) == 10,
-              str(len(os.listdir(out))))
+        # elf seit dem 14.11.2026 (Befund B'7): „2.5 Lastkombinationen“ kam dazu
+        check("Tabellen: elf Blätter (mit 2.5 Lastkombinationen)", len(os.listdir(out)) == 11
+              and os.path.isfile(os.path.join(out, "2.5 Lastkombinationen.csv")),
+              str(sorted(os.listdir(out))))
         m11 = import_file(out)
         check("Tabellen: Knoten wieder da", m11.nn == m.nn, f"{m11.nn}")
         check("Tabellen: Staebe wieder da",
