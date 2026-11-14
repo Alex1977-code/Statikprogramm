@@ -1192,7 +1192,7 @@ def _netzlinien(plan: dict, f) -> list:
             + list(plan["zwang"].get(f.name, [])))
 
 
-def mit_vernetzten_nachbarn(model: Model, flaechen, log: list = None) -> list:
+def mit_vernetzten_nachbarn(model: Model, flaechen, log: list = None, pruefen: bool = True) -> list:
     """Die Flaechen zum Vernetzen, erweitert um die **schon vernetzten**
     Schalenflaechen, die mit einer von ihnen eine Linie im Netz teilen
     (gemeinsame Linie, Doppellinie, Teilstueck, Abschnitt einer Polylinie,
@@ -1207,7 +1207,18 @@ def mit_vernetzten_nachbarn(model: Model, flaechen, log: list = None) -> list:
     zu dessen vernetzten Nachbarn, bis nichts mehr dazukommt. Flaechen ohne
     Netz und Flaechen ohne gemeinsame Linie bleiben, wie sie sind. Die
     Protokollzeile nennt, was mitvernetzt wird. Rueckgabe die Liste (die
-    gewaehlten zuerst, in ihrer Reihenfolge)."""
+    gewaehlten zuerst, in ihrer Reihenfolge).
+
+    Befund A'2 vom 14.11.2026: was am Netz eines mitvernetzten Nachbarn hing -
+    Elementlasten, Temperaturlasten, Abschaltungen in Situationen, ein
+    Flaechenlager mit Elementliste auf einem Teil der Flaeche -, ging dabei
+    still verloren (Platte aus zwei Flaechen: ΣR_z 86,161 -> 6,161 kN). Der
+    Vernetzer uebertraegt es jetzt auf das neue Netz (:func:`elementbezug_sichern`,
+    :func:`elementbezug_uebertragen`). Laesst es sich fuer einen Nachbarn, den der
+    Anwender nicht gewaehlt hat, nicht eindeutig uebertragen
+    (:func:`elementbezug_nicht_eindeutig`), wird **nichts** vernetzt: mit
+    ``pruefen`` kommt :class:`NachbarElementbezug` mit dem Klartext (welche
+    Flaeche, welche Lasten und Abschaltungen); die Oberflaeche zeigt ihn."""
     flaechen = list(flaechen or [])
     alle = [f for f in (getattr(model, "flaechen", None) or {}).values() if _ist_schale(model, f)]
     gewaehlt = {f.name for f in flaechen}
@@ -1243,7 +1254,322 @@ def mit_vernetzten_nachbarn(model: Model, flaechen, log: list = None) -> list:
                     f"{len(dazu)} schon vernetzte Nachbarflächen werden mitvernetzt, damit sie an den "
                     "gemeinsamen Linien verbunden bleiben: ")
               + ", ".join(teile[:12]) + (f" und {len(teile) - 12} weitere" if len(teile) > 12 else ""))
+        if pruefen:
+            offen = elementbezug_nicht_eindeutig(model, dazu)
+            if offen:
+                raise NachbarElementbezug(_nachbar_text(offen, grund), [n for n, _z in offen])
     return flaechen + dazu
+
+
+class NachbarElementbezug(ValueError):
+    """Eine schon vernetzte Nachbarflaeche muesste mitvernetzt werden
+    (:func:`mit_vernetzten_nachbarn`), traegt aber Elementlasten,
+    Abschaltungen oder ein Flaechenlager auf einem Teil ihres Netzes, die sich
+    nicht eindeutig auf ein neues Netz uebertragen lassen (Befund A'2 vom
+    14.11.2026). Der Text sagt, welche Flaeche und was; ``flaechen`` nennt sie.
+    Vernetzt wurde nichts. Als ValueError faengt sie jedes bisherige
+    ``except ValueError``."""
+
+    def __init__(self, text: str, flaechen=()):
+        super().__init__(text)
+        self.flaechen = list(flaechen)
+
+
+#: Netz gegen Geometrie einer Flaeche (Befund A'2): so weit darf die Summe der
+#: alten Elementflaechen vom Inhalt der Flaeche abweichen, damit eine Teilmenge
+#: ueber den Elementmittelpunkt eindeutig uebertragen wird (Kreisboegen im Netz
+#: als Sehnen: bei 16 Abschnitten je Kreis 0,6 % der Lochflaeche)
+ELEMENTBEZUG_FLAECHENTOL = 0.005
+
+
+def _schalen_ecken(X, el) -> np.ndarray:
+    """Eckpunkte eines Schalenelements (3 beim Dreieck, sonst 4)."""
+    n = 3 if len(el.nodes) in (3, 6) else 4
+    return X[[int(k) for k in el.nodes[:n]]]
+
+
+def _ecken_normale(P) -> np.ndarray:
+    """Vektorflaeche eines Vielecks (Newell): Richtung = Normale, Betrag = Inhalt."""
+    return 0.5 * np.cross(P, np.roll(P, -1, axis=0)).sum(axis=0)
+
+
+def _lastzeichen(l) -> tuple:
+    """Vergleichsschluessel einer Elementlast ohne Element (fuer „gleich auf der
+    ganzen Flaeche“)."""
+    return (type(l).__name__,) + tuple(sorted((k, repr(v)) for k, v in vars(l).items()
+                                              if k != "elem" and not k.startswith("_")))
+
+
+def elementbezug_sichern(model: Model, flaechen) -> list:
+    """Was am Netz der Schalenflaechen ``flaechen`` haengt und beim Neuvernetzen
+    mit den alten Elementen entfiele (Befund A'2 vom 14.11.2026): Elementlasten
+    (``face_loads``) und Temperaturlasten (``temp_loads``) ohne Kennzeichen
+    ``_geo`` - die aus Objektlasten legt lasten_verteilen ohnehin neu -,
+    Abschaltungen in Situationen (``Situation.deaktiviert``) und Flaechenlager
+    mit Elementliste auf einem **Teil** der Flaeche (ein Lager auf der ganzen
+    Flaeche folgt schon ueber ``SurfaceSupport.folgt``).
+
+    Vor dem Loeschen des alten Netzes rufen; die Sicherung haelt Koordinaten
+    und Kopien, keine Elementnummern (die verschieben sich beim Loeschen).
+    Rueckgabe je Flaeche mit solchen Angaben ein Eintrag fuer
+    :func:`elementbezug_uebertragen`."""
+    import copy
+    X = np.asarray(model.nodes, float)
+    ne = len(model.elements)
+    wo: dict = {}                              # Element -> (Eintrag, Platz)
+    aus: list = []
+    for f in flaechen or []:
+        els = [int(e) for e in (f.elemente or []) if 0 <= int(e) < ne
+               and str(model.elements[int(e)].typ).startswith("shell")]
+        if not els:
+            continue
+        eintrag = {"flaeche": f.name, "objekt": f, "n": len(els), "elemente": els, "lasten": {},
+                   "aus": {}, "lager": {}, "lager_teil": [], "zahl": {"lasten": {}, "aus": {}, "lager": {}}}
+        for i, e in enumerate(els):
+            wo.setdefault(e, (eintrag, i))
+        aus.append(eintrag)
+    if not wo:
+        return []
+    for name, lc in (getattr(model, "load_cases", None) or {}).items():
+        for liste in ("face_loads", "temp_loads"):
+            for l in getattr(lc, liste, None) or []:
+                if getattr(l, "_geo", False):
+                    continue
+                t = wo.get(int(l.elem))
+                if t is None:
+                    continue
+                t[0]["lasten"].setdefault(t[1], []).append((name, liste, copy.copy(l)))
+                z = t[0]["zahl"]["lasten"]
+                z[(name, liste)] = z.get((name, liste), 0) + 1
+    for sit in (getattr(model, "situationen", None) or {}).values():
+        for e in dict.fromkeys(int(v) for v in (sit.deaktiviert or [])):
+            t = wo.get(e)
+            if t is None:
+                continue
+            t[0]["aus"].setdefault(t[1], []).append(sit)
+            z = t[0]["zahl"]["aus"]
+            z[sit.name] = z.get(sit.name, 0) + 1
+    for ss in getattr(model, "surface_supports", None) or []:
+        eigene = {int(e) for e in (ss.elements or [])}
+        if not eigene:
+            continue
+        for eintrag in aus:
+            drin = [i for i, e in enumerate(eintrag["elemente"]) if e in eigene]
+            if not drin or len(drin) == eintrag["n"]:
+                continue                       # nichts darauf, oder die ganze Flaeche (folgt)
+            for i in drin:
+                eintrag["lager"].setdefault(i, []).append(ss)
+            eintrag["lager_teil"].append((ss, len(drin)))
+            eintrag["zahl"]["lager"][id(ss)] = (ss, len(drin))
+    aus = [x for x in aus if x["lasten"] or x["aus"] or x["lager"]]
+    for x in aus:
+        P = [_schalen_ecken(X, model.elements[e]) for e in x["elemente"]]
+        x["ecken"] = P
+        x["vektor"] = np.array([_ecken_normale(Q) for Q in P])
+        x["mitte"] = np.array([Q.mean(axis=0) for Q in P])
+
+        def zeichen(i, x=x):
+            return (tuple(sorted((c, li, _lastzeichen(l)) for c, li, l in x["lasten"].get(i, []))),
+                    tuple(sorted(s.name for s in x["aus"].get(i, []))),
+                    tuple(sorted(id(s) for s in x["lager"].get(i, []))))
+        z0 = zeichen(0)
+        x["gleich"] = all(zeichen(i) == z0 for i in range(1, x["n"]))
+    return aus
+
+
+def _bezug_text(eintrag) -> str:
+    """„Elementlasten in LF1 (55 Elemente), …“ zu einer Sicherung."""
+    teile = []
+    for (lc, liste), n in eintrag["zahl"]["lasten"].items():
+        art = "Temperaturlasten" if liste == "temp_loads" else "Elementlasten"
+        teile.append(f"{art} in {lc} ({n} {'Element' if n == 1 else 'Elemente'})")
+    for sit, n in eintrag["zahl"]["aus"].items():
+        teile.append(f"abgeschaltet in der Situation {sit} ({n} {'Element' if n == 1 else 'Elemente'})")
+    for ss, n in eintrag["zahl"]["lager"].values():
+        name = f"„{ss.name}“" if ss.name else "ohne Namen"
+        teile.append(f"Flächenlager {name} auf {n} von {eintrag['n']} Elementen")
+    return ", ".join(teile)
+
+
+def elementbezug_nicht_eindeutig(model: Model, flaechen) -> list:
+    """[(Flaeche, Grund)] der Flaechen, deren Elementbezug (:func:`elementbezug_sichern`)
+    sich nicht eindeutig auf ein neues Netz uebertragen laesst.
+
+    Eindeutig ist er, wenn er auf der ganzen Flaeche gleich ist (dieselben
+    Lasten, Abschaltungen und Lager auf jedem Element) - dann gilt er fuer
+    jedes neue Element -, oder wenn das alte Netz die Flaeche noch genau
+    bedeckt: eben, und die Summe der Elementflaechen weicht hoechstens
+    :data:`ELEMENTBEZUG_FLAECHENTOL` vom Inhalt der Flaeche ab. Dann gilt fuer
+    ein neues Element, was am alten Element unter seinem Mittelpunkt hing.
+    Sonst - Teilmengen auf einer gewoelbten Flaeche oder auf einer Flaeche,
+    deren Geometrie sich seit dem Vernetzen geaendert hat - ist der Ort im
+    neuen Netz nicht eindeutig."""
+    aus = []
+    for x in elementbezug_sichern(model, flaechen):
+        if x["gleich"]:
+            continue
+        f = x["objekt"]
+        try:
+            eben = str(getattr(f, "typ", "eben") or "eben") == "eben" and bool(f.eben(model))
+            A_geo = float(f.inhalt(model))
+        except Exception:                      # noqa: BLE001 - Geometrie nicht lesbar: nicht eindeutig
+            eben, A_geo = False, 0.0
+        A_netz = float(np.linalg.norm(x["vektor"], axis=1).sum())
+        if eben and A_geo > 0 and abs(A_netz - A_geo) <= ELEMENTBEZUG_FLAECHENTOL * A_geo:
+            continue
+        if not eben:
+            warum = "die Fläche ist gewölbt"
+        else:
+            warum = (f"das Netz passt nicht mehr zur Geometrie der Fläche (Netz {A_netz:.4f} m², "
+                     f"Fläche {A_geo:.4f} m²)").replace(".", ",")
+        aus.append((x["flaeche"], f"{_bezug_text(x)} – nicht auf der ganzen Fläche gleich, und {warum}"))
+    return aus
+
+
+def _nachbar_text(offen, grund) -> str:
+    """Klartext zu :class:`NachbarElementbezug`."""
+    teile = []
+    for name, warum in offen:
+        g = grund.get(name)
+        teile.append(f"Fläche {name}" + (f" (Linie {g[0]} zu {g[1]})" if g else "") + f": {warum}")
+    return ("Vernetzen abgebrochen, nichts geändert: "
+            + ("eine schon vernetzte Nachbarfläche müsste mitvernetzt werden, damit sie an der gemeinsamen "
+               "Linie verbunden bleibt, aber was an ihrem Netz hängt" if len(offen) == 1
+               else f"{len(offen)} schon vernetzte Nachbarflächen müssten mitvernetzt werden, damit sie an "
+                    "den gemeinsamen Linien verbunden bleiben, aber was an ihren Netzen hängt")
+            + ", lässt sich nicht eindeutig auf ein neues Netz übertragen. "
+            + "; ".join(teile)
+            + ". Bitte die Lasten, Abschaltungen oder Lager dort prüfen und neu setzen, oder die Fläche "
+            "bewusst mit auswählen und gemeinsam vernetzen – was sich dann nicht übertragen lässt, nennt "
+            "das Protokoll.")
+
+
+def _im_element(c, P, tol_ebene) -> bool:
+    """Liegt der Punkt c (auf die Ebene des Elements projiziert, hoechstens
+    ``tol_ebene`` daneben) im Vieleck P (Dreieck oder Viereck)?"""
+    n = _ecken_normale(P)
+    L = float(np.linalg.norm(n))
+    if L <= 0:
+        return False
+    n = n / L
+    h = float((c - P[0]) @ n)
+    if abs(h) > tol_ebene:
+        return False
+    q = c - h * n
+    for a, b, d in ([(0, 1, 2)] if len(P) == 3 else [(0, 1, 2), (0, 2, 3)]):
+        A, B, D = P[a], P[b], P[d]
+        s = float(np.cross(B - A, D - A) @ n)
+        if s == 0.0:
+            continue
+        l1 = float(np.cross(D - B, q - B) @ n) / s
+        l2 = float(np.cross(A - D, q - D) @ n) / s
+        if min(l1, l2, 1.0 - l1 - l2) >= -1e-6:
+            return True
+    return False
+
+
+def elementbezug_uebertragen(model: Model, sicherung: list, log: list = None) -> dict:
+    """Das Gesicherte (:func:`elementbezug_sichern`) auf das neue Netz derselben
+    Flaechen legen (Befund A'2 vom 14.11.2026).
+
+    Jedes neue Element bekommt, was am alten Element unter seinem Mittelpunkt
+    hing (Elementlasten und Temperaturlasten als Kopie, Abschaltungen,
+    Flaechenlager); liegt der Mittelpunkt in keinem alten Element (gekruemmter
+    Rand), das naechste alte Element innerhalb seiner Groesse. Eine Last
+    senkrecht zum Element (``FaceLoad`` ohne Richtung, ``dT_z``) wechselt das
+    Vorzeichen, wenn das neue Element anders herum liegt als das alte - die
+    Physik bleibt. Ist der Bezug auf der ganzen Flaeche gleich, bekommt jedes
+    neue Element ihn. Neue Elemente ohne Zuordnung bei ungleichem Bezug nennt
+    das Protokoll als Warnung (dort fehlt dann, was vorher da war), und ein
+    Flaechenlager darauf bleibt bei der Meldung „Netz geändert – Lager prüfen“;
+    sonst zaehlt sein Teil auf dieser Flaeche nicht mehr als entfallen.
+
+    Rueckgabe {"lasten": n, "aus": n, "lager": n, "ohne": {Flaeche: n}}."""
+    import copy
+    from .importers import _common as C
+    aus = {"lasten": 0, "aus": 0, "lager": 0, "ohne": {}}
+    if not sicherung:
+        return aus
+    from scipy.spatial import cKDTree
+    X = np.asarray(model.nodes, float)
+    ne = len(model.elements)
+    for x in sicherung:
+        f = x["objekt"]
+        neu = [int(e) for e in (f.elemente or []) if 0 <= int(e) < ne
+               and str(model.elements[int(e)].typ).startswith("shell")]
+        if not neu:
+            if log is not None:
+                C.warn(log, f"Fläche {x['flaeche']}: ohne neues Netz – nicht übertragen: {_bezug_text(x)}")
+            aus["ohne"][x["flaeche"]] = 0
+            continue
+        baum = cKDTree(x["mitte"])
+        groesse = np.sqrt(np.linalg.norm(x["vektor"], axis=1))
+        k = min(12, x["n"])
+        ohne = 0
+        zuordnung = []
+        for e in neu:
+            P = _schalen_ecken(X, model.elements[e])
+            c = P.mean(axis=0)
+            dist, idx = baum.query(c, k=k)
+            dist, idx = np.atleast_1d(dist), np.atleast_1d(idx)
+            alt = next((int(i) for i in idx
+                        if _im_element(c, x["ecken"][int(i)], 0.05 * float(groesse[int(i)]) + 1e-9)), None)
+            if alt is None and float(dist[0]) <= float(groesse[int(idx[0])]):
+                alt = int(idx[0])
+            if alt is None:
+                if not x["gleich"]:
+                    ohne += 1
+                    continue
+                alt = int(idx[0])
+            zuordnung.append((e, alt, _ecken_normale(P)))
+        lager_neu: dict = {}
+        for e, i, nv in zuordnung:
+            dreh = float(nv @ x["vektor"][i]) < 0
+            for lc_name, liste, l in x["lasten"].get(i, []):
+                lc = model.load_cases.get(lc_name)
+                if lc is None:
+                    continue
+                l2 = copy.copy(l)
+                l2.elem = int(e)
+                if dreh and liste == "face_loads" and getattr(l2, "direction", None) is None:
+                    l2.p = -float(l2.p)
+                if dreh and liste == "temp_loads" and float(getattr(l2, "dT_z", 0.0) or 0.0):
+                    l2.dT_z = -float(l2.dT_z)
+                getattr(lc, liste).append(l2)
+                aus["lasten"] += 1
+            for sit in x["aus"].get(i, []):
+                if int(e) not in sit.deaktiviert:
+                    sit.deaktiviert.append(int(e))
+                    aus["aus"] += 1
+            for ss in x["lager"].get(i, []):
+                lager_neu.setdefault(id(ss), []).append(int(e))
+        for ss, teil_alt in x["lager_teil"]:
+            dazu = lager_neu.get(id(ss), [])
+            vorhanden = {int(v) for v in (ss.elements or [])}
+            ss.elements = list(ss.elements or []) + [v for v in dazu if v not in vorhanden]
+            aus["lager"] += len(dazu)
+            offen = int(getattr(ss, "entfallen", 0) or 0)
+            if ohne or not offen:
+                # nicht vollstaendig: die Meldung „Netz geändert“ bleibt (auf dem Rest)
+                if offen:
+                    ss.entfallen_rest = list(ss.elements)
+                continue
+            rest = offen - int(teil_alt)
+            if rest > 0:
+                ss.entfallen, ss.entfallen_rest = rest, list(ss.elements)
+            else:
+                ss.entfallen, ss.entfallen_rest = 0, []
+        if ohne:
+            aus["ohne"][x["flaeche"]] = ohne
+        if log is not None:
+            if ohne:
+                C.warn(log, f"Fläche {x['flaeche']}: {ohne} von {len(neu)} neuen Elementen liegen in keinem "
+                            f"alten Element – dort fehlt, was vorher am Netz hing ({_bezug_text(x)}). Bitte "
+                            "prüfen und neu setzen.")
+            else:
+                C.say(log, f"Fläche {x['flaeche']}: auf das neue Netz übertragen ({len(neu)} Elemente, über "
+                           f"den Elementmittelpunkt) – {_bezug_text(x)}")
+    return aus
 
 
 def _gruppe_und_plan(model: Model, flaechen) -> tuple:
@@ -3086,6 +3412,8 @@ def modell_vernetzen(model: Model, log: list = None, fortschritt=None, workers: 
     aus = {"elemente": 0, "abgebrochen": False, "prozesse": 1}
     try:
         fugen.kontaktfugen_zuruecksetzen(model, log)
+        # Was an den alten Schalennetzen haengt, geht aufs neue Netz (Befund A'2)
+        bezug = elementbezug_sichern(model, flaechen)
         # Alte Netze in **einem** Zug entfernen: elemente_loeschen nummeriert
         # alles um, und je Objekt gerufen waere das am Drehlager 1483 Durchgaenge
         # ueber 640 000 Elemente.
@@ -3141,6 +3469,7 @@ def modell_vernetzen(model: Model, log: list = None, fortschritt=None, workers: 
                 aus["grenze_warnung"] = erg["grenze_warnung"]
         zeiten["Netz erzeugen"] = time.time() - t0
         t0 = time.time()
+        elementbezug_uebertragen(model, bezug, log)
         model.lasten_verteilen(log)
         zeiten["Lasten verteilen"] = time.time() - t0
         t0 = time.time()

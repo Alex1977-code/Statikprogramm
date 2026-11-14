@@ -14267,7 +14267,18 @@ class MainWindow(QtWidgets.QMainWindow):
         log = list(vorab or [])
         # Schon vernetzte Nachbarflaechen gehen mit, sonst trennt das neue Netz
         # sie an der gemeinsamen Linie (Befund B9, mesher.mit_vernetzten_nachbarn)
-        flaechen = mesher.mit_vernetzten_nachbarn(self.model, flaechen, log)
+        # Laesst sich, was am Netz eines solchen Nachbarn haengt, nicht eindeutig
+        # uebertragen, bricht der Vernetzer vorher ab (Befund A'2) - hier nur der Text
+        try:
+            flaechen = mesher.mit_vernetzten_nachbarn(self.model, flaechen, log)
+        except mesher.NachbarElementbezug as ex:
+            for z in log:
+                self.log.appendPlainText(z)
+            self.log.appendPlainText(str(ex))
+            QtWidgets.QMessageBox.warning(self, "Vernetzen abgebrochen", str(ex))
+            self._vernetzt_text = "Vernetzen abgebrochen"
+            self.statusBar().showMessage("Vernetzen abgebrochen – siehe Protokoll", 8000)
+            return 0
         n = 0
         prozesse = 1
         zeiten: dict = {}          # Sekunden je Phase, fuer die Schlusszeile
@@ -14334,6 +14345,8 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             # Was aus Kontaktbedingungen entstanden ist, gehoert zum alten Netz.
             fugen.kontaktfugen_zuruecksetzen(self.model, log)
+            # Was an den alten Schalennetzen haengt, geht aufs neue Netz (Befund A'2)
+            bezug = mesher.elementbezug_sichern(self.model, flaechen)
             erledigt = 0.0
             # Kantenmitten quadratischer Elemente teilen sich die Nachbarn -
             # ein Woerterbuch fuer alle Flaechen dieses Laufs
@@ -14418,6 +14431,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._fortschritt(1000, "Netz fertig - Lasten auf das Netz verteilen …")
             QtWidgets.QApplication.processEvents()
             # Lasten, die an Flaechen und Koerpern haengen, koennen jetzt wirken
+            mesher.elementbezug_uebertragen(self.model, bezug, log)
             self.model.lasten_verteilen(log)
             zeiten["Lasten verteilen"] = time.time() - t_phase
             t_phase = time.time()
