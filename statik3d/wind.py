@@ -419,12 +419,20 @@ def gebaeude(w: Wind, model, alle: bool = False) -> dict:
     return geo
 
 
-def objekt_geometrie(model, name: str, geo: dict) -> dict:
+def objekt_geometrie(model, name: str, geo: dict, gruppe=None) -> dict:
     """Die Abmessungen einer freien Wand oder Anzeigetafel für sich (Höhe über
     Gelände, Länge quer, freie Enden t_min/t_max): die Zonen A–D der Tab. 7.9
     zählen ab ihren eigenen Enden, nicht ab denen des Gebäudes (Befund 13).
-    Geländeoberkante und Richtung wie ``geo``."""
-    kn = _flaechenknoten(model, name)
+    Geländeoberkante und Richtung wie ``geo``.
+
+    ``gruppe``: alle Flächen der Wand, zu der ``name`` gehört
+    (:func:`wand_gruppen`) - Enden und Höhe kommen dann aus der ganzen Wand.
+    Bis zum 14.11.2026 zählte jede Teilfläche für sich (Befund A8 der
+    Prüfagenten: Wand 30 x 3 m aus drei Flächen ΣF_x 80,262 statt 68,547 kN,
+    Wand 10 x 3 m aus zwei Flächen übereinander 25,411 statt 26,754 kN)."""
+    kn = set()
+    for n in (gruppe or [name]):
+        kn |= _flaechenknoten(model, n)
     if not kn:
         return dict(geo)
     out = _abmessungen(model, kn, np.asarray(geo["richtung"], float), np.asarray(geo["quer"], float),
@@ -478,6 +486,81 @@ def netto_richtung(model, name: str, d) -> Optional[np.ndarray]:
 #: Aussennormalen hoechstens rund 25° von der Gegenrichtung abweichen
 GEGENUEBER = -0.9
 
+#: Eine Flaeche eines Volumens mit |n · d| unter diesem Wert liegt nahezu
+#: parallel zur Windrichtung (weniger als 5,7° zwischen Wind und Flaeche, ihre
+#: Ansichtsflaeche quer zum Wind unter 10 % ihrer Flaeche): sie hat keine
+#: Luv- oder Leeseite und traegt keine Nettolast als freie Wand oder Tafel
+#: (14.11.2026, Befund A9). c_p,net (Tab. 7.9, Bild 7.19 fuer senkrechten
+#: und schraegen Wind bis 45°) und c_f (7.4.3) wirken quer zur Wand; bis
+#: |n · d| = cos 45° = 0,71 bleibt alles wie bisher. Bei n · d = 0 entschied
+#: vorher die Reihenfolge der Namen ueber die Luvseite und die Richtung der
+#: Last (Stirnflaeche 0,3 x 3 m: F_y −1,182 kN quer zum Wind).
+QUER_ZUM_WIND = 0.1
+
+
+def _koerper_von(model) -> dict:
+    """{Flaeche: Volumen} der Randflaechen von Volumen (ohne Schalen)."""
+    aus: dict = {}
+    for kn, k in (getattr(model, "koerper", None) or {}).items():
+        for f in getattr(k, "flaechen", None) or []:
+            aus.setdefault(str(f), str(kn))
+    return aus
+
+
+def volumenflaeche_quer(model, name: str, d, koerper_von=None) -> Optional[str]:
+    """Das Volumen, wenn ``name`` eine Randflaeche eines Volumens ist, die
+    nahezu parallel zur Windrichtung ``d`` liegt (:data:`QUER_ZUM_WIND`),
+    sonst None. Schalen zaehlen nicht (dort gilt die Wand selbst)."""
+    k = (koerper_von if koerper_von is not None else _koerper_von(model)).get(str(name))
+    if k is None or name not in model.flaechen or _schalenmitte(model, name) is not None:
+        return None
+    n = _flaechennormale(model, name)
+    if n is None:
+        return None
+    return k if abs(float(n @ np.asarray(d, float)[:3])) < QUER_ZUM_WIND else None
+
+
+def quer_satz(namen, koerper: str, rolle: str) -> str:
+    """Der Satz fuers Protokoll zu Volumenflaechen ohne Nettolast (:func:`volumenflaeche_quer`)."""
+    if rolle == "schild":
+        art, beiwert = "Anzeigetafel", "c_f nach DIN EN 1991-1-4, 7.4.3"
+    else:
+        art, beiwert = "Freie Wand", "c_p,net nach DIN EN 1991-1-4, Tab. 7.9"
+    namen = list(namen)
+    wer = (f"die Fläche {namen[0]} des Volumens {koerper} liegt" if len(namen) == 1 else
+           f"die Flächen {', '.join(namen[:-1])} und {namen[-1]} des Volumens {koerper} liegen")
+    return (f"{art}: {wer} nahezu parallel zur Windrichtung (|n·d| < 0,1) und "
+            f"{'bekommt' if len(namen) == 1 else 'bekommen'} keine Nettolast – {beiwert} wirkt "
+            f"quer zur Wand, nicht längs.")
+
+
+#: Zwei Flaechen gehoeren zu derselben Wand, wenn ihre Normalen hoechstens rund
+#: 25° auseinander liegen (wie :data:`GEGENUEBER`, ohne Vorzeichen: eine Schale hat keine Aussenseite)
+WAND_PARALLEL = 0.9
+
+
+def wand_gruppen(model, namen) -> dict:
+    """{Name: [Flaechen der Wand]}: freie Waende bzw. Tafeln einer Rolle, die
+    sich beruehren (gemeinsame Knoten oder geometrisch, wie :func:`baukoerper`)
+    und in derselben Richtung stehen (Normalen bis rund 25° auseinander,
+    :data:`WAND_PARALLEL`), bilden eine Wand - nebeneinander wie uebereinander.
+    Ihre Enden und ihre Hoehe gelten fuer alle ihre Flaechen
+    (:func:`objekt_geometrie`, Befund A8). Flaechen, die quer zueinander
+    stehen (Stirnflaeche eines Volumens an seiner Seitenflaeche, die Schenkel
+    einer Winkelwand), bleiben eigene Waende: sonst verschoebe die Dicke eines
+    Volumens bei schraegem Wind die Enden seiner Seitenflaeche."""
+    namen = [n for n in namen if n in (getattr(model, "flaechen", None) or {})]
+    nrm = {n: _flaechennormale(model, n) for n in namen}
+
+    def passt(a, b):
+        na, nb = nrm.get(a), nrm.get(b)
+        return na is not None and nb is not None and abs(float(na @ nb)) >= WAND_PARALLEL
+    aus: dict = {}
+    for g in baukoerper(model, namen, passt):
+        for n in g:
+            aus[n] = list(g)
+    return aus
+
 
 def gegenueber(model, namen, d) -> dict:
     """{Leeflaeche: (Luvflaeche, Volumen)} der freien Waende oder Tafeln
@@ -489,12 +572,12 @@ def gegenueber(model, namen, d) -> dict:
     Windrichtung (Entscheidung des Anwenders vom 12.11.2026). Bis dahin trug
     jede gewaehlte Seitenflaeche die volle Nettolast - die Wand die doppelte
     (Wand 10 x 0,3 x 3 m: ΣF_x 53,508 statt 26,754 kN). Luv ist die Flaeche,
-    deren Aussennormale gegen den Wind zeigt (kleineres n · d); bei Wind
-    laengs zur Wand die zuerst genannte. Schalen gehoeren zu keinem Volumen."""
-    koerper_von: dict = {}
-    for kn, k in (getattr(model, "koerper", None) or {}).items():
-        for f in getattr(k, "flaechen", None) or []:
-            koerper_von.setdefault(str(f), str(kn))
+    deren Aussennormale gegen den Wind zeigt (kleineres n · d). Flaechen
+    nahezu parallel zum Wind (|n · d| < :data:`QUER_ZUM_WIND`) bilden kein
+    Paar: bis zum 14.11.2026 wurde dort die zuerst genannte zur Luvseite, und
+    Stirnflaechen, Boden und Dach trugen eine Nettolast quer zum Wind (Befund
+    A9). Schalen gehoeren zu keinem Volumen."""
+    koerper_von = _koerper_von(model)
     d = np.asarray(d, float)[:3]
     kand = []
     for i, name in enumerate(namen):
@@ -502,7 +585,7 @@ def gegenueber(model, namen, d) -> dict:
         if k is None or name not in model.flaechen or _schalenmitte(model, name) is not None:
             continue
         n = _flaechennormale(model, name)
-        if n is not None:
+        if n is not None and abs(float(n @ d)) >= QUER_ZUM_WIND:
             kand.append((i, str(name), k, n, float(n @ d)))
     aus: dict = {}
     for i, a, ka, na, sa in kand:
@@ -614,7 +697,7 @@ def _beruehren(PA, TA, PB, TB, tol: float) -> bool:
 BERUEHRUNG = 1e-3
 
 
-def baukoerper(model, namen) -> list:
+def baukoerper(model, namen, passt=None) -> list:
     """Die Gebaeudeflaechen ``namen`` in Baukoerper geteilt: Flaechen, die sich
     beruehren (geometrisch, Toleranz :data:`BERUEHRUNG` mal die Diagonale
     aller), gehoeren zu einem Koerper - auch Waende, die jede fuer sich
@@ -622,6 +705,7 @@ def baukoerper(model, namen) -> list:
     zaehlten nur gemeinsame Knoten; zwei Baukoerper aus Einzelwaenden bekamen
     eine Mitte zwischen sich, Leewand des vorderen und Luvwand des hinteren
     Koerpers vertauschte Rollen (Befund 7 der Pruefagenten).
+    ``passt(a, b)``: eine weitere Bedingung je Paar (:func:`wand_gruppen`).
     Rueckgabe [[Name, ...], ...]."""
     namen = [n for n in namen if n in (getattr(model, "flaechen", None) or {})]
     kn = {n: _flaechenknoten(model, n) for n in namen}
@@ -639,6 +723,8 @@ def baukoerper(model, namen) -> list:
     for i, a in enumerate(namen):
         for b in namen[i + 1:]:
             if wurzel(a) == wurzel(b):
+                continue
+            if passt is not None and not passt(a, b):
                 continue
             if (kn[a] & kn[b]) or _beruehren(P[a], T[a], P[b], T[b], tol):
                 vater[wurzel(a)] = wurzel(b)
@@ -804,7 +890,12 @@ def alte_abmessungen(model) -> list:
     anders ergeben: h, b, d des Gebaeudes samt freier Waende, Tafeln und
     Staebe, die Zonen einer freien Wand ab den Enden aller Objekte (Befund 13
     der Pruefagenten). Die Abmessungen stehen im Verlauf der Last; erst das
-    Neuerzeugen aendert sie."""
+    Neuerzeugen aendert sie.
+
+    An einer freien Wand oder Tafel zaehlen nur h, t_min und t_max - nur sie
+    gehen in ihre Zonen ein (:func:`beiwert_am_punkt`). Bis zum 14.11.2026
+    verglich die Pruefung auch d und x_luv und meldete eine Wand neben einem
+    Mast, obwohl die Last gleich blieb (Befund A10)."""
     aus = []
     neu: dict = {}
     for lf, lc in (getattr(model, "load_cases", None) or {}).items():
@@ -816,19 +907,20 @@ def alte_abmessungen(model) -> list:
             eintrag = (str(lf), str(v.get("name", "")))
             if eintrag in aus:
                 continue
-            schluessel = (eintrag, str(gl.ziel) if v.get("rolle") in ROLLEN_NETTO else "")
+            netto = v.get("rolle") in ROLLEN_NETTO
+            schluessel = (eintrag, str(gl.ziel) if netto else "")
             if schluessel not in neu:
                 try:
                     w = _param(v.get("param") or {})
                     geo = gebaeude(w, model)
-                    neu[schluessel] = (objekt_geometrie(model, str(gl.ziel), geo)
-                                       if v.get("rolle") in ROLLEN_NETTO else geo)
+                    neu[schluessel] = (_wand_geometrie_heute(model, w, str(v.get("rolle")), str(gl.ziel), geo)
+                                       if netto else geo)
                 except Exception:                    # noqa: BLE001
                     neu[schluessel] = None
             h = neu[schluessel]
             if h is None:
                 continue
-            for k in ("h", "b", "d", "x_luv", "t_min", "t_max"):
+            for k in (("h", "t_min", "t_max") if netto else ("h", "b", "d", "x_luv", "t_min", "t_max")):
                 a, b = float(g.get(k, h[k])), float(h[k])
                 if abs(a - b) > 1e-6 * max(1.0, abs(a), abs(b)):
                     aus.append(eintrag)
@@ -871,6 +963,77 @@ def doppelte_nettolasten_text(model) -> str:
     return ", ".join(f"Wind {w} in {lf}" for lf, w in alt[:5]) + (" …" if len(alt) > 5 else "")
 
 
+def _wand_geometrie_heute(model, w: Wind, rolle: str, name: str, geo: dict, gruppen=None) -> dict:
+    """Die Abmessungen, die :func:`lasten_erzeugen` heute einer freien Wand
+    bzw. Tafel ``name`` des Winds ``w`` gibt: die der ganzen Wand
+    (:func:`wand_gruppen`)."""
+    if gruppen is None:
+        gruppen = wand_gruppen(model, w.schilder if rolle == "schild" else w.freie_waende)
+    return objekt_geometrie(model, name, geo, gruppen.get(name))
+
+
+def _gleich(a: dict, b: dict, schluessel=("h", "t_min", "t_max")) -> bool:
+    for k in schluessel:
+        x, y = float(a.get(k, 0.0)), float(b.get(k, 0.0))
+        if abs(x - y) > 1e-6 * max(1.0, abs(x), abs(y)):
+            return False
+    return True
+
+
+def alte_wandlasten(model) -> list:
+    """[(Lastfall, Wind)] der Windlasten des Generators (Normverfahren) auf
+    freien Waenden und Tafeln, die ein Programmstand vor dem 14.11.2026
+    erzeugt hat und die heute anders entstehen:
+
+    * eine Wand aus mehreren Flaechen, die sich beruehren, deren Teilflaeche
+      ihre eigenen Enden und ihre eigene Hoehe traegt statt die der ganzen
+      Wand (Befund A8; gemeldet nur, wenn die gespeicherten Abmessungen die
+      der Teilflaeche sind - eine spaeter geaenderte Geometrie zaehlt nicht);
+    * eine Volumenflaeche nahezu parallel zum Wind (Stirnflaeche, Boden,
+      Dach) mit einer Nettolast quer zum Wind (Befund A9).
+
+    Die Last steht im Modell; erst das Neuerzeugen aendert sie."""
+    aus = []
+    kv = _koerper_von(model)
+    gruppen: dict = {}
+    for lf, lc in (getattr(model, "load_cases", None) or {}).items():
+        for gl in getattr(lc, "geometrielasten", None) or []:
+            v = getattr(gl, "verlauf", None) or {}
+            g = v.get("geometrie") or {}
+            rolle = str(v.get("rolle", ""))
+            if (getattr(gl, "art", "flaeche") != "flaeche" or v.get("art") != "wind"
+                    or rolle not in ROLLEN_NETTO or v.get("feld") or g.get("richtung") is None):
+                continue
+            eintrag = (str(lf), str(v.get("name", "")))
+            if eintrag in aus:
+                continue
+            ziel = str(gl.ziel)
+            try:
+                if volumenflaeche_quer(model, ziel, g["richtung"], kv) is not None:
+                    aus.append(eintrag)
+                    continue
+                if g.get("abmessungen") != ABMESSUNGEN_OBJEKT:
+                    continue                 # aeltere Abmessungen: alte_abmessungen
+                schl = eintrag + (rolle,)
+                if schl not in gruppen:
+                    w = _param(v.get("param") or {})
+                    gruppen[schl] = wand_gruppen(model, w.schilder if rolle == "schild" else w.freie_waende)
+                gruppe = gruppen[schl].get(ziel) or [ziel]
+                if len(gruppe) < 2:
+                    continue
+                if (_gleich(g, objekt_geometrie(model, ziel, g))
+                        and not _gleich(g, objekt_geometrie(model, ziel, g, gruppe))):
+                    aus.append(eintrag)
+            except Exception:                    # noqa: BLE001
+                continue
+    return aus
+
+
+def alte_wandlasten_text(model) -> str:
+    alt = alte_wandlasten(model)
+    return ", ".join(f"Wind {w} in {lf}" for lf, w in alt[:5]) + (" …" if len(alt) > 5 else "")
+
+
 def windlasten_hinweis(model) -> list:
     """Beim Oeffnen: die Zeilen fuers Protokoll zu Windlasten, die neu zu
     erzeugen sind (:func:`alte_windlasten`, :func:`alte_abmessungen`).
@@ -889,6 +1052,12 @@ def windlasten_hinweis(model) -> list:
         aus.append(f"Windlasten neu erzeugen: {doppelte_nettolasten_text(model)} mit einem älteren "
                    "Programmstand erzeugt – zwei gegenüberliegende Seitenflächen eines Volumens tragen darin "
                    "als freie Wand bzw. Anzeigetafel je die volle Nettolast, die Wand also die doppelte "
+                   f"({WIND_NEU_ERZEUGEN}, danach neu rechnen).")
+    if alte_wandlasten(model):
+        aus.append(f"Windlasten neu erzeugen: {alte_wandlasten_text(model)} mit einem älteren Programmstand "
+                   "erzeugt – an einer freien Wand bzw. Anzeigetafel aus mehreren Flächen zählen Zonen und "
+                   "Höhe darin je Teilfläche statt für die ganze Wand, oder eine Fläche eines Volumens "
+                   "parallel zur Windrichtung (Stirnfläche, Boden, Dach) trägt eine Nettolast quer zum Wind "
                    f"({WIND_NEU_ERZEUGEN}, danach neu rechnen).")
     return aus
 
@@ -1376,16 +1545,27 @@ def lasten_erzeugen(model, w: Wind, fortschritt=None) -> dict:
         paare.update({lee: (luv, k, rolle_n) for lee, (luv, k) in gegenueber(model, list(liste),
                                                                             geo["richtung"]).items()})
     netto_saetze: list = []
+    # Freie Waende bzw. Tafeln aus mehreren Flaechen, die sich beruehren: eine
+    # Wand, Enden und Hoehe der ganzen Wand (Befund A8, 14.11.2026)
+    gruppen = {"freie_wand": wand_gruppen(model, w.freie_waende), "schild": wand_gruppen(model, w.schilder)}
+    # Volumenflaechen nahezu parallel zum Wind: keine Nettolast (Befund A9)
+    koerper_von = _koerper_von(model)
+    quer: dict = {}
     for name, rolle in roll.items():
         mit_feld = feld is not None and _feld_passt(wk, _flaechennormale(model, name), geo["quer"])
         if name in paare and paare[name][2] == rolle and not mit_feld:
             netto_saetze.append(gegenueber_satz(name, *paare[name]))
             continue
+        if rolle in ROLLEN_NETTO and not mit_feld:
+            k_quer = volumenflaeche_quer(model, name, geo["richtung"], koerper_von)
+            if k_quer is not None:
+                quer.setdefault((rolle, k_quer), []).append(name)
+                continue
         verlauf = {"art": "wind", "name": w.name, "param": param, "geometrie": geo, "rolle": rolle}
         if rolle in ROLLEN_NETTO:
-            # eigene Abmessungen (Zonen ab den eigenen Enden, Befund 13) und
-            # die Richtung der Nettokraft (Befund 8)
-            verlauf["geometrie"] = objekt_geometrie(model, name, geo)
+            # eigene Abmessungen der ganzen Wand (Zonen ab ihren Enden, Befunde
+            # 13 und A8) und die Richtung der Nettokraft (Befund 8)
+            verlauf["geometrie"] = objekt_geometrie(model, name, geo, gruppen[rolle].get(name))
             n_w = netto_richtung(model, name, geo["richtung"])
             verlauf["netto"] = [float(x) for x in n_w] if n_w is not None else None
         if name in seiten:
@@ -1399,6 +1579,8 @@ def lasten_erzeugen(model, w: Wind, fortschritt=None) -> dict:
         model.add_geometrielast(name, 0.0, art="flaeche", richtung=None, case=w.lastfall, verlauf=verlauf)
         n_obj += 1
         zonen[name] = rolle
+    for (rolle, k_quer), namen in quer.items():
+        netto_saetze.append(quer_satz(namen, k_quer, rolle))
     staebe = []
     for name in w.staebe:
         sb = stabbeiwert(w, model, name, geo)

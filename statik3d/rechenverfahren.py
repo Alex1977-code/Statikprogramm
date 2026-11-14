@@ -306,6 +306,19 @@ def _wind_freie_wand_volumen_im_ergebnis(model, _analyse) -> str:
     return doppelte_nettolasten_text(model)
 
 
+def _wind_freie_wand_ganz(model) -> bool:
+    """Windlasten des Generators auf freien Waenden bzw. Tafeln mit Zonen und
+    Hoehe je Teilflaeche oder mit einer Nettolast quer zum Wind an einer
+    Volumenflaeche (wind.alte_wandlasten, Befunde A8/A9 vom 14.11.2026)."""
+    from .wind import alte_wandlasten
+    return bool(alte_wandlasten(model))
+
+
+def _wind_freie_wand_ganz_im_ergebnis(model, _analyse) -> str:
+    from .wind import alte_wandlasten_text
+    return alte_wandlasten_text(model)
+
+
 def _wind_abmessungen_im_ergebnis(model, _analyse) -> str:
     from .wind import alte_abmessungen_text
     return alte_abmessungen_text(model)
@@ -1572,6 +1585,28 @@ MERKMALE: list = [
         modellgrund="Windlasten mit einem älteren Programmstand erzeugt",
         vorschlag="Lasten › Wind: den Wind öffnen und die Windlasten neu erzeugen"),
     Merkmal(
+        # Befunde A8/A9 der Pruefagenten (14.11.2026, fix/k5-a-wind): eine freie Wand aus
+        # mehreren Flaechen zaehlte Zonen A-D und h je Teilflaeche (Wand 30 x 3 m aus drei
+        # Flaechen ΣF_x 80,262 statt 68,547 kN, 10 x 3 m aus zwei Flaechen uebereinander
+        # 25,411 statt 26,754 kN); Stirnflaechen, Boden und Dach eines Volumens mit der Rolle
+        # freie Wand bekamen eine Nettolast quer zum Wind (F_y −1,182 kN). Die Last steht im
+        # Modell - wie bei wind_freie_wand_volumen eine Korrektur am Modell, die erst das
+        # Neuerzeugen behebt. Fehlerkorrektur
+        name="wind_freie_wand_ganz", titel="Windlast auf freistehende Wand und Anzeigetafel aus mehreren "
+                                          "Flächen bzw. parallel angeströmte Volumenflächen",
+        texte={"alt": "Zonen und Höhe je Teilfläche; Stirnflächen, Boden und Dach eines Volumens mit "
+                      "Nettolast quer zum Wind",
+               "neu": "Flächen, die sich berühren, als eine Wand (Enden, Höhe und Zonen der ganzen Wand); "
+                      "Volumenflächen parallel zum Wind (|n·d| < 0,1) ohne Nettolast"},
+        wechsel=(Wechsel(stand=43, datum="14.11.2026", commit="fix/k5-a-wind", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Windlast des Generators auf einer freien Wand bzw. Tafel aus mehreren Flächen mit "
+                      "Abmessungen der Teilfläche, oder auf einer Volumenfläche parallel zum Wind",
+        betrifft=_wind_freie_wand_ganz, import_korrektur=True,
+        im_ergebnis=_wind_freie_wand_ganz_im_ergebnis,
+        modellgrund="Windlasten mit einem älteren Programmstand erzeugt",
+        vorschlag="Lasten › Wind: den Wind öffnen und die Windlasten neu erzeugen"),
+    Merkmal(
         # Befund A3 der Pruefagenten (09.11.2026): der Windschatten der projizierten Last nahm
         # die Achse ohne das Vorzeichen von p - „global Z, p = −5 kN/m²“ traf am Block die
         # Unterseite statt das Dach. Summe gleich, Angriffspunkt falsch. Fehlerkorrektur
@@ -2113,7 +2148,7 @@ MERKMALE: list = [
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 41
+VERFAHRENSSTAND = 43
 
 
 def merkmal(name: str) -> Optional[Merkmal]:
