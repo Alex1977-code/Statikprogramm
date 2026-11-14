@@ -1878,6 +1878,8 @@ class Results:
         # Zeile bei „Nur aktiver Lastfall“ und bei --analyse lastfall (F36).
         s += dilatation_gebuendelt([(self.name, self)])
         s += seil_querlast_gebuendelt([(self.name, self)])
+        # Knicken: Last in Stabrichtung, Stab in weniger als vier Elementen (Runde k7)
+        s += [f"Hinweis: {z}" for z in (self.info.get("laengslast_teilung") or [])]
         if self.u is not None and self.u.size:
             i = int(np.argmax(self.umag))
             s.append(f"max. Verschiebung       : {_fest(self.umag[i] * 1000, 4)} mm (Knoten {i})")
@@ -10871,6 +10873,8 @@ class Analysis:
         s += [f"Hinweis: {z}" for z in (self.info.get("schalenlage") or [])]
         # Anschluesse ohne Drehfeder in der Rechnung (Befund A'3 der zweiten Runde, 14.11.2026)
         s += [f"WARNUNG: {z}" for z in (self.info.get("anschluesse_uebersprungen") or {}).values()]
+        # Last in Stabrichtung, Stab in weniger als vier Elementen (Runde k7, 14.11.2026)
+        s += [f"Hinweis: {z}" for z in (self.info.get("laengslast_teilung") or [])]
         # die Iteration „gemeinsam“ ist ein Versuch (Fehlerliste F12, 06.10.2026)
         s += [f"WARNUNG: {z}" for z in gemeinsam_gebuendelt(self.all_results().items())]
         # verteilend eingeleitete Stabenden: eine Zeile ueber alle Ergebnisse (13.10.2026)
@@ -11194,6 +11198,25 @@ def _vorspannung_nachreichen(model: Model, an, progress=None) -> None:
         pass
 
 
+def _laengslast_hinweise_sammeln(an, progress=None) -> None:
+    """Die Hinweise „Last in Stabrichtung, weniger als vier Elemente“
+    (stabteilung.laengslast_hinweise, Runde k7, 14.11.2026) aus den Lastfaellen
+    und Kombinationen nach Theorie II./III. Ordnung und alpha_cr: je Text
+    einmal ins Protokoll, nach an.info["laengslast_teilung"] und damit in die
+    Zusammenfassung."""
+    from .stabteilung import LAENGSLAST_KENNUNG
+    texte = []
+    for th in (an.theorie2, an.theorie3):
+        for info in (getattr(th, "kombinationen", None) or {}).values():
+            for h in getattr(info, "hinweise", None) or []:
+                if LAENGSLAST_KENNUNG in h and h not in texte:
+                    texte.append(h)
+    if texte:
+        an.info["laengslast_teilung"] = texte
+        for t in texte:
+            _melde(progress, "Hinweis: " + t)
+
+
 def _solve_all_rumpf(model: Model, an: Analysis, systeme: dict, workers, progress, combinations,
                      envelopes, design, fatigue, t0) -> Analysis:
     """Der eigentliche Lauf - ``an`` und ``systeme`` fuellen sich unterwegs,
@@ -11314,6 +11337,7 @@ def _solve_all_rumpf(model: Model, an: Analysis, systeme: dict, workers, progres
         else:
             an.theorie3.kombinationen.update(t3.kombinationen)
             an.theorie3.settings.update(t3.settings)
+    _laengslast_hinweise_sammeln(an, progress)
     if ek_rechnen and ek_hoeher:
         # Nach II./III. Ordnung Gerechnetes kommt aus an.alternativen, alles
         # andere aus den linearen Lastfaellen - nie aus einem Gemisch
@@ -11707,6 +11731,13 @@ def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = Non
     Kg = asm.geometric_stiffness(model, u, system.aktiv,
                                  n_anfang=_anfang_im_ergebnis(model, static, faktoren, system.aktiv),
                                  feq=feq, symmetrisch=True, endkraefte=end)
+    # Stab mit Last in Stabrichtung in weniger als vier Elementen: Hinweis
+    # (Runde k7, 14.11.2026). Das Knicken teilt nicht intern - es zaehlen die
+    # Elemente des Modells.
+    from .stabteilung import laengslast_hinweise
+    ll_hinweise = laengslast_hinweise(model, faktoren, system.aktiv, teilen=False)
+    for t in ll_hinweise:
+        _melde(progress, "Hinweis: " + t)
     fi = system.fi
     Kff = system.Kff
     Kgff = Kg[fi][:, fi].tocsc()
@@ -11730,5 +11761,7 @@ def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = Non
     res.buckling_factors = vals_
     res.buckling_modes = modes[:, :model.nn * NDOF].reshape(k, model.nn, NDOF)
     res.info["time"] = time.time() - t0
+    if ll_hinweise:
+        res.info["laengslast_teilung"] = list(ll_hinweise)
     _schalenlage_eintragen(res, schalenlage)
     return res

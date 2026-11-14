@@ -1112,6 +1112,32 @@ def _anschluss_feder_ueber_80(model) -> bool:
     return False
 
 
+def _laschenstoss_ueber_80(model) -> bool:
+    """Ein Laschenstoss, dessen Flanschlasche ueber 80 mm dick ist und dessen
+    Werkstoff dort kein f_y hat (nur Stahlsorte, keine Dickentabelle), und der
+    in der Rechnung etwas anderes als starr ist: fest „gelenkig“ oder mit einer
+    Drehfeder von Hand (automatisch bzw. Feder). Seit Stand 45 (Befund C4) warf
+    momenten_rotation dort, federn_setzen uebersprang den Anschluss, und das
+    Gelenk bzw. die Feder fehlte (Runde k7, 14.11.2026). Ein automatisch
+    modellierter Stoss ohne Feder von Hand rechnete vorher wie nachher starr."""
+    from .joints import anschluss as _an
+    for j in (getattr(model, "joints", None) or {}).values():
+        if not getattr(j, "design", True) or getattr(j, "typ", "") != "lasche":
+            continue
+        wahl = str(getattr(j, "modellierung", "") or "automatisch").lower()
+        if not (wahl == "gelenkig" or (getattr(j, "S_j", 0.0) and wahl in ("automatisch", "feder"))):
+            continue
+        try:
+            t = _an.vorlage(model, j)
+            mat = model.materials[model.elements[int(j.elem)].mat]
+        except Exception:                       # noqa: BLE001 - nicht gefuehrt, nicht betroffen
+            continue
+        t_fl = float(getattr(t, "t_fl", 0.0) or 0.0)
+        if t_fl > 0 and mat.dicke_ohne_wert(t_fl, "fy"):
+            return True
+    return False
+
+
 def _werkstoffe_sorte_ueber_80(model) -> list:
     """Namen der benutzten Werkstoffe, deren Stufe ueber 80 mm (Erzeugnisnorm,
     Material.erzeugnisnorm_setzen) zu einer anderen Sorte eingetragen wurde, als
@@ -3503,10 +3529,27 @@ MERKMALE: list = [
         modellmerkmal="Stab mit Stablast in Stabrichtung (auch Eigengewicht) bei Stabteilung unter der Vorgabe "
                       "bzw. in einem Element, oder mit Längsgelenk; mit α_cr, Knicken oder Theorie II./III. Ordnung",
         betrifft=_laengslast_grob, im_ergebnis=_laengsgelenk_im_ergebnis),
+    # Runde k7 (14.11.2026): Laschenstoss mit Flanschlasche ueber 80 mm ohne
+    # Dickentabelle - momenten_rotation holte f_y der Lasche vor der Steifigkeit
+    # und warf (Befund C4), federn_setzen uebersprang den Anschluss: eine fest
+    # „gelenkig“ modellierte Lasche rechnete ohne Gelenk (Traeger 4 m, IPE 300,
+    # Lasche 90 mm: 0,832 statt 3,416 mm), eine Drehfeder von Hand fehlte (Kragarm
+    # 25,882 statt 29,882 mm). Wie die Kopfplatte (Stand 53). Fehlerkorrektur
+    Merkmal(
+        name="laschenstoss_ueber_80", titel="Gelenk oder Drehfeder eines Laschenstoßes über 80 mm",
+        texte={"alt": "Flanschlasche über 80 mm ohne f_y: Anschluss übersprungen, Stabende ohne Gelenk bzw. "
+                      "ohne Drehfeder von Hand",
+               "neu": "Steifigkeit des Stoßes ohne f_y, Gelenk bzw. Drehfeder in der Rechnung; M_j,Rd nicht "
+                      "bestimmt, mit Meldung"},
+        wechsel=(Wechsel(stand=59, datum="14.11.2026", commit="fix/k7-hinweis", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Laschenstoß mit Flanschlasche über 80 mm aus einem Werkstoff ohne Dickentabelle, fest "
+                      "„gelenkig“ modelliert oder mit Drehfeder von Hand",
+        betrifft=_laschenstoss_ueber_80),
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 58
+VERFAHRENSSTAND = 59
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

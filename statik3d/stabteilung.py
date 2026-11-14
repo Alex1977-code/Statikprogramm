@@ -84,7 +84,16 @@ FLUCHT_COS = 0.99995
 
 
 def _ketten_laengen(model, ohne_stab: list) -> dict:
-    """{Element: Laenge seiner Kette} fuer Balken, die zu keinem Stab
+    """{Element: Laenge seiner Kette} (:func:`_ketten`)."""
+    wurzeln = _ketten(model, ohne_stab)
+    summe: dict = {}
+    for i, r in wurzeln.items():
+        summe[r] = summe.get(r, 0.0) + model.element_length(i)
+    return {i: summe[r] for i, r in wurzeln.items()}
+
+
+def _ketten(model, ohne_stab: list) -> dict:
+    """{Element: Kennung (ein Element) seiner Kette} fuer Balken, die zu keinem Stab
     (Member) gehoeren. Eine Kette ist eine gerade Folge von Balken: an jedem
     inneren Knoten treffen genau diese zwei Stabelemente zusammen, fluchtend,
     ohne Gelenk und ohne Lager. So zaehlt ein Stab, der schon in viele
@@ -132,11 +141,7 @@ def _ketten_laengen(model, ohne_stab: list) -> dict:
         ri, rj = wurzel(i), wurzel(j)
         if ri != rj:
             eltern[ri] = rj
-    summe: dict = {}
-    for i in frei:
-        r = wurzel(i)
-        summe[r] = summe.get(r, 0.0) + model.element_length(i)
-    return {i: summe[wurzel(i)] for i in frei}
+    return {i: wurzel(i) for i in frei}
 
 
 def relevant(model, i: int, N: float) -> bool:
@@ -199,6 +204,116 @@ def teilzahlen(model, aktiv=None, faktor: int = 1, kraefte: dict = None) -> dict
         if n > 1:
             out[i] = n
     return out
+
+
+#: Ein Stab mit Stablast in Stabrichtung (auch Eigengewicht am geneigten oder
+#: lotrechten Stab) braucht mindestens so viele gerechnete Elemente. Der
+#: Feldanteil N w rechnet je Element mit dem Integralmittel der Normalkraft
+#: (Stand 58); mit wenigen Elementen fehlt ihr Verlauf im Element. Gemessen
+#: (Agent „theorie“, Runde k6, und tests/test_hinweis_k7_1411.py): Saeule 5 m,
+#: gelenkig, Last in Stabrichtung auf dem unteren Meter, Theorie II. Ordnung -
+#: ein Element 3,376 statt 3,576 kNm (-5,6 %), drei -2,8 %, vier -1,5 %.
+LAENGSLAST_MIN_ELEMENTE = 4
+
+#: Woran der Hinweis zu erkennen ist (Sammeln fuer Protokoll und Zusammenfassung)
+LAENGSLAST_KENNUNG = "trägt Last in Stabrichtung"
+
+
+def laengslast_text(name: str, elem: int, k: int) -> str:
+    """Der Hinweis zu Stab ``name`` (Element ``elem`` des Modells, ab 0
+    gezaehlt wie Tabelle und Modellbaum), gerechnet in ``k`` Elementen."""
+    wo = f"Stab {name} (Element {int(elem)})" if name else f"Element {int(elem)} (ohne Stab)"
+    teil = "1 Element" if int(k) == 1 else f"{int(k)} Elemente"
+    return (f"{wo} {LAENGSLAST_KENNUNG} und ist in {teil} geteilt – mindestens "
+            f"{LAENGSLAST_MIN_ELEMENTE} Elemente empfohlen, sonst kann das Moment bis etwa 6 % auf der "
+            "unsicheren Seite liegen.")
+
+
+def _laengs_belastet(model, factors: dict, aktiv=None) -> set:
+    """Balken mit Stablast in Stabrichtung in einem der Lastfaelle von
+    ``factors`` (Faktor ≠ 0): Strecken-, Teil- und Trapezlasten und das
+    Eigengewicht, gemessen wie das Merkmal „th2_laengslast_mittel“ an der Summe
+    der Stabendlasten in Stabrichtung f0[0] + f0[6] (Temperatur hebt sich
+    darin auf)."""
+    from .assemble import element_equivalent_loads
+    out = set()
+    for lf, f in (factors or {}).items():
+        lc = model.load_cases.get(lf) if f else None
+        if lc is None:
+            continue
+        for i, f0 in element_equivalent_loads(model, lc, aktiv).items():
+            if model.elements[int(i)].typ != "beam":
+                continue
+            f0 = np.asarray(f0, float)
+            if abs(f0[0] + f0[6]) > 1e-9 * max(float(np.abs(f0).max()), 1.0):
+                out.add(int(i))
+    return out
+
+
+def _stabgruppen(model, aktiv=None) -> list:
+    """[(Name, [Elemente])] - die Staebe (Member) mit ihren Linienelementen und
+    die Balken ohne Stab als gerade Ketten (:func:`_ketten`, Name "")."""
+    from .assemble import LINE_TYPES
+    ne = len(model.elements)
+    wirkt = (lambda i: aktiv is None or bool(aktiv[i]))
+    out, im_stab = [], set()
+    for name, mem in (getattr(model, "members", None) or {}).items():
+        els = [int(i) for i in mem.elements if 0 <= int(i) < ne
+               and model.elements[int(i)].typ in LINE_TYPES and wirkt(int(i))]
+        im_stab.update(int(i) for i in mem.elements)
+        if els:
+            out.append((str(name), els))
+    ohne = [i for i, e in enumerate(model.elements) if e.typ == "beam" and i not in im_stab and wirkt(i)]
+    if ohne:
+        ketten: dict = {}
+        for i, r in _ketten(model, ohne).items():
+            ketten.setdefault(r, []).append(i)
+        out += [("", sorted(els)) for els in ketten.values()]
+    return out
+
+
+def laengslast_hinweise(model, factors: dict, aktiv=None, faktor: int = 1, kraefte=None,
+                        teilen: bool = True) -> list:
+    """Die Hinweise (:func:`laengslast_text`) zu den Staeben mit Stablast in
+    Stabrichtung, die in weniger als :data:`LAENGSLAST_MIN_ELEMENTE` Elementen
+    gerechnet werden (Runde k7, 14.11.2026, vom Anwender freigegeben). Kein
+    Wert wird geaendert.
+
+    Massgebend ist die **tatsaechlich gerechnete** Elementzahl: die Elemente
+    des Modells samt interner Stabteilung (``teilen``: Theorie II./III.
+    Ordnung und alpha_cr mit ``faktor`` wie :func:`teilzahlen`; beim Knicken
+    ``teilen=False``). Mit der Vorgabe 10 teilt die Rechnung ohnehin - dort
+    kein Hinweis. ``kraefte`` {Element: N nach Theorie I. Ordnung} oder eine
+    Funktion, die sie liefert (nur gerufen, wenn ein Stab in Frage kommt): ein
+    Stab, dessen Elemente mit Last in Stabrichtung alle unter :data:`RELEVANZ`
+    bleiben, wird nicht geteilt und bekommt keinen Hinweis - dort aendert die
+    Teilung das Moment um weniger als etwa 0,1 %. Ein Hinweis sperrt nie eine
+    Rechnung: bei einem Fehler die leere Liste."""
+    try:
+        belastet = _laengs_belastet(model, factors, aktiv)
+        if not belastet:
+            return []
+        geo = teilzahlen(model, aktiv, faktor) if teilen else {}
+        kandidaten = []
+        for name, els in _stabgruppen(model, aktiv):
+            lb = [i for i in els if i in belastet]
+            if lb and sum(geo.get(i, 1) for i in els) < LAENGSLAST_MIN_ELEMENTE:
+                kandidaten.append((name, els, lb))
+        if not kandidaten:
+            return []
+        if callable(kraefte):
+            kraefte = kraefte()
+        zahlen = teilzahlen(model, aktiv, faktor, kraefte) if (teilen and kraefte is not None) else geo
+        out = []
+        for name, els, lb in kandidaten:
+            if kraefte is not None and not any(relevant(model, i, kraefte.get(i, 0.0)) for i in lb):
+                continue
+            k = sum(zahlen.get(i, 1) for i in els)
+            if k < LAENGSLAST_MIN_ELEMENTE:
+                out.append(laengslast_text(name, lb[0], k))
+        return out
+    except Exception:                       # noqa: BLE001 - ein Hinweis sperrt keine Rechnung
+        return []
 
 
 def _vorwaerts(model, elems: list, k: int) -> bool:
