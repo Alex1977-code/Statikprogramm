@@ -55,6 +55,17 @@ ALPHA_TAU = {"A": 0.75, "B": 0.65, "C": 0.50}
 C_XB = {"BC1-BC1": 6.0, "BC1-BC2": 3.0, "BC2-BC2": 1.0}
 
 
+#: Beiwert C_theta fuer Umfangsdruck, mittellanger Zylinder (Tab. D.3)
+C_THETA = {"BC1-BC1": 1.5, "BC1-BC2": 1.25, "BC2-BC2": 1.0}
+
+#: Beiwert C_theta,s fuer Umfangsdruck, kurzer Zylinder (Tab. D.4)
+C_THETA_S = {
+    "BC1-BC1": lambda w: 1.5 + 10.0 / w ** 2 - 5.0 / w ** 3,
+    "BC1-BC2": lambda w: 1.25 + 8.0 / w ** 2 - 4.0 / w ** 3,
+    "BC2-BC2": lambda w: 1.0 + 3.0 / w ** 1.35,
+}
+
+
 def omega(l: float, r: float, t: float) -> float:
     """Laengenparameter omega = l / sqrt(r t)."""
     return l / math.sqrt(r * t) if r > 0 and t > 0 else 0.0
@@ -66,6 +77,18 @@ def laengenbereich(l: float, r: float, t: float) -> str:
     if w <= 1.7:
         return "kurz"
     if w <= 0.5 * r / t:
+        return "mittel"
+    return "lang"
+
+
+def laengenbereich_umfang(l: float, r: float, t: float, rand: str = "BC1-BC1") -> str:
+    """"kurz", "mittel" oder "lang" fuer den Umfangsdruck nach D.1.3.1:
+    kurz omega/C_theta < 20, mittel bis 1,63 r/t, lang darueber."""
+    w = omega(l, r, t)
+    q = w / C_THETA.get(rand, 1.0)
+    if q < 20.0:
+        return "kurz"
+    if q <= 1.63 * r / t:
         return "mittel"
     return "lang"
 
@@ -93,20 +116,39 @@ def sigma_x_Rcr(l: float, r: float, t: float, rand: str = "BC1-BC1",
 
 def sigma_theta_Rcr(l: float, r: float, t: float, rand: str = "BC1-BC1",
                     E: float = E_STAHL) -> dict:
-    """Umfangs-Beulspannung nach D.1.3.1 (BC1/BC2: C_theta = 1,0)."""
+    """Umfangs-Beulspannung nach D.1.3.1 (Kreiszylinder unter Umfangsdruck).
+
+    Die Laengenbereiche gelten fuer den Umfangsdruck eigens, mit C_theta nach
+    Tab. D.3 je Randbedingung (BC1-BC1 1,5, BC1-BC2 1,25, BC2-BC2 1,0)::
+
+        kurz    omega/C_theta < 20:
+                sigma = 0,92 E (C_theta,s/omega)(t/r), C_theta,s nach Tab. D.4
+        mittel  20 <= omega/C_theta <= 1,63 r/t:
+                sigma = 0,92 E (C_theta/omega)(t/r)
+        lang    omega/C_theta > 1,63 r/t:
+                sigma = E (t/r)^2 [0,275 + 2,03 (C_theta r/(omega t))^4]
+
+    Bis zum 14.11.2026 nahm diese Funktion die Bereiche des Meridiandrucks
+    (D.1.2.1), C_theta = 1,0 fuer jede Randbedingung und fuer den langen
+    Zylinder eine falsche Formel (r 1 m, t 10 mm, l 100 m: 39 222 statt
+    5,78 N/mm², Befund C1 vom 14.11.2026).
+    """
     if r <= 0 or t <= 0:
         return {"sigma_Rcr": float("inf"), "fehler": "Abmessungen fehlen"}
     w = omega(l, r, t)
-    bereich = laengenbereich(l, r, t)
-    Ct = 1.0
-    if bereich == "kurz":
-        Cts = 1.5 + 10.0 / w ** 2 - 5.0 / w ** 3 if w > 0 else 1.5
-        s = 0.92 * E * Cts / (w * r / t) if w > 0 else float("inf")
+    Ct = C_THETA.get(rand, 1.0)
+    bereich = laengenbereich_umfang(l, r, t, rand)
+    if w <= 0:
+        s = float("inf")
+    elif bereich == "kurz":
+        Cts = C_THETA_S.get(rand, C_THETA_S["BC2-BC2"])(w)
+        s = 0.92 * E * (Cts / w) * (t / r)
+        return {"sigma_Rcr": s, "C_theta": Ct, "C_theta_s": Cts, "omega": w,
+                "bereich": bereich}
     elif bereich == "mittel":
-        s = 0.92 * E * Ct / (w * r / t) if w > 0 else float("inf")
+        s = 0.92 * E * (Ct / w) * (t / r)
     else:
-        Ctl = Ct + 0.275 + 2.03 * (Ct * w * t / r) ** 4 if r > 0 else Ct
-        s = 0.92 * E * Ctl / (w * r / t) if w > 0 else float("inf")
+        s = E * (t / r) ** 2 * (0.275 + 2.03 * (Ct * r / (w * t)) ** 4)
     return {"sigma_Rcr": s, "C_theta": Ct, "omega": w, "bereich": bereich}
 
 
@@ -236,6 +278,7 @@ def zylinder(r: float, t: float, l: float, fy: float, sigma_x: float = 0.0,
     z.util = wert
     z.werte = {"omega": w, "bereich": crx.get("bereich", ""),
                "r_t": r / t, "meridian": dx, "umfang": dt, "schub": ds,
+               "bereich_umfang": crt.get("bereich", ""),
                "C_x": crx.get("C_x"), "C_theta": crt.get("C_theta"),
                "C_tau": crs.get("C_tau"),
                "alpha_x": ax, "alpha_theta": at, "alpha_tau": au,

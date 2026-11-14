@@ -510,6 +510,10 @@ def _block(n: int = 4):
             m.load_node(ids[(i, j, n)], Fz=2.5e5 / 4, case="LF1")
             m.load_node(ids[(i, j, n)], Fz=5.0e5 / 4, case="LF2")
     m.add_volumenbereich("Schaft", els)
+    # Erzeugnisdicke 80 mm angegeben: der Block misst 100 mm, und ueber 80 mm hat
+    # S355 ohne Dickentabelle seit dem 14.11.2026 kein f_y mehr (Befund C4) - der
+    # Nachweis waere nicht gefuehrt. Mit 80 mm gilt f_y 335 wie bis dahin.
+    m.volumenbereiche["Schaft"].dicke = 0.080
     return m
 
 

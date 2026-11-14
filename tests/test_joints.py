@@ -683,7 +683,10 @@ def test_nachbessern_verlaengert_keine_naht():
     bis 0,999, massgebend die Kehlnaht). Seit dem 07.10.2026 (M26) gilt f_u von
     S355 mit 510 statt 490 N/mm2; dieselbe Formel liefert dann 100/383/602 mm
     (eta 0,955, 0,998 und 0,999): die Naht traegt mit f_u mehr, also wird sie
-    kuerzer."""
+    kuerzer. Seit dem 14.11.2026 (Befund B8) rechnet die Naht mit dem kleineren
+    f_u von Blech und Stab: bei N = 2000 kN ist das Knotenblech 47 mm dick, f_u
+    470 statt 510 N/mm2 (EN 1993-1-1 Tab. 3.1, 40 < t <= 80 mm), die Naht
+    653 statt 602 mm (von Hand: a 6,36 mm, f_vw = 470/sqrt(3)/(0,9 1,25))."""
     from statik3d.joints import templates as T
 
     m = Model("Diagonale")
@@ -713,7 +716,7 @@ def test_nachbessern_verlaengert_keine_naht():
         T.Gusset.improve = nachbessern
 
     check("geschweißtes Knotenblech: kein Nachbessern, Nahtlänge aus propose",
-          geschweisst_gerufen == [] and laengen == [100, 383, 602],
+          geschweisst_gerufen == [] and laengen == [100, 383, 653],
           f"improve {len(geschweisst_gerufen)}-mal gerufen, l = {laengen} mm")
     check("Dialogweg: Knotenblech geschraubt, nachgebessert ohne Naht",
           all(not g.welded for g in dialog) and gerufen == [False, False, False],

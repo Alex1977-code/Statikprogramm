@@ -718,6 +718,192 @@ def _beulfeld_achsen_verdreht(model) -> bool:
     return False
 
 
+# --------------------------------------------------------------------------
+# Behebungen vom 14.11.2026 (Gruppe B der Befundliste, Stand 45)
+# --------------------------------------------------------------------------
+def _zylinder_beulfeld(model) -> bool:
+    """Ein Beulfeld als Zylinderschale - dort stand die Umfangsbeulspannung bis
+    zum 14.11.2026 nach falschen Bereichen und, beim langen Zylinder, nach
+    falscher Formel (Befund C1)."""
+    return any(getattr(bf, "art", "eben") == "zylinder"
+               for bf in (getattr(model, "beulfelder", None) or {}).values())
+
+
+def _beulfeld_normale_gespiegelt(model) -> bool:
+    """Ein ebenes Beulfeld mit einem Element, dessen Normale gegen die Feldnormale
+    u x v zeigt und dessen Flaechenachse x schief zu u liegt (nicht 0°/90°/180°) -
+    dort drehte feldspannungen den Tensor bis zum 14.11.2026 gespiegelt (Befund B7)."""
+    import math
+    import numpy as np
+    felder = getattr(model, "beulfelder", None) or {}
+    if not felder:
+        return False
+    from .elements import shell as sh
+    from .solver import flaechen_bezugssystem
+    from .ec3.beulen import _rahmen
+    elemente = getattr(model, "elements", None) or []
+    for bf in felder.values():
+        if getattr(bf, "art", "eben") == "zylinder" or not getattr(bf, "elemente", None):
+            continue
+        try:
+            _m, u, v, _n, _l1, _l2, _eb = _rahmen(model, bf.elemente)
+        except Exception:                       # noqa: BLE001 - Pruefung, nie Abbruch
+            return True
+        n_feld = np.cross(u, v)
+        for i in bf.elemente:
+            i = int(i)
+            if not 0 <= i < len(elemente):
+                continue
+            try:
+                X = np.asarray(model.nodes)[elemente[i].nodes]
+                T3 = flaechen_bezugssystem(sh.shell_frame(X[0], X[1], X[2])[0])
+            except Exception:                   # noqa: BLE001
+                return True
+            ex, ne = np.asarray(T3[0], float), np.asarray(T3[2], float)
+            phi = math.atan2(float(ex @ v), float(ex @ u))
+            if float(n_feld @ ne) < 0 and abs(math.sin(2.0 * phi)) > 1e-9:
+                return True
+    return False
+
+
+def _anschluss_blechdicke(model) -> bool:
+    """Ein nachzuweisender Anschluss, dessen Blech (Kopfplatte, Lasche,
+    Knotenblech) bei seiner Dicke ein anderes f_y oder f_u hat als der Stab bei
+    t_max - dort rechnete der Anschluss bis zum 14.11.2026 Blech und Naehte mit
+    den Werten des Stabes (Befund B8)."""
+    from .joints import anschluss as _an
+    for j in (getattr(model, "joints", None) or {}).values():
+        if not getattr(j, "design", True):
+            continue
+        try:
+            t = _an.vorlage(model, j)
+        except Exception:                       # noqa: BLE001 - nicht gefuehrt, nicht betroffen
+            continue
+        mat = model.materials[model.elements[int(j.elem)].mat]
+        t_stab = float(getattr(t.sec, "t_max", 0.0) or 0.0)
+        bleche = [getattr(t, k) for k in ("tp", "t_fl", "t_web", "t_g") if hasattr(t, k)]
+        for tb in bleche:
+            if not tb:
+                continue
+            if (abs(float(mat.yield_strength(tb) or 0.0) - float(mat.yield_strength(t_stab) or 0.0)) > 1e-6
+                    or abs(float(mat.zugfestigkeit_angegeben(tb) or 0.0)
+                           - float(mat.zugfestigkeit_angegeben(t_stab) or 0.0)) > 1e-6):
+                return True
+    return False
+
+
+def _dicke_ueber_80(model) -> bool:
+    """Ein Bauteil ueber 80 mm Erzeugnisdicke aus einem Werkstoff, der nur die
+    Stahlsorte kennt (keine Dickentabelle) - dort blieb f_y bis zum 14.11.2026
+    beim Wert 40-80 mm (S355, 200 mm: 335 statt keiner Angabe), seitdem kein
+    Nachweis mit Meldung (Befund C4). Volumen und Bolzen zaehlen, sobald ein
+    Koerper aus einem solchen Werkstoff nachgewiesen wird (lieber „möglicherweise
+    betroffen“ als still gueltig)."""
+    from .model import DICKE_TAB31
+    mats = getattr(model, "materials", None) or {}
+    nur_sorte = {n for n, m in mats.items() if m._sorte() and not (m.fy_dicke and m.fu_dicke)}
+    if not nur_sorte:
+        return False
+    grenze = DICKE_TAB31 + 1e-12
+    elemente = getattr(model, "elements", None) or []
+    schnitte = getattr(model, "sections", None) or {}
+    schalen = getattr(model, "shells", None) or {}
+    for e in elemente:
+        if e.mat not in nur_sorte:
+            continue
+        sec = schnitte.get(getattr(e, "sec", None))
+        if sec is not None and float(getattr(sec, "t_max", 0.0) or 0.0) > grenze:
+            return True
+    for bf in (getattr(model, "beulfelder", None) or {}).values():
+        for i in (getattr(bf, "elemente", None) or [])[:1]:
+            i = int(i)
+            if 0 <= i < len(elemente) and elemente[i].mat in nur_sorte:
+                p = schalen.get(elemente[i].sec)
+                t = float(getattr(bf, "t", 0.0) or 0.0) or float(getattr(p, "t", 0.0) or 0.0)
+                if t > grenze:
+                    return True
+    for j in (getattr(model, "joints", None) or {}).values():
+        geo = getattr(j, "geometrie", None) or {}
+        i = int(getattr(j, "elem", -1))
+        if 0 <= i < len(elemente) and elemente[i].mat in nur_sorte \
+                and any(float(geo.get(k, 0.0) or 0.0) > grenze for k in ("tp", "t_fl", "t_web", "t_g")):
+            return True
+    if any(getattr(vb, "design", True) for vb in (getattr(model, "volumenbereiche", None) or {}).values()) \
+            or any(getattr(k, "bolzen", None) for k in (getattr(model, "koerper", None) or {}).values()):
+        if any(getattr(k, "material", "") in nur_sorte
+               for k in (getattr(model, "koerper", None) or {}).values()):
+            return True
+    return False
+
+
+def _schraube_ueber_m30_ermuedung(model) -> bool:
+    """Ein Kopfplattenanschluss mit Schrauben ueber M30 und Ermuedungslasten - dort
+    fehlte bis zum 14.11.2026 der Groesseneinfluss k_s = (30/d)^0,25 im
+    Kerbfall 50 der Schrauben auf Zug (Befund C5)."""
+    if not (getattr(model, "fatigue_loads", None) or {}):
+        return False
+    from .joints.bolts import SIZES
+    for j in (getattr(model, "joints", None) or {}).values():
+        if getattr(j, "typ", "") != "kopfplatte" or not getattr(j, "design", True):
+            continue
+        groesse = (getattr(j, "schraube", None) or {}).get("size", "M20")
+        d = SIZES.get(groesse, (0.0,))[0]
+        if d > 30.0:
+            return True
+    return False
+
+
+def _kerbfall_vorschlag_ohne_ks(model) -> list:
+    """Stabnamen mit dem Vorschlag Kerbfall 50 (Zugstab mit Rundquerschnitt), deren
+    Durchmesser ueber 30 mm liegt - der Vorschlag steht im Modell und kam bis zum
+    14.11.2026 ohne k_s (Befund C5)."""
+    from .ec3 import kerbfaelle as _kf
+    aus = []
+    for name, mem in (getattr(model, "members", None) or {}).items():
+        if not getattr(mem, "kerbfall_vorschlag", False):
+            continue
+        if abs(float(getattr(mem, "detail_category", 0.0) or 0.0) - _kf.ZUGSTAB) > 1e-6:
+            continue
+        v = _kf.vorschlag_stab(model, mem)
+        if v is not None and v.kerbfall < _kf.ZUGSTAB - 1e-6:
+            aus.append(str(name))
+    return aus
+
+
+def _kerbfall_vorschlag_im_modell(model) -> str:
+    if not (getattr(model, "fatigue_loads", None) or {}):
+        return ""
+    namen = _kerbfall_vorschlag_ohne_ks(model)
+    if not namen:
+        return ""
+    return (f"die Stäbe {_kurz(namen)} tragen den Kerbfall-Vorschlag 50 ohne Größeneinfluss "
+            "k_s = (30/d)^0,25 – „Kerbfälle vorschlagen“ erneut ausführen, dann neu rechnen")
+
+
+def _u_profile_alt(model) -> list:
+    """Namen der benutzten U-Profile, deren I_w noch der Formel mit voller
+    Flanschbreite folgt (bis 14.11.2026, Befund C6)."""
+    from .model import iw_u_profil, iw_u_profil_alt
+    benutzt = {getattr(e, "sec", None) for e in (getattr(model, "elements", None) or [])}
+    aus = []
+    for name, sec in (getattr(model, "sections", None) or {}).items():
+        if getattr(sec, "typ", "") != "U" or name not in benutzt:
+            continue
+        alt = iw_u_profil_alt(sec.h, sec.b, sec.tw, sec.tf)
+        neu = iw_u_profil(sec.h, sec.b, sec.tw, sec.tf)
+        if alt > 0 and abs(float(sec.Iw or 0.0) - alt) <= 1e-6 * alt and abs(alt - neu) > 1e-6 * alt:
+            aus.append(str(name))
+    return aus
+
+
+def _u_profile_im_modell(model) -> str:
+    namen = _u_profile_alt(model)
+    if not namen:
+        return ""
+    return (f"die U-Profile {_kurz(namen)} tragen I_w mit voller Flanschbreite (zu groß) – den "
+            "Querschnitt aus der Profiltabelle neu zuweisen, dann neu rechnen")
+
+
 def _kontakt_nur_koerper(model) -> bool:
     """Eine Kontaktbedingung, die nur Koerper nennt (geloest und Gegenkoerper, keine
     Flaechen) - sie blieb bis zum 09.11.2026 unausgefuehrt (Befund A17)."""
@@ -2050,10 +2236,90 @@ MERKMALE: list = [
                       "Lastfälle in Kategorie Q, gerechnete Kombinationen",
         betrifft=_import_lastkategorien, import_korrektur=True, im_ergebnis=_kombinationen_im_ergebnis,
         vorschlag="die Kategorien der Lastfälle prüfen"),
+    # Behebungen vom 14.11.2026, Gruppe B der Befundliste (fix/k5-b-beulen).
+    # Befund C1: Umfangsbeulspannung des Kreiszylinders nach den Bereichen des
+    # Meridiandrucks, C_theta = 1 fuer jede Randbedingung und beim langen
+    # Zylinder falsche Formel (r 1 m, t 10 mm, l 100 m: 39 222 statt 5,78 N/mm²,
+    # η 0,06 statt 5,86). Fehlerkorrektur
+    Merkmal(
+        name="schalenbeulen_umfang", titel="Umfangsbeulspannung der Zylinderschale",
+        texte={"alt": "Bereiche des Meridiandrucks, C_θ = 1, langer Zylinder nach falscher Formel",
+               "neu": "Bereiche und Formeln nach EN 1993-1-6 D.1.3.1, C_θ nach Tab. D.3 je Randbedingung"},
+        wechsel=(Wechsel(stand=45, datum="14.11.2026", commit="fix/k5-b-beulen", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Beulfeld als Zylinderschale", betrifft=_zylinder_beulfeld),
+    # Befund B7: im ebenen Beulfeld drehte feldspannungen den Tensor gespiegelt,
+    # wenn die Elementnormale gegen die Feldnormale zeigte (30°: σ_u 11,7 statt
+    # 25,9 N/mm²). Fehlerkorrektur
+    Merkmal(
+        name="beulfeld_normale", titel="Spannungen im Beulfeld bei gegenläufiger Elementnormale",
+        texte={"alt": "Drehwinkel aus der Flächenachse x, gespiegelt bei gegenläufiger Normale",
+               "neu": "Spannungstensor direkt auf die Feldachsen projiziert (σ_u = u·S·u)"},
+        wechsel=(Wechsel(stand=45, datum="14.11.2026", commit="fix/k5-b-beulen", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="ebenes Beulfeld mit Elementen, deren Normale gegen die Feldnormale zeigt, "
+                      "schief zu den Feldachsen",
+        betrifft=_beulfeld_normale_gespiegelt),
+    # Befund B8: Kopfplatte, Laschen und Knotenblech mit f_y/f_u des Stabes statt
+    # der Blechdicke; Naht mit dem f_u des Stabes (Kopfplatte 50 mm an IPE 300,
+    # S355: 510 statt 470 N/mm², unsichere Seite). Fehlerkorrektur
+    Merkmal(
+        name="anschluss_blechdicke", titel="Festigkeiten der Anschlussbleche",
+        texte={"alt": "Blech und Naht mit f_y und f_u des Stabes (Dicke t_max des Profils)",
+               "neu": "Blech mit f_y und f_u seiner Dicke, Naht mit dem kleineren f_u der verbundenen Teile"},
+        wechsel=(Wechsel(stand=45, datum="14.11.2026", commit="fix/k5-b-beulen", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Anschluss, dessen Blech bei seiner Dicke andere Festigkeiten hat als der Stab",
+        betrifft=_anschluss_blechdicke),
+    # Befund C4: ueber 80 mm ohne Dickentabelle blieb f_y beim Wert 40-80 mm
+    # (S355, 200 mm: 335 statt 285 N/mm² nach EN 10025-2). Entscheidung des
+    # Anwenders: kein angenommener Wert, Meldung, kein Nachweis. Fehlerkorrektur
+    Merkmal(
+        name="festigkeit_ueber_80", titel="Streckgrenze über 80 mm Erzeugnisdicke",
+        texte={"alt": "über 80 mm f_y und f_u der Zeile 40–80 mm von EN 1993-1-1 Tab. 3.1",
+               "neu": "über 80 mm ohne Dickentabelle kein Wert: Meldung „f_y nach Erzeugnisnorm "
+                      "eintragen“, kein Nachweis"},
+        wechsel=(Wechsel(stand=45, datum="14.11.2026", commit="fix/k5-b-beulen", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Bauteil über 80 mm aus einem Werkstoff mit Stahlsorte ohne Dickentabelle",
+        betrifft=_dicke_ueber_80),
+    # Befund C5: Schrauben auf Zug ueber M30 ohne Groesseneinfluss k_s =
+    # (30/d)^0,25 (M36: D 0,025 statt 0,031). Fehlerkorrektur
+    Merkmal(
+        name="ermuedung_schraube_ks", titel="Ermüdung der Schrauben auf Zug über M30",
+        texte={"alt": "Kerbfall 50 ohne Größeneinfluss",
+               "neu": "Kerbfall 50 · (30/d)^0,25 für d > 30 mm (EN 1993-1-9 Tab. 8.1, Detail 14)"},
+        wechsel=(Wechsel(stand=45, datum="14.11.2026", commit="fix/k5-b-beulen", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Kopfplattenanschluss mit Schrauben über M30 und Ermüdungslasten",
+        betrifft=_schraube_ueber_m30_ermuedung),
+    # Befund C5, zweiter Teil: der Kerbfall-Vorschlag fuer Zugstaebe mit
+    # Rundquerschnitt steht im Modell (Rund 50: 50 statt 44,0) - erst ein neuer
+    # Vorschlag wirkt. Fehlerkorrektur, Status am Modell
+    Merkmal(
+        name="kerbfall_vorschlag_ks", titel="Kerbfall-Vorschlag für Zugstäbe über 30 mm",
+        texte={"alt": "Vorschlag Kerbfall 50 ohne Größeneinfluss",
+               "neu": "Vorschlag Kerbfall 50 · (30/d)^0,25 für d > 30 mm"},
+        wechsel=(Wechsel(stand=45, datum="14.11.2026", commit="fix/k5-b-beulen", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Zugstab mit Rundquerschnitt über 30 mm und dem Kerbfall-Vorschlag 50",
+        betrifft=lambda model: bool(_kerbfall_vorschlag_ohne_ks(model)),
+        im_modell=_kerbfall_vorschlag_im_modell),
+    # Befund C6: I_w der U-Profile mit voller Flanschbreite (UPN 200: 12 277
+    # statt 10 499 cm⁶). Der Wert steht im gespeicherten Querschnitt - erst ein
+    # neu zugewiesener wirkt. Fehlerkorrektur, Status am Modell
+    Merkmal(
+        name="u_profil_iw", titel="Wölbwiderstand I_w der U-Profile",
+        texte={"alt": "I_w mit voller Flanschbreite b",
+               "neu": "I_w auf der Mittellinie mit b − t_w/2"},
+        wechsel=(Wechsel(stand=45, datum="14.11.2026", commit="fix/k5-b-beulen", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="benutztes U-Profil mit I_w nach der alten Formel",
+        betrifft=lambda model: bool(_u_profile_alt(model)), im_modell=_u_profile_im_modell),
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 40
+VERFAHRENSSTAND = 45
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

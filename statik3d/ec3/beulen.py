@@ -743,8 +743,19 @@ def feldspannungen(model, res, elemente, u, v) -> dict:
         # Beulspannungen (30°: σ_u 22,6 statt 25,9 N/mm², 90°: σ_u und σ_v vertauscht)
         T3 = _spannungsachsen(model, e, d)
         ex = np.asarray(T3[0], float)
-        phi = math.atan2(float(ex @ v), float(ex @ u))
-        a, b, c = _dreh(sig, -phi)
+        ey = np.asarray(T3[1], float)
+        # Der Tensor wird direkt auf u und v projiziert: σ_u = u·S·u, σ_v = v·S·v,
+        # τ = u·S·v. Bis zum 14.11.2026 stand hier ein Drehwinkel aus ex·u und
+        # ex·v - er setzt voraus, dass (ex, ey) und (u, v) um dieselbe Normale
+        # drehen. Zeigte die Elementnormale gegen die Feldnormale, drehte der
+        # Tensor gespiegelt (Feld 30°, Normale −Z: σ_u 11,7 statt 25,9 N/mm²,
+        # Befund B7)
+        xu, xv = float(ex @ u), float(ex @ v)
+        yu, yv = float(ey @ u), float(ey @ v)
+        sx, sy, txy = sig
+        a = sx * xu * xu + sy * yu * yu + 2.0 * txy * xu * yu
+        b = sx * xv * xv + sy * yv * yv + 2.0 * txy * xv * yv
+        c = sx * xu * xv + sy * yu * yv + txy * (xu * yv + yu * xv)
         su_l.append(a)
         sv_l.append(b)
         t_l.append(c)
@@ -856,6 +867,10 @@ def check_zylinder(model, bf, res, fy: float = 0.0, gamma_M1: float = 1.1) -> di
     t = bf.t or model.shells[e0.sec].t
     if not fy:
         mat = model.materials.get(e0.mat)
+        dicke = mat.dicke_ohne_wert(t, "fy") if mat is not None else ""
+        if dicke:                       # ueber 80 mm ohne Dickentabelle (Befund C4)
+            out["fehler"] = dicke
+            return out
         fy = (mat.yield_strength(t) if mat is not None else 0.0) or 235e6
     if streu > 0.05 and not bf.r:
         out["hinweise"].append(
@@ -902,6 +917,10 @@ def check_beulfeld(model, bf, res, fy: float = 0.0, gamma_M1: float = 1.1) -> di
     t = bf.t or model.shells[e0.sec].t
     if not fy:
         mat = model.materials.get(e0.mat)
+        dicke = mat.dicke_ohne_wert(t, "fy") if mat is not None else ""
+        if dicke:                       # ueber 80 mm ohne Dickentabelle (Befund C4)
+            out["fehler"] = dicke
+            return out
         fy = (mat.yield_strength(t) if mat is not None else 0.0) or 235e6
     if eben > 0.02 * max(L1, L2, 1e-6):
         out["hinweise"].append(
@@ -1121,6 +1140,9 @@ def _stegwerte(model, le) -> dict:
         return {"fehler": f"Querschnitt „{sec.name}“ ist kein I-Profil - "
                           "die Lasteinleitung nach Abschnitt 6 gilt für "
                           "I-förmige Träger"}
+    dicke = mat.dicke_ohne_wert(sec.t_max, "fy") if mat is not None else ""
+    if dicke:                           # ueber 80 mm ohne Dickentabelle (Befund C4)
+        return {"fehler": dicke}
     fy = (mat.yield_strength(sec.t_max) if mat is not None else 0.0) or 235e6
     return {"hw": sec.h - 2 * sec.tf, "tw": sec.tw, "tf": sec.tf, "bf": sec.b,
             "fyw": fy, "fyf": fy, "sec": sec.name, "A": sec.A, "Wel_y": sec.Wel_y,

@@ -744,6 +744,24 @@ def _material(model, elemente, dicke: float = 0.0):
     return "/".join(namen), (min(fy) if fy else 0.0)
 
 
+def _dicke_ohne_wert(model, elemente, dicke: float) -> str:
+    """Die Meldung eines Werkstoffs im Bereich, der bei der Erzeugnisdicke
+    ``dicke`` kein f_y hat (ueber 80 mm, nur Stahlsorte, keine Dickentabelle;
+    Befund C4, 14.11.2026) - sonst "". Ohne sie nahm ``_material`` still das
+    f_y eines anderen Werkstoffs im Bereich."""
+    gesehen = set()
+    for i in elemente:
+        name = model.elements[int(i)].mat
+        if name in gesehen:
+            continue
+        gesehen.add(name)
+        mat = model.materials.get(name)
+        meldung = mat.dicke_ohne_wert(dicke, "fy") if mat is not None else ""
+        if meldung:
+            return meldung
+    return ""
+
+
 def check_volumen(model, analysis, combos: list = None, progress=None) -> VolumenResults:
     """Alle Volumenbereiche des Modells ueber alle GZT-Kombinationen nachweisen."""
     from .design import _uls_results
@@ -802,6 +820,12 @@ def check_volumen(model, analysis, combos: list = None, progress=None) -> Volume
                  else _erzeugnisdicke(model, vb_el, koerper))
         c.material, c.fy = _material(model, vb_el, t_erz)
         _mat0, fy_duenn = _material(model, vb_el, 0.0)
+        dicke_meldung = _dicke_ohne_wert(model, vb_el, t_erz)
+        if dicke_meldung:
+            c.fy = 0.0
+            c.fehler = dicke_meldung
+            out.bereiche[name] = c
+            continue
         if c.fy <= 0:
             c.fehler = ("kein Material mit Streckgrenze im Bereich - "
                         "der Nachweis braucht f_y")

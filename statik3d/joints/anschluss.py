@@ -81,7 +81,8 @@ def vorlage(model: Model, joint: Joint):
         raise KeyError(f"Anschlusstyp '{joint.typ}' unbekannt: {sorted(TEMPLATES)}")
     e = model.elements[int(joint.elem)]
     if not e.sec or e.sec not in model.sections:
-        raise ValueError(f"Element {joint.elem + 1} hat keinen Querschnitt")
+        # Elemente ab 0 gezaehlt wie Tabelle und Modellbaum (bis 14.11.2026 ab 1, Befund B13)
+        raise ValueError(f"Element {joint.elem} hat keinen Querschnitt")
     sec = model.sections[e.sec]
     mat = model.materials[e.mat]
     ds = model.design
@@ -91,6 +92,10 @@ def vorlage(model: Model, joint: Joint):
     fy = mat.yield_strength(sec.t_max)
     fu = mat.zugfestigkeit_angegeben(sec.t_max)
     fehlt = [n for n, v in (("f_y", fy), ("f_u", fu)) if not v]
+    dicke = mat.dicke_ohne_wert(sec.t_max, "fy") or mat.dicke_ohne_wert(sec.t_max, "fu")
+    if fehlt and dicke:
+        # ueber 80 mm ohne Dickentabelle (Befund C4, 14.11.2026)
+        raise ValueError(dicke)
     if fehlt:
         raise ValueError(f"Werkstoff „{mat.name}“: {' und '.join(fehlt)} {'fehlt' if len(fehlt) == 1 else 'fehlen'} – bitte im Werkstoff "
                          "angeben (Wert oder Stahlsorte); ohne Angabe kein Anschlussnachweis, "
@@ -429,7 +434,7 @@ def check_joint(model: Model, joint: Joint, results: dict, analysis=None,
                 faelle.append((name, _nur(k, joint.typ)))
     if not faelle:
         c.fehler = ("keine Stabendschnittgrößen für Element "
-                    f"{joint.elem + 1} - wurde gerechnet?")
+                    f"{joint.elem} - wurde gerechnet?")
         return c
 
     bestes = None

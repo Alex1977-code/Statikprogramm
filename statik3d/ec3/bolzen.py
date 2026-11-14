@@ -129,7 +129,9 @@ def festigkeit(mat, t: float, was: str):
             return None, f"f_u fehlt im Werkstoff {mat.name}"
         w = mat.ultimate_strength(t)
     if not w or w <= 0:
-        return None, f"{'f_y' if was == 'fy' else 'f_u'} fehlt im Werkstoff {mat.name}"
+        # ueber 80 mm ohne Dickentabelle: die Meldung sagt es (Befund C4, 14.11.2026)
+        return None, (mat.dicke_ohne_wert(t, was)
+                      or f"{'f_y' if was == 'fy' else 'f_u'} fehlt im Werkstoff {mat.name}")
     return float(w), ""
 
 

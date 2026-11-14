@@ -57,6 +57,10 @@ def _festigkeiten(mat: Material, t: float) -> tuple:
     fy = mat.yield_strength(t)
     fu = mat.zugfestigkeit_angegeben(t)
     fehlt = [n for n, v in (("f_y", fy), ("f_u", fu)) if not v]
+    dicke = mat.dicke_ohne_wert(t, "fy") or mat.dicke_ohne_wert(t, "fu")
+    if fehlt and dicke:
+        # ueber 80 mm ohne Dickentabelle (Befund C4, 14.11.2026)
+        raise ValueError(dicke)
     if fehlt:
         raise ValueError(f"Werkstoff „{mat.name}“: {' und '.join(fehlt)} {'fehlt' if len(fehlt) == 1 else 'fehlen'} – bitte im "
                          "Werkstoff angeben (Wert oder Stahlsorte); ohne Angabe kein Anschlussvorschlag, "
@@ -128,6 +132,30 @@ class JointTemplate:
         R = b.Fv_Rd() if shear else b.Ft_Rd()
         n = max(n_min, int(math.ceil(abs(F) / R)) if R else n_min)
         return b, n + n % 2
+
+    def _blech(self, t: float) -> tuple:
+        """(f_y, f_u) [Pa] eines Blechs des Anschlusses mit der Dicke t [m]
+        (Kopfplatte, Lasche, Knotenblech). Das Blech ist aus dem Werkstoff des
+        Stabes, seine Festigkeiten haengen aber an **seiner** Dicke (EN 1993-1-1
+        Tab. 3.1 bzw. Dickentabelle) - ``fy``/``fu`` der Vorlage gelten fuer die
+        Dicke des Stabes (t_max). Bis zum 14.11.2026 nahm der Anschluss fuer das
+        Blech die Werte des Stabes (Kopfplatte 50 mm an IPE 300, S355: f_u 510
+        statt 470 N/mm², Befund B8). Ohne Modell (Vorlage von Hand) die Werte
+        der Vorlage."""
+        mat = None
+        if self.model is not None:
+            try:
+                mat = _material_of(self.model, self.elem)
+            except Exception:               # noqa: BLE001 - dann die Werte der Vorlage
+                mat = None
+        if mat is None or not t or t <= 0:
+            return self.fy, self.fu
+        return _festigkeiten(mat, t)
+
+    def _fu_naht(self, t: float) -> float:
+        """f_u der Kehlnaht zwischen Stab und Blech der Dicke t: das kleinere der
+        verbundenen Teile (EN 1993-1-8, 4.5.3.2(6))."""
+        return min(self.fu, self._blech(t)[1])
 
     def _weld(self, t: float, a: float = None) -> Fillet:
         a = a or max(min_throat(t), round(0.5 * t * 1000) / 1000.0)
@@ -393,13 +421,14 @@ class EndPlate(JointTemplate):
         st = dict(stuetze or {})
         t_gegen = float(st.get("tf", 0.0)) or self.tp
         L_bolt = R.klemmlaenge(self.tp, t_gegen, self.bolt)
+        fy_p = self._blech(self.tp)[0]          # Kopfplatte mit ihrer Dicke (Befund B8)
 
         for h_r, m, le, e_arm in self._zugreihen():
             r = R.Reihe(h=h_r)
             leff_min = min(le["cp"], le["nc"]) if le.get("cp") else le["nc"]
             r.komponenten.append(R.k5_stirnplatte(leff_min, self.tp, m))
             r.komponenten.append(R.k10_schrauben(self.bolt.As, L_bolt))
-            ts = TStub(t=self.tp, fy=self.fy, m=m, e=e_arm, leff_cp=le["cp"],
+            ts = TStub(t=self.tp, fy=fy_p, m=m, e=e_arm, leff_cp=le["cp"],
                        leff_nc=le["nc"], Ft_Rd=self.bolt.Ft_Rd(), n_bolts=2,
                        gamma_M0=self.gamma_M0)
             res = ts.resistance()
@@ -473,7 +502,7 @@ class EndPlate(JointTemplate):
         # Rotationsvermoegen
         massgebend = min(g.reihen, key=lambda r: r.F_Rd).versagen if g.reihen else ""
         g.rotation_ok, g.rotation_grund = R.rotationskapazitaet(
-            massgebend, self.tp, self.bolt.d, self.bolt.fub, self.fy)
+            massgebend, self.tp, self.bolt.d, self.bolt.fub, fy_p)
         g.phi_Cd = g.M_j_Rd / g.S_j if g.S_j > 0 else 0.0
         return g
 
@@ -516,29 +545,33 @@ class EndPlate(JointTemplate):
         Ft = Ft_ges / n_zug
         n_all = 2 * max(len(self.rows), 1)
         Fv = abs(Vz) / n_all
+        # Kopfplatte mit ihrer Dicke, die Naehte mit dem kleineren f_u von
+        # Platte und Stab (Befund B8, 14.11.2026)
+        fy_p, fu_p = self._blech(self.tp)
+        fu_naht = min(self.fu, fu_p)
 
         j.add(check_bolt(self.bolt, Fv_Ed=Fv, Ft_Ed=Ft,
                          geo=BoltGeometry(e1=self.ex, e2=0.5 * (self.bp - self.w),
                                           p1=abs(self.rows[0] - self.rows[1])
                                           if len(self.rows) > 1 else 0.0,
                                           p2=self.w),
-                         t=self.tp, fu=self.fu, tp=self.tp))
+                         t=self.tp, fu=fu_p, tp=self.tp))
         # T-Stummel der Zugzone
         m_arm = max(0.5 * (self.w - tw) - 0.8 * self.a_w * math.sqrt(2), 0.5 * self.bolt.d0)
         e_arm = 0.5 * (self.bp - self.w)
         le = effective_lengths("innen", m=m_arm, e=e_arm)
-        ts = TStub(t=self.tp, fy=self.fy, m=m_arm, e=e_arm, leff_cp=le["cp"],
+        ts = TStub(t=self.tp, fy=fy_p, m=m_arm, e=e_arm, leff_cp=le["cp"],
                    leff_nc=le["nc"], Ft_Rd=self.bolt.Ft_Rd(), n_bolts=2,
                    gamma_M0=self.gamma_M0)
         r = ts.resistance()
         j.add(Check("T-Stummel der Zugzone F_T,Rd", Ft_ges / max(len(zug), 1),
                     r["F_T_Rd"], hinweis=r["versagen"]))
         # Naehte: Flanschnaht traegt die Flanschkraft, Stegnaht die Querkraft
-        nf = Fillet(a=self.a_f, length=2 * b, fu=self.fu, grade=self.grade,
+        nf = Fillet(a=self.a_f, length=2 * b, fu=fu_naht, grade=self.grade,
                     gamma_M2=self.gamma_M2)
         j.add(check_weld(nf, N_perp=Ft_ges, V_perp=0.0, V_par=0.0,
                          bezeichnung="Kehlnaht am Flansch"))
-        nw = Fillet(a=self.a_w, length=2 * max(h - 2 * tf, 0.05), fu=self.fu,
+        nw = Fillet(a=self.a_w, length=2 * max(h - 2 * tf, 0.05), fu=fu_naht,
                     grade=self.grade, double=False, gamma_M2=self.gamma_M2)
         j.add(check_weld(nw, N_perp=0.0, V_perp=abs(Vz), V_par=0.0,
                          bezeichnung="Kehlnaht am Steg"))
@@ -557,7 +590,7 @@ class EndPlate(JointTemplate):
         if n_cycles and dMy:
             dFt = abs(dMy) / hebel / n_zug * self.bolt_range_factor()
             j.ermuedung.append(fatigue_check("schraube_zug", [(dFt, n_cycles)],
-                                             area=self.bolt.As))
+                                             area=self.bolt.As, d=self.bolt.d))
             if self.bolt.preloaded:
                 j.hinweise.append(
                     "Ermüdung der Schrauben mit dem Faktor "
@@ -808,7 +841,7 @@ class Splice(JointTemplate):
         schnitte = 2 if self.inner_flange else 1
         F_fl = min(self.n_fl * (self.bolt.Fs_Rd() if self.bolt.preloaded
                                 else self.bolt.Fv_Rd() * schnitte),
-                   self.b_fl * self.t_fl * schnitte * self.fy / self.gamma_M0)
+                   self.b_fl * self.t_fl * schnitte * self._blech(self.t_fl)[0] / self.gamma_M0)
         g.M_j_Rd = F_fl * hebel
         g.tragklasse = R.tragfaehigkeitsklasse(g.M_j_Rd, Mc_Rd)
         g.rotation_ok = True
@@ -838,10 +871,14 @@ class Splice(JointTemplate):
         geo = BoltGeometry(e1=self.e1, e2=0.5 * (self.b_fl - self.p2),
                            p1=self.p1, p2=self.p2, inner_1=True)
         Lj = max(0.0, (self.n_fl / 2 - 1) * self.p1)
+        # Laschen mit ihrer Dicke (Befund B8, 14.11.2026); Lochleibung mit dem
+        # kleineren f_u von Lasche und Stab
+        fy_fl, fu_fl = self._blech(self.t_fl)
+        fu_web = self._blech(self.t_web)[1]
         j.add(check_bolt(Bolt(self.bolt.size, self.bolt.grade, hole=self.bolt.hole,
                               preloaded=self.bolt.preloaded, mu=self.bolt.mu,
                               category=self.bolt.category, shear_planes=schnitte),
-                         Fv_Ed=Fv, geo=geo, t=min(tf, self.t_fl), fu=self.fu, Lj=Lj))
+                         Fv_Ed=Fv, geo=geo, t=min(tf, self.t_fl), fu=min(self.fu, fu_fl), Lj=Lj))
         # Steglaschen: Querkraft, zweischnittig
         Fw = abs(Vz) / max(self.n_web, 1) / 2.0
         j.add(check_bolt(Bolt(self.bolt.size, self.bolt.grade, hole=self.bolt.hole,
@@ -850,12 +887,12 @@ class Splice(JointTemplate):
                          Fv_Ed=Fw,
                          geo=BoltGeometry(e1=self.e1, e2=self.e1, p1=self.p1,
                                           p2=self.p1, inner_1=True),
-                         t=min(tw, 2 * self.t_web), fu=self.fu))
+                         t=min(tw, 2 * self.t_web), fu=min(self.fu, fu_web)))
         # Netto- und Bruttoquerschnitt der Lasche und des Flansches
         n_reihen = max(1, self.n_fl // 2)
         A_lasche = self.b_fl * self.t_fl * schnitte
         A_netto = A_lasche - 2 * self.bolt.d0 * self.t_fl * schnitte
-        for c in check_net_section(A_lasche, A_netto, self.fy, self.fu, F_flansch,
+        for c in check_net_section(A_lasche, A_netto, fy_fl, fu_fl, F_flansch,
                                    category_C=(self.bolt.category == "C")):
             c.name = c.name.replace("Zug ", "Lasche: Zug ")
             j.add(c)
@@ -871,7 +908,7 @@ class Splice(JointTemplate):
         Anv = 2 * ((n_reihen - 1) * self.p1 + self.e1
                    - (n_reihen - 0.5) * self.bolt.d0) * self.t_fl * schnitte
         j.add(check_block_tearing(F_flansch, max(Ant, 1e-9), max(Anv, 1e-9),
-                                  self.fu, self.fy))
+                                  fu_fl, fy_fl))
         v = check_spacing(geo, self.bolt.d0, min(tf, self.t_fl))
         j.hinweise.extend(v)
         if n_cycles and dN:
@@ -990,7 +1027,7 @@ class Gusset(JointTemplate):
                 bw = beta_w(a.grade)
             except ValueError as ex:
                 raise ValueError(f"Werkstoff „{mat.name}“: {ex}") from None
-            fvw = (fu / math.sqrt(3.0)) / (bw * a.gamma_M2)
+            fvw = (a._fu_naht(a.t_g) / math.sqrt(3.0)) / (bw * a.gamma_M2)
             a.a_w = max(min_throat(a.t_g), 0.004)
             a.l_weld = max(0.100, abs(N) / (2.0 * fvw * a.a_w)) if fvw * a.a_w else 0.200
             a.l_weld = math.ceil(a.l_weld * 1000) / 1000.0
@@ -1100,8 +1137,11 @@ class Gusset(JointTemplate):
     def design(self, N: float = 0.0, n_cycles: float = 0.0, dN: float = 0.0) -> JointCheck:
         j = JointCheck(self.name)
         sec = self.sec
+        # Knotenblech mit seiner Dicke, Naht und Lochleibung mit dem kleineren f_u
+        # von Blech und Stab (Befund B8, 14.11.2026)
+        fy_g, fu_g = self._blech(self.t_g)
         if self.welded:
-            n = Fillet(a=self.a_w, length=self.l_weld, fu=self.fu, grade=self.grade,
+            n = Fillet(a=self.a_w, length=self.l_weld, fu=min(self.fu, fu_g), grade=self.grade,
                        double=True, gamma_M2=self.gamma_M2)
             j.add(check_weld(n, V_par=abs(N),
                              bezeichnung="Kehlnaht Blech an Bauteil"))
@@ -1111,12 +1151,12 @@ class Gusset(JointTemplate):
                                inner_1=self.n_je_reihe > 1, inner_2=self.reihen > 1)
             Lj = (self.n_je_reihe - 1) * self.p1
             j.add(check_bolt(self.bolt, Fv_Ed=Fv, geo=geo,
-                             t=min(self.t_g, sec.tw or self.t_g), fu=self.fu, Lj=Lj))
+                             t=min(self.t_g, sec.tw or self.t_g), fu=min(self.fu, fu_g), Lj=Lj))
             # Knotenblech: Whitmore-Querschnitt und Nettoquerschnitt
             bw = self.whitmore_width()
             A_w = bw * self.t_g
             A_net = A_w - self.reihen * self.bolt.d0 * self.t_g
-            j.add(check_net_section(A_w, max(A_net, 1e-9), self.fy, self.fu, abs(N),
+            j.add(check_net_section(A_w, max(A_net, 1e-9), fy_g, fu_g, abs(N),
                                     category_C=(self.bolt.category == "C")))
             # Blockversagen des Knotenblechs
             Ant = (self.p2 * (self.reihen - 1) + 2 * self.e2
@@ -1124,19 +1164,19 @@ class Gusset(JointTemplate):
             Anv = 2 * ((self.n_je_reihe - 1) * self.p1 + self.e1
                        - (self.n_je_reihe - 0.5) * self.bolt.d0) * self.t_g
             j.add(check_block_tearing(abs(N), max(Ant, 1e-9), max(Anv, 1e-9),
-                                      self.fu, self.fy))
+                                      fu_g, fy_g))
             j.hinweise.extend(check_spacing(geo, self.bolt.d0, self.t_g))
             # Knicken des Knotenblechs bei Druck (Thornton, Ersatzstab)
             if N < 0:
                 Lc = self.e1 + (self.n_je_reihe - 1) * self.p1 * 0.5
                 i = self.t_g / math.sqrt(12.0)
-                lam = (0.65 * Lc / i) / (math.pi * math.sqrt(210e9 / self.fy))
+                lam = (0.65 * Lc / i) / (math.pi * math.sqrt(210e9 / fy_g))
                 chi = min(1.0, 1.0 / (0.5 * (1 + 0.34 * (lam - 0.2) + lam ** 2)
                                       + math.sqrt(max(1e-12,
                                                       (0.5 * (1 + 0.34 * (lam - 0.2) + lam ** 2)) ** 2
                                                       - lam ** 2))))
                 j.add(Check("Knotenblech auf Druck (Ersatzstab)", abs(N),
-                            chi * bw * self.t_g * self.fy / self.gamma_M0,
+                            chi * bw * self.t_g * fy_g / self.gamma_M0,
                             hinweis=f"lambda_quer = {lam:.2f}, chi = {chi:.2f}"))
         if n_cycles and dN:
             if self.welded:

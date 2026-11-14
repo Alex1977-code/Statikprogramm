@@ -1181,8 +1181,11 @@ class Report:
                                          "Wert der Dicke des Bauteils)", None, "compact"))
             if any(mat.grade and not getattr(mat, "fy_dicke", None) for mat in m.materials.values()):
                 b.append(("note", "Streckgrenzen für Erzeugnisdicken t ≤ 40 mm nach der Erzeugnisnorm "
-                                  "der Sorte (EN 10025-2 bis -5); für t > 40 mm werden die "
-                                  "abgeminderten Werte nach DIN EN 1993-1-1 Tabelle 3.1 verwendet."))
+                                  "der Sorte (EN 10025-2 bis -5); für 40 mm < t ≤ 80 mm werden die "
+                                  "abgeminderten Werte nach DIN EN 1993-1-1 Tabelle 3.1 verwendet. "
+                                  "Über 80 mm gibt die Tabelle keinen Wert: ohne Dickentabelle im "
+                                  "Werkstoff wird dort kein Nachweis geführt (f_y nach Erzeugnisnorm "
+                                  "eintragen)."))
         # ---- Querschnitte
         if self.opt("sections"):
             b.append(self._h(2, "Querschnitte"))
@@ -4066,7 +4069,9 @@ class Report:
                                          "(EN 1993-1-6, 8.5)", None, ""))
                 b.append(("kv", [
                     ("Verhältnis r/t", f"{zyl['r_t']:.0f}"),
-                    ("Längenparameter ω", f"{zyl['omega']:.1f} ({zyl['bereich']})"),
+                    ("Längenparameter ω", f"{zyl['omega']:.1f} ({zyl['bereich']}"
+                                          + (f", Umfangsdruck {zyl['bereich_umfang']}"
+                                             if zyl.get("bereich_umfang") else "") + ")"),
                     ("Herstelltoleranz", zyl["qualitaet"]),
                     ("Beiwerte", f"C_x = {fmt(zyl.get('C_x') or 0, 3)}, "
                                  f"C_θ = {fmt(zyl.get('C_theta') or 0, 3)}, "

@@ -181,6 +181,14 @@ STEEL_GRADES = {
     "S355W": (355e6, 510e6, 335e6, 490e6),
 }
 
+#: Groesste Erzeugnisdicke der Tabelle 3.1 von DIN EN 1993-1-1 [m] (Zeile 40 < t <= 80 mm).
+#: Darueber gibt die Tabelle keinen Wert: ein Werkstoff, der nur die Sorte kennt (keine
+#: Dickentabelle), hat dort kein f_y und kein f_u, und es gibt keinen Nachweis mit einem
+#: angenommenen Wert, sondern die Meldung „f_y nach Erzeugnisnorm eintragen“
+#: (Material.dicke_ohne_wert; Entscheidung des Anwenders 14.11.2026, Befund C4). Bis dahin
+#: blieb es ueber 80 mm still beim Wert der Zeile 40-80 mm (S355, 200 mm: 335 statt 285).
+DICKE_TAB31 = 0.080
+
 #: f_u der Sorten S355 und S355W bis 40 mm vor dem 07.10.2026 (Nachtrag M26): der Wert, den
 #: ein Werkstoff einer aelteren Datei traegt, wenn er aus der Sortentabelle kam
 FU_S355_VOR_M26 = 490e6
@@ -592,14 +600,35 @@ class Material:
         fy, fu, _, _ = STEEL_GRADES[g]
         return Material(name or g, 210e9, 0.3, 7850.0, 1.2e-5, fy, fu, g)
 
+    def dicke_ohne_wert(self, t: float = 0.0, was: str = "fy") -> str:
+        """Die Meldung, wenn der Werkstoff bei der Erzeugnisdicke t [m] kein
+        f_y (``was`` = "fy") bzw. f_u ("fu") hat, weil t ueber 80 mm liegt und er
+        nur die Stahlsorte kennt (keine Dickentabelle) - sonst "".
+
+        DIN EN 1993-1-1 Tab. 3.1 reicht bis 80 mm; darueber gilt die
+        Erzeugnisnorm, deren Wert der Anwender eintraegt. Entscheidung des
+        Anwenders (14.11.2026, Befund C4): keinen Wert annehmen, Meldung, kein
+        Nachweis. Werkstoffe mit Dickentabelle (RFEM) sind nicht betroffen."""
+        tabelle = self.fy_dicke if was == "fy" else self.fu_dicke
+        sorte = self._sorte()
+        if tabelle or not sorte or not float(t or 0.0) > DICKE_TAB31 + 1e-12:
+            return ""
+        kenn = self.fliess_name() if was == "fy" else self.grenze_name()
+        return (f"Werkstoff {self.name}: Erzeugnisdicke {float(t) * 1e3:.0f} mm über 80 mm – "
+                f"DIN EN 1993-1-1 Tab. 3.1 gibt für {sorte} dort kein {kenn}; {kenn} nach "
+                "Erzeugnisnorm eintragen. Ohne Wert kein Nachweis, kein angenommener Wert.")
+
     def yield_strength(self, t: float = 0.0) -> float:
         """Streckgrenze in Abhaengigkeit der Erzeugnisdicke t [m]: aus der
         Dickentabelle des Materials (RFEM-Import), sonst EN 1993-1-1 Tab. 3.1
-        (zwei Stufen bei 40 mm)."""
+        (zwei Stufen bei 40 mm, bis 80 mm). Ueber 80 mm ohne Dickentabelle 0 -
+        die Meldung dazu gibt :meth:`dicke_ohne_wert`."""
         wert = self._nach_dicke(self.fy_dicke, t)
         if wert is not None:
             return wert
         sorte = self._sorte()
+        if self.dicke_ohne_wert(t, "fy"):
+            return 0.0
         if sorte and t > 0.040:
             return STEEL_GRADES[sorte][2]
         # Ein leeres f_y nimmt bis 40 mm den Wert der Sorte - so sagt es der
@@ -616,6 +645,8 @@ class Material:
         if wert is not None:
             return wert
         sorte = self._sorte()
+        if self.dicke_ohne_wert(t, "fu"):
+            return 0.0                  # ueber 80 mm ohne Dickentabelle (Befund C4)
         if sorte and t > 0.040:
             return STEEL_GRADES[sorte][3]
         # Ohne f_u und ohne f_y die Sorte (wie yield_strength); mit f_y bleibt
@@ -628,11 +659,14 @@ class Material:
         """f_u, wie es im Werkstoff steht - aus der Dickentabelle, dem Wert f_u
         oder der Stahlsorte -, sonst None. Kein Ersatzwert 1,3 f_y: nach der
         Festlegung des Anwenders gibt es ohne f_u eine Meldung, keinen
-        Vorgabewert (Anschlussnachweis seit 09.11.2026, Befund A23)."""
+        Vorgabewert (Anschlussnachweis seit 09.11.2026, Befund A23). Ueber
+        80 mm ohne Dickentabelle None (Befund C4, :meth:`dicke_ohne_wert`)."""
         wert = self._nach_dicke(self.fu_dicke, t)
         if wert is not None:
             return wert
         sorte = self._sorte()
+        if self.dicke_ohne_wert(t, "fu"):
+            return None
         if sorte and t > 0.040:
             return STEEL_GRADES[sorte][3]
         if self.fu:
@@ -640,6 +674,35 @@ class Material:
         if sorte:
             return STEEL_GRADES[sorte][1]
         return None
+
+
+def iw_u_profil(h: float, b: float, tw: float, tf: float) -> float:
+    """Woelbwiderstand I_w eines U-Profils [m^6] auf der Profilmittellinie:
+    Flanschbreite bis Stegmitte b_s = b - t_w/2, Abstand der Flanschmitten
+    h_s = h - t_f::
+
+        I_w = t_f b_s^3 h_s^2 / 12 * (3 b_s t_f + 2 h_s t_w) / (6 b_s t_f + h_s t_w)
+
+    Bis zum 14.11.2026 stand hier die volle Flanschbreite b (UPN 200: 12 277
+    statt 10 499 cm^6, Befund C6); gespeicherte Querschnitte tragen den alten
+    Wert, bis sie neu geladen werden (:func:`iw_u_profil_alt`)."""
+    bs = b - 0.5 * tw
+    hs = h - tf
+    if bs <= 0 or hs <= 0 or tf <= 0:
+        return 0.0
+    return (tf * bs ** 3 * hs ** 2 / 12.0
+            * (3 * tf * bs + 2 * hs * tw) / (6 * tf * bs + hs * tw))
+
+
+def iw_u_profil_alt(h: float, b: float, tw: float, tf: float) -> float:
+    """I_w eines U-Profils nach der Formel bis zum 14.11.2026 (volle
+    Flanschbreite) - nur um gespeicherte Querschnitte mit dem alten Wert zu
+    erkennen (rechenverfahren, Merkmal „u_profil_iw“)."""
+    hm = h - tf
+    if b <= 0 or hm <= 0 or tf <= 0:
+        return 0.0
+    return (tf * b ** 3 * hm ** 2 / 12.0
+            * (3 * tf * b + 2 * hm * tw) / (6 * tf * b + hm * tw))
 
 
 @dataclass
@@ -807,9 +870,7 @@ class Section:
               + 2 * float(np.sum(A_str * (dx ** 2 / 12.0 + (xm - ey) ** 2)))
               + 2 * Ar * (yr - ey) ** 2)
         It = (h * tw ** 3 + 2 * b * tf ** 3) / 3.0
-        hm = h - tf                      # Abstand der Flanschmitten
-        Iw = (tf * b ** 3 * hm ** 2 / 12.0
-              * (3 * tf * b + 2 * hm * tw) / (6 * tf * b + hm * tw))
+        Iw = iw_u_profil(h, b, tw, tf)
         ymax = max(ey, b - ey)
         Wpl_y = tw * h ** 2 / 4.0 + (b - tw) * tf * (h - tf)
         Wpl_z = (A / 2.0) * 0.35 * b     # Naeherung (unsymmetrisch)
