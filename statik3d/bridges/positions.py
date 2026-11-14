@@ -138,6 +138,12 @@ class Stellung:
         wirksame Lager und Gelenke, Lasten, abgeschaltete Elemente."""
         m = basis.copy()
         m.name = f"{basis.name} - {self.name}"
+        # die Schalen behalten die Lage des Grundmodells (Befund A6,
+        # 14.11.2026, statik3d.schalenlage.lage_festhalten)
+        from ..schalenlage import lage_festhalten
+        for z in lage_festhalten(m):
+            if log is not None:
+                log.append(f"  {self.name}: {z}")
         self.anwenden(m, basis, log)
         self._faelle(m, log)
         self._deaktivieren(m, basis, log)
@@ -163,6 +169,7 @@ class Stellung:
         v = np.asarray(self.verschiebung or (0.0, 0.0, 0.0), float).ravel()[:3]
         if len(idx) and np.any(np.abs(v) > 0):
             m.nodes[idx] = m.nodes[idx] + v
+            self._linien_mitnehmen(m, idx, np.eye(3), v)
             if log is not None:
                 log.append(f"  {self.name}: {len(idx)} Knoten um ({v[0]:g}, {v[1]:g}, {v[2]:g}) m "
                            "verschoben")
@@ -238,6 +245,22 @@ class Stellung:
         fest = {s.node for s in m.supports}
         return np.array([i for i in range(m.nn) if i not in fest], dtype=int)
 
+    @staticmethod
+    def _linien_mitnehmen(m: Model, idx, R, t) -> None:
+        """Die Geometrie der Linien (Stuetzpunkte eines Bogens, Mittelpunkt,
+        Normale …), deren Knoten alle mitbewegt werden, mit abbilden - wie
+        transformieren._geometrie_abbilden. Bis zum 14.11.2026 bewegte die
+        Stellung nur die Knoten; ein Bogen behielt seine Stuetzpunkte, und die
+        Flaeche an ihm hatte in der Stellung einen anderen Rand (Befund A6)."""
+        from ..transformieren import _geometrie_abbilden
+        bewegt = {int(k) for k in np.asarray(idx).ravel()}
+        for ln in (getattr(m, "lines", None) or {}).values():
+            if not getattr(ln, "geometrie", None):
+                continue
+            if ln.nodes and all(int(k) in bewegt for k in ln.nodes):
+                ln.geometrie = _geometrie_abbilden(ln.geometrie, np.asarray(R, float),
+                                                   np.asarray(t, float))
+
     def _drehen(self, m: Model, log: list = None, idx=None):
         if idx is None:
             idx = self._bewegte_knoten(m)
@@ -246,6 +269,7 @@ class Stellung:
         R = drehmatrix(self.dreh_achse, math.radians(self.dreh_winkel))
         p0 = np.asarray(self.dreh_punkt, float)
         m.nodes[idx] = (m.nodes[idx] - p0) @ R.T + p0
+        self._linien_mitnehmen(m, idx, R, p0 - R @ p0)
         if log is not None:
             log.append(f"  {self.name}: {len(idx)} Knoten um {self.dreh_winkel:g}° "
                        f"um die Achse {tuple(self.dreh_achse)} gedreht")

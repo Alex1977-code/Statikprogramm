@@ -332,13 +332,24 @@ def _feld_aus_verlauf(verlauf: dict):
     return hit[1]
 
 
-def _schalenvorzeichen(verlauf: dict, normale) -> float:
-    """+1, wenn die Elementnormale ``normale`` zur Flaechennormale zeigt, sonst −1.
+def _schalenvorzeichen(verlauf: dict, normale, lage: float = None) -> float:
+    """+1, wenn das Schalenelement wie seine Flaeche liegt, sonst −1.
 
-    Die Flaechennormale (Randumlauf, :func:`flaechennormale`) steht seit dem
-    12.11.2026 je Flaeche im Verlauf (``verlauf["normale_flaeche"]``). Fehlt sie
-    (Last aus einer aelteren Datei) oder steht das Element quer zu ihr, ist die
-    Elementnormale selbst der Bezug."""
+    ``lage`` gibt das Verteilen der Last mit (Model._geometrielast_legen aus
+    schalenlage.gegen_flaeche): die Lage des Elements zu seiner Flaeche. Da vor
+    dem Erzeugen und vor jeder Rechnung ausgerichtet wird, ist sie dort +1.
+
+    Bis zum 14.11.2026 kam das Vorzeichen allein aus dem Vergleich der
+    Elementnormale mit der Flaechennormale des ganzen Randumlaufs. An einem
+    Mantel mit mehr als 180° Bogen steht diese auf einem Teil der Elemente
+    gegenlaeufig: Zylindermantel 270°, Wasser innen bis 2,5 m, |F_x| 78,4 statt
+    43,4 kN (Befund A7). Der Vergleich bleibt nur fuer einen Aufruf ohne
+    ``lage``: die Flaechennormale steht seit dem 12.11.2026 je Flaeche im
+    Verlauf (``verlauf["normale_flaeche"]``); fehlt sie (Last aus einer
+    aelteren Datei) oder steht das Element quer zu ihr, ist die Elementnormale
+    selbst der Bezug."""
+    if lage is not None:
+        return -1.0 if float(lage) < 0.0 else 1.0
     nf = verlauf.get("normale_flaeche")
     if nf is None or normale is None:
         return 1.0
@@ -346,7 +357,8 @@ def _schalenvorzeichen(verlauf: dict, normale) -> float:
     return -1.0 if c < -1e-6 else 1.0
 
 
-def druck_aus_verlauf(verlauf: dict, punkt, normale=None, beidseitig: bool = False) -> float:
+def druck_aus_verlauf(verlauf: dict, punkt, normale=None, beidseitig: bool = False,
+                      lage: float = None) -> float:
     """Der Druck an einem Punkt für eine Geometrielast mit verlauf["art"] == "wasser".
 
     Mit Druckfeld (``verlauf["feld"]``, strömungsnumerisch) wird das Gitter
@@ -367,7 +379,8 @@ def druck_aus_verlauf(verlauf: dict, punkt, normale=None, beidseitig: bool = Fal
     Geometrie, nicht aus der Knotenreihenfolge des Elements: numerisch aus
     dem Druckfeld (vorn minus hinten entlang der Elementnormale, das
     Vorzeichen hebt sich heraus), analytisch aus ``seite`` gegen die
-    Flächennormale des Randumlaufs (:func:`_schalenvorzeichen`)."""
+    Normale der Fläche, an der Schale über die Lage des Elements zu seiner
+    Fläche (``lage``, :func:`_schalenvorzeichen`)."""
     wd = _param(verlauf.get("param") or {})
     if verlauf.get("feld"):
         schnitt, p, fluid, _block = _feld_aus_verlauf(verlauf)
@@ -393,7 +406,7 @@ def druck_aus_verlauf(verlauf: dict, punkt, normale=None, beidseitig: bool = Fal
     if beidseitig and wd.richtung is None and p != 0.0:
         # p drueckt gegen die Flaechennormale; die Schalenlast zaehlt mit der
         # Elementnormale
-        return -p * _schalenvorzeichen(verlauf, normale)
+        return -p * _schalenvorzeichen(verlauf, normale, lage)
     return p
 
 
@@ -627,9 +640,12 @@ def lasten_erzeugen(model, wd: Wasserdruck, fortschritt=None) -> dict:
         if name and name not in model.flaechen:
             raise ValueError(f"Referenzfläche {was}: {name} unbekannt")
     from .schalenlage import schalen_ausrichten   # Elementnormalen einheitlich (12.11.2026)
-    schalen_ausrichten(model)
+    # die Meldungen des Ausrichtens gehen mit den Kennwerten zurueck (Befund
+    # A10, 14.11.2026: bis dahin drehte der Generator Elemente ohne Meldung)
+    ausgerichtet = schalen_ausrichten(model)
     g = geometrie(wd, model)
     kw = kennwerte(wd, model, fortschritt=fortschritt)
+    kw["schalenlage"] = list(ausgerichtet)
     feld = None
     if kw.get("verfahren") == "numerisch":
         fr = kw["_feld"]

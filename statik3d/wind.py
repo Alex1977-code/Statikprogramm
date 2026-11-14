@@ -1319,7 +1319,8 @@ def lasten_erzeugen(model, w: Wind, fortschritt=None) -> dict:
     if w.situation and w.situation not in model.situationsnamen():
         raise ValueError(f"Situation '{w.situation}' unbekannt")
     from .schalenlage import schalen_ausrichten   # Elementnormalen einheitlich (12.11.2026)
-    schalen_ausrichten(model)
+    # die Meldungen gehen mit den Kennwerten zurueck (kw["schalenlage"], Befund A10)
+    ausgerichtet = schalen_ausrichten(model)
     geo = gebaeude(w, model)
     # Rolle und Aussenseite einmal je Flaeche, mit denselben Mitten (nur die
     # Gebaeudeflaechen, je Baukoerper) - bis zum 11.11.2026 nahm rollen() die
@@ -1329,6 +1330,7 @@ def lasten_erzeugen(model, w: Wind, fortschritt=None) -> dict:
     roll.update({name: "freie_wand" for name in w.freie_waende})
     roll.update({name: "schild" for name in w.schilder})
     kw = kennwerte(w, model, geo)
+    kw["schalenlage"] = list(ausgerichtet)
     wk = None
     feld = None
     if w.windkanal():
