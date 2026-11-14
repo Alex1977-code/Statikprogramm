@@ -1607,6 +1607,35 @@ def _laengsgelenk_im_ergebnis(model, an) -> str:
     return "; ".join(teile)
 
 
+def _laengslast_grob(model) -> bool:
+    """Ein Stab mit Stablast in Stabrichtung (Strecken-, Eigengewicht), der in
+    zu wenigen Elementen gerechnet wird: Netzeinstellung Stabteilung unter der
+    Vorgabe, oder mit Laengsgelenk (das Knicken teilt nicht). Bis zum
+    14.11.2026 nahm der Feldanteil N w die Stabkraft am Elementanfang und das
+    Laengsgelenk die halbe Gesamtlast (Befund B'6 der Runde 2). Gemessen wie
+    die Behebung: die Summe der Stabendlasten in Stabrichtung f0[0] + f0[6]
+    (die Anfangsdehnung hebt sich darin auf)."""
+    try:
+        import numpy as np
+        from . import assemble as asm
+        from .model import Netzeinstellungen
+        els = getattr(model, "elements", None) or []
+        grob = int(getattr(getattr(model, "netz", None), "stabteilung", 0) or 0) < Netzeinstellungen().stabteilung
+        wahl = {i for i, e in enumerate(els) if getattr(e, "typ", "") in asm.LINE_TYPES
+                and (grob or len({int(d) for d in (getattr(e, "hinges", None) or [])} & {0, 6}) == 1)}
+        if not wahl:
+            return False
+        for lc in (getattr(model, "load_cases", None) or {}).values():
+            for i, f0 in asm.element_equivalent_loads(model, lc).items():
+                if i in wahl:
+                    f0 = np.asarray(f0, float)
+                    if abs(f0[0] + f0[6]) > 1e-9 * max(float(np.abs(f0).max()), 1.0):
+                        return True
+        return False
+    except Exception:                       # noqa: BLE001 - nicht pruefbar: möglicherweise betroffen
+        return True
+
+
 def _woelb_mit_gelenk(model) -> bool:
     """Ein Balken mit Woelbkrafttorsion (Haken „woelb“ und Iw > 0) mit Gelenk
     oder Federgelenk - beide fehlten bis zum 14.11.2026 in seiner Steifigkeit,
@@ -3454,10 +3483,30 @@ MERKMALE: list = [
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Verformungsnachweis der Art „Stab“ mit ux oder Punktpaar mit φ und Grenze L/x",
         betrifft=_gzg_groesse_grenzart),
+    # Befund B'6 der Befundliste vom 14.11.2026, Runde 2: ein Stab mit
+    # ungleichmaessiger Last in Stabrichtung in einem Element - am Laengsgelenk
+    # stand in K_G und im Feldanteil N w die halbe Gesamtlast statt des
+    # Integralmittels (Stuetze 5 m, Teillast oben: -3000 statt -5400 kN,
+    # max|My| 4,95 statt 9,14 kNm, DGL 8,08), und ohne Gelenk nahm der
+    # Feldanteil die Stabkraft am Elementanfang (gleichmaessig: 11,556 bzw.
+    # 3,125 kNm je nach Elementrichtung statt 4,949). Seither ueberall das
+    # Integralmittel. Praktisch nur bei Stabteilung unter der Vorgabe (bei 10
+    # bis 0,05 %). Fehlerkorrektur
+    Merkmal(
+        name="th2_laengslast_mittel", titel="Normalkraft bei Last in Stabrichtung (Theorie II. Ordnung)",
+        texte={"alt": "Feldanteil N·w mit der Stabkraft am Elementanfang, am Längsgelenk die halbe Gesamtlast "
+                      "(K_G, α_cr, Knicken)",
+               "neu": "Integralmittel der Normalkraft im Element, mit und ohne Längsgelenk, unabhängig von der "
+                      "Elementrichtung"},
+        wechsel=(Wechsel(stand=58, datum="14.11.2026", commit="fix/k6-theorie", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Stab mit Stablast in Stabrichtung (auch Eigengewicht) bei Stabteilung unter der Vorgabe "
+                      "bzw. in einem Element, oder mit Längsgelenk; mit α_cr, Knicken oder Theorie II./III. Ordnung",
+        betrifft=_laengslast_grob, im_ergebnis=_laengsgelenk_im_ergebnis),
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 57
+VERFAHRENSSTAND = 58
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

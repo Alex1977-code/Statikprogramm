@@ -1901,19 +1901,29 @@ def stab_normalkraft(model: Model, e, u: np.ndarray, n_anfang: float = 0.0, _ach
     Normalkraft: sie laeuft von 0 am Gelenk bis zur ganzen Last am anderen
     Ende. ``f0`` (lokale Stablasten des Elements, unkondensiert, wie
     solver.case_loads sie als feq liefert, samt Anfangsdehnung): dann ist N
-    das Mittel der Stabend-Normalkraefte nach Theorie I. Ordnung,
-    ½ (f_l[6] - f_l[0]) aus :func:`stab_endkraefte_linear` - die
-    Anfangsdehnung faellt am freien Ende heraus, eine gleichmaessige Last gibt
-    -q L/2 wie derselbe Stab ohne Gelenk (E A Δl/L). Ohne ``f0`` 0 wie
-    bisher. Bis zum 14.11.2026 stets 0 (Befund B1: Stuetze 5 m, Q L = 6 MN in
-    Stabrichtung, alpha_cr „unendlich“ statt 2,600, Theorie III. Ordnung
-    3,125 statt 5,07 kNm)."""
+    das Integralmittel der Normalkraft ueber den Stab, wie derselbe Stab ohne
+    Gelenk (dort ist E A Δl/L genau dieses Mittel). Mit dem Gelenk am
+    Stabende ist N(x) = ∫_x^L q_x ds, das Mittel 1/L ∫_0^L s q_x ds - die
+    konsistente Stabendlast f0[6] der Last in Stabrichtung; mit dem Gelenk am
+    Stabanfang N(x) = -∫_0^x q_x ds, das Mittel -f0[0]. Die Anfangsdehnung
+    traegt am freien Ende keine Kraft: ihr Anteil an f0 (-n_anfang am Ende,
+    +n_anfang am Anfang, :func:`anfangsnormalkraft`) faellt mit ``n_anfang``
+    heraus - ``n_anfang`` gehoert darum zu denselben Lastfaellen wie ``f0``.
+    Ohne ``f0`` 0 wie bisher. Bis zum 14.11.2026 stets 0 (Befund B1: Stuetze
+    5 m, Q L = 6 MN in Stabrichtung, alpha_cr „unendlich“ statt 2,600,
+    Theorie III. Ordnung 3,125 statt 5,07 kNm); danach bis zum 14.11.2026
+    (Befund B'6a, Runde 2) die halbe Gesamtlast ½ (f_l[6] - f_l[0]), richtig
+    nur bei gleichmaessiger Last: Teillast oben -3000 statt -5400 kN, ein
+    Element max|My| 4,95 statt 9,14 kNm (DGL 8,08)."""
     frei = {int(d) for d in (e.hinges or [])}
     if frei & {0, 6}:
         if f0 is None or {0, 6} <= frei or not np.any(f0):
             return 0.0
-        fl, _T3 = stab_endkraefte_linear(model, e, u, f0)
-        return float(0.5 * (fl[6] - fl[0]))
+        f0 = np.asarray(f0, float)
+        n_a = float(n_anfang or 0.0)
+        if 6 in frei:
+            return float(f0[6] + n_a)
+        return float(n_a - f0[0])
     mat = model.materials[e.mat]
     sec = model.sections[e.sec]
     if _achsen is None:

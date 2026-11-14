@@ -2114,7 +2114,8 @@ def _th2_feldanteil(model: Model, i: int, fl, q, L: float, ul, x) -> tuple:
     zaehlt sie mit (Nebenbefund 16 c). Bis dahin fehlte sie: Einfeldtraeger
     mit N_E/(G A_s) = 0,1 und Druck 0,6 N_cr in einem Element -12 %.
     Laengslasten entlang des Stabes bleiben aussen vor: die Stabkraft gilt
-    im Element als gleichbleibend."""
+    im Element als gleichbleibend, mit ihrem Integralmittel wie in K_G
+    (seit dem 14.11.2026, Befund B'6 der Runde 2)."""
     e = model.elements[i]
     mat = model.materials[e.mat]
     sec = model.sections[e.sec]
@@ -2144,12 +2145,20 @@ def _th2_feldanteil(model: Model, i: int, fl, q, L: float, ul, x) -> tuple:
         return ((M - M[0]) - (M[-1] - M[0]) * xs / L) / GA
 
     P = float(fl[0])
-    if len({int(d) for d in (e.hinges or [])} & {0, 6}) == 1:
-        # Laengsgelenk: die Stabkraft laeuft von 0 am Gelenk bis zur Last in
-        # Stabrichtung am anderen Ende; das Mittel wie in K_G
-        # (asm.stab_normalkraft, Befund B1 vom 14.11.2026). Bis dahin fl[0]:
-        # mit dem Gelenk am Stabanfang 0 (kein Feldanteil), am Stabende die
-        # ganze Kraft
+    if np.any(_Qs[:, 0]):
+        # Last in Stabrichtung: die Stabkraft aendert sich im Element,
+        # N(x) = -fl[0] - Q_x(x). P ist ihr Integralmittel - dieselbe
+        # Normalkraft wie in K_G (E A Δl/L bzw. am Laengsgelenk
+        # asm.stab_normalkraft), mit und ohne Gelenk und unabhaengig von der
+        # Elementrichtung: 1/L ∫ Q_x dx = Mq_x(L)/L (lastresultierende).
+        # Bis zum 14.11.2026 (Befund B'6b, Runde 2) fl[0], die Stabkraft am
+        # Stabanfang - gleichmaessige Last in einem Element 11,556 bzw.
+        # 3,125 kNm je nach Richtung statt 4,949; am Laengsgelenk ½ Q
+        # (Befund B'6a)
+        P = float(fl[0] + Mqs[-1, 0] / L)
+    elif len({int(d) for d in (e.hinges or [])} & {0, 6}) == 1:
+        # Laengsgelenk ohne Last in Stabrichtung: wie bis dahin (Befund B1
+        # vom 14.11.2026) - die Stabkraft ist 0
         P = float(0.5 * (fl[0] - fl[6]))
     w, v = sehne_w.copy(), sehne_v.copy()
     for _ in range(60):
