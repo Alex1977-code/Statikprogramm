@@ -9,7 +9,8 @@ Modell ableiten laesst, in dieser Reihenfolge:
   der unguenstigste je Stab. Er geht jedem Vorschlag vor.
 * **Zugstab** (Fachwerkstab mit Rundquerschnitt): 50 N/mm2 - Tabelle 8.1,
   Kerbfall 14: Schrauben und Stangen mit gewalztem oder geschnittenem
-  Gewinde unter Zug.
+  Gewinde unter Zug; ueber 30 mm Durchmesser mal k_s = (30/d)^0,25 (seit
+  14.11.2026, Befund C5: Rund 50 bekam 50 statt 44,0).
 * **Gewalzter Querschnitt** (I, RHS, CHS, Rechteck, Rundstahl als Balken):
   160 N/mm2 - Tabelle 8.1, Kerbfall 1: gewalzte Erzeugnisse mit bearbeiteten
   Kanten - der Grundwerkstoff. Anschluesse, Steifen und Naehte mindern ihn; das
@@ -66,14 +67,28 @@ def vorschlag_stab(model, mem) -> Optional[Vorschlag]:
     sec = model.sections.get(e.sec)
     typ = str(getattr(sec, "typ", "") or "") if sec is not None else ""
     if e.typ == "truss" and typ == "circle":
-        return Vorschlag("stab", mem.name, ZUGSTAB,
+        d = zugstab_durchmesser(sec)
+        ks = (30.0 / (d * 1e3)) ** 0.25 if d * 1e3 > 30.0 + 1e-9 else 1.0
+        return Vorschlag("stab", mem.name, ZUGSTAB * ks,
                          "Zugstab mit Rundquerschnitt: Stange mit Gewinde unter Zug "
-                         "(Tab. 8.1, Kerbfall 14)")
+                         "(Tab. 8.1, Kerbfall 14)"
+                         + (f", Größeneinfluss k_s = (30/{d * 1e3:.0f})^0,25 = {ks:.3f}"
+                            if ks < 1.0 else ""))
     if typ in GEWALZT:
         return Vorschlag("stab", mem.name, GRUNDWERKSTOFF,
                          f"gewalzter Querschnitt {getattr(sec, 'name', e.sec)}: Grundwerkstoff "
                          "(Tab. 8.1, Kerbfall 1) - Anschlüsse, Steifen und Nähte mindern")
     return None
+
+
+def zugstab_durchmesser(sec) -> float:
+    """Durchmesser eines Rundquerschnitts [m]: h, sonst aus der Flaeche."""
+    import math
+    d = float(getattr(sec, "h", 0.0) or 0.0)
+    if d <= 0:
+        A = float(getattr(sec, "A", 0.0) or 0.0)
+        d = math.sqrt(4.0 * A / math.pi) if A > 0 else 0.0
+    return d
 
 
 def vorschlag_koerper(model, k) -> Vorschlag:
@@ -125,7 +140,7 @@ def anwenden(model, log: Optional[list] = None, nur_leere: bool = True) -> dict:
                 continue
             mem.detail_category = v.kerbfall
             mem.kerbfall_vorschlag = True
-            n["zugstab" if v.kerbfall == ZUGSTAB else "gewalzt"] += 1
+            n["zugstab" if v.kerbfall <= ZUGSTAB else "gewalzt"] += 1
         else:
             k = model.koerper[v.name]
             if nur_leere and float(k.kerbfall or 0.0) > 0 and not k.kerbfall_vorschlag:

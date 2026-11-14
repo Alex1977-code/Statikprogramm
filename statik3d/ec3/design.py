@@ -215,6 +215,12 @@ def check_member(model: Model, member: Member, results: dict, n: int = None,
     if schraubenstab.ist_schraube(sec, mat):
         return schraubenstab.stab_nachweis(model, member, results, n, mc, sec, mat)
     fy = mat.yield_strength(sec.t_max)
+    dicke = mat.dicke_ohne_wert(sec.t_max, "fy")
+    if not fy and dicke:
+        # ueber 80 mm ohne Dickentabelle: kein angenommener Wert (Befund C4, 14.11.2026)
+        mc.fehler = dicke
+        mc.warnings.append(f"{dicke} Nachweis nicht geführt.")
+        return mc
     if not fy:
         mc.fehler = f"Werkstoff {mat.name} ohne Streckgrenze"
         # Der Hinweis sagt, was zu tun ist: er steht im Bericht in jedem Umfang

@@ -1718,9 +1718,13 @@ def test_ermuedungslasten_aus_fat():
               zeile[zeile.find("Lastspielzahl ("):][:40] if zeile else "keine Zeile")
         zug = m.members.get("S1")
         balken = m.members.get("S2")
-        check("Zugstab: Kerbfall 50 N/mm2 als Vorschlag", zug is not None
-              and zug.detail_category == 50e6 and getattr(zug, "kerbfall_vorschlag", False),
-              f"{zug.detail_category if zug else None}")
+        # seit dem 14.11.2026 ueber 30 mm mal k_s = (30/d)^0,25 (Befund C5)
+        from statik3d.ec3.kerbfaelle import zugstab_durchmesser
+        d_zug = zugstab_durchmesser(m.sections[m.elements[zug.elements[0]].sec]) * 1e3 if zug else 0.0
+        soll_kf = 50e6 * ((30.0 / d_zug) ** 0.25 if d_zug > 30.0 else 1.0)
+        check("Zugstab: Kerbfall 50 N/mm2 (über 30 mm mal (30/d)^0,25) als Vorschlag", zug is not None
+              and abs(zug.detail_category - soll_kf) < 1e-3 and getattr(zug, "kerbfall_vorschlag", False),
+              f"{zug.detail_category if zug else None}, d = {d_zug:.1f} mm")
         check("Balken mit gewalztem Querschnitt (Rundstahl): 160 N/mm2 Grundwerkstoff als Vorschlag",
               balken is not None and balken.detail_category == 160e6
               and getattr(balken, "kerbfall_vorschlag", False),

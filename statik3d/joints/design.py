@@ -46,6 +46,16 @@ DETAILS = {
     "kopfplatte": (71, 3, "Kopfplattenanschluss, Naht am Flansch, Kerbfall 71"),
 }
 
+#: Kerbfaelle der Schrauben auf Zug (Tab. 8.1, Detail 14): ueber 30 mm mit Groesseneinfluss
+SCHRAUBE_ZUG = ("schraube_zug", "schraube_zug_gewalzt")
+
+
+def k_s_schraube(d: float) -> float:
+    """Groesseneinfluss k_s = (30/d)^0,25 fuer Schrauben und Gewindestangen auf
+    Zug mit d > 30 mm (EN 1993-1-9 Tab. 8.1, Detail 14); d in m. Bis 30 mm 1."""
+    dmm = float(d or 0.0) * 1e3
+    return (30.0 / dmm) ** 0.25 if dmm > 30.0 + 1e-9 else 1.0
+
 
 @dataclass
 class Check:
@@ -169,18 +179,26 @@ def check_block_tearing(N_Ed: float, Ant: float, Anv: float, fu: float, fy: floa
 # Ermuedung
 # --------------------------------------------------------------------------
 def fatigue_check(detail: str, ranges: list, gamma_Mf: float = 1.15,
-                  gamma_Ff: float = 1.0, area: float = 0.0) -> dict:
+                  gamma_Ff: float = 1.0, area: float = 0.0, d: float = 0.0) -> dict:
     """Ermuedungsnachweis eines Anschlussteils nach EN 1993-1-9.
 
     detail: Schluessel aus DETAILS
     ranges: [(Delta-Kraft [N] oder Delta-Spannung [Pa], Lastwechsel n), ...]
             Mit area > 0 werden Kraefte ueber die Flaeche in Spannungen
             umgerechnet (Schraube: A_s, Naht: a*l).
+    d:      Nenndurchmesser der Schraube [m] - fuer Schrauben auf Zug ueber
+            30 mm mindert k_s = (30/d)^0,25 den Kerbfall 50 (Tab. 8.1, Detail 14)
     Rueckgabe: Kerbfall, Schaedigungssumme, zulaessige Lastwechsel je Stufe.
     """
     if detail not in DETAILS:
         raise KeyError(f"Kerbfall '{detail}' unbekannt: {sorted(DETAILS)}")
     dc, m, text = DETAILS[detail]
+    if detail in SCHRAUBE_ZUG and d * 1e3 > 30.0 + 1e-9:
+        # Groesseneinfluss (Tab. 8.1, Detail 14). Bis zum 14.11.2026 fehlte er:
+        # M36 mit Kerbfall 50 statt 47,8 (D 0,025 statt 0,031, Befund C5)
+        ks = k_s_schraube(d)
+        dc = dc * ks
+        text = f"{text}; Größeneinfluss k_s = (30/{d * 1e3:.0f})^0,25 = {ks:.3f}"
     stufen = []
     for val, n in ranges:
         ds = (abs(val) / area) if area > 0 else abs(val)

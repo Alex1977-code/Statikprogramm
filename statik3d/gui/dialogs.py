@@ -1474,7 +1474,7 @@ class JointDialog(QtWidgets.QDialog):
         kopf.addRow("Anschlusstyp", self.cb_typ)
         e = model.elements[self.elem]
         kopf.addRow("Stab", QtWidgets.QLabel(
-            f"Element {self.elem + 1}, {e.sec or '-'} aus {e.mat}, "
+            f"Element {self.elem}, {e.sec or '-'} aus {e.mat}, "
             f"Ende {'A' if self.end == 0 else 'E'}"))
 
         self.sp = {}
