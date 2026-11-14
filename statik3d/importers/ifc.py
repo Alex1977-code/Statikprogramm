@@ -518,9 +518,13 @@ class Units:
 
     def _unit_scale(self, u: IfcEntity) -> float:
         if u.type == "IFCSIUNIT":
+            # Der Vorsatz gilt fuer das Meter: MILLI SQUARE_METRE ist mm² = 10⁻⁶ m²,
+            # MILLI CUBIC_METRE mm³ = 10⁻⁹ m³ (IFC, IfcSIUnit). Bis zum 14.11.2026
+            # galt er einfach (Befund A'4): eine Flaeche in mm² kam 1 000fach zu gross an
             prefix = str(u[2] or "").upper()
             base = str(u[3] or "").upper()
-            return _PREFIX.get(prefix, 1.0) * _SI_BASE.get(base, 1.0)
+            potenz = {"SQUARE_METRE": 2, "CUBIC_METRE": 3}.get(base, 1)
+            return _PREFIX.get(prefix, 1.0) ** potenz * _SI_BASE.get(base, 1.0)
         if u.type == "IFCCONVERSIONBASEDUNIT" or u.type == "IFCCONVERSIONBASEDUNITWITHOFFSET":
             mwu = u.ref(3)
             if mwu is None:

@@ -32,13 +32,40 @@ from . import _common as C
 
 BLAETTER = ["1.1 Knoten", "1.2 Linien", "1.3 Materialien", "1.4 Querschnitte",
             "1.7 Stäbe", "1.10 Flächen", "1.13 Knotenlager",
-            "2.1 Lastfälle", "3.1 Knotenlasten", "3.2 Stablasten"]
+            "2.1 Lastfälle", "2.5 Lastkombinationen", "3.1 Knotenlasten", "3.2 Stablasten"]
 
 #: Erdbeschleunigung, mit der der Tabellenimport den Faktor des Eigengewichts
 #: multipliziert (importers/rfem_tables: g = 9,81 * Faktor)
 G_TABELLE = 9.81
 
 _STABTYP = {"beam": "Balken", "truss": "Fachwerkstab", "seil": "Seil"}
+
+#: Art der Kombination -> Bemessungssituation in „2.5 Lastkombinationen“, wie der
+#: Import (importers/rfem_tables) sie liest
+_SITUATION = {"ULS": "GZT", "EQU": "GZT (EQU)", "ACC": "Außergewöhnlich",
+              "SLS_CH": "GZG charakteristisch", "SLS_FR": "GZG häufig", "SLS_QP": "GZG quasi-ständig",
+              "FAT": "GZT (FAT) Ermüdung"}
+
+
+def _kombination_nummern(model: Model, namen) -> dict:
+    """{Kombinationsname: Nummer}: „LK<n>“ behaelt n, die uebrigen bekommen freie
+    Nummern - der Import nennt jede Lastkombination LK<Nr>."""
+    nummern: dict[str, int] = {}
+    belegt: set = set()
+    for name in namen:
+        m = re.fullmatch(r"LK\s*(\d+)", str(name).strip(), re.IGNORECASE)
+        if m and int(m.group(1)) not in belegt:
+            nummern[name] = int(m.group(1))
+            belegt.add(int(m.group(1)))
+    frei = 1
+    for name in namen:
+        if name in nummern:
+            continue
+        while frei in belegt:
+            frei += 1
+        nummern[name] = frei
+        belegt.add(frei)
+    return nummern
 
 
 def _zelle_lager(b) -> str:
@@ -188,6 +215,27 @@ def write_tables(model: Model, path: str, results=None, log: list = None,
              ["Lastfall Nr.", "Bezeichnung", "Einwirkungskategorie", "Eigengewicht",
               "Faktor in Richtung X", "Faktor in Richtung Y", "Faktor in Richtung Z"], zeilen)
 
+    # ---- Lastkombinationen: Summe der Lastfaelle mit Faktoren ---------------
+    # (14.11.2026, Befund B'7: bis dahin gingen die Kombinationen im Rundlauf
+    # verloren). Eine Ergebniskombination (Umhuellende ueber Alternativen) ist
+    # keine Summe und nennt der Hinweis
+    summen = [n for n, c in model.combinations.items()
+              if not getattr(c, "alternativen", None) and c.factors
+              and all(k in lf_nr for k in c.factors)]
+    n_ek = sum(1 for c in model.combinations.values() if getattr(c, "alternativen", None))
+    n_ohne = len(model.combinations) - len(summen) - n_ek
+    n_art = sum(1 for n in summen if model.combinations[n].typ not in _SITUATION)
+    n_zusatz = sum(1 for n in summen if getattr(model.combinations[n], "situation", "")
+                   or getattr(model.combinations[n], "theorie", ""))
+    lk_nr = _kombination_nummern(model, summen)
+    kz = []
+    for name in summen:
+        c = model.combinations[name]
+        formel = " + ".join(f"{float(f):.9g}*LF{lf_nr[k]}" for k, f in c.factors.items())
+        bez = c.description or ("" if name == f"LK{lk_nr[name]}" else name)
+        kz.append([lk_nr[name], bez, _SITUATION.get(c.typ, "GZT"), formel])
+    schreibe("2.5 Lastkombinationen", ["LK Nr.", "Bezeichnung", "Bemessungssituation", "Belastung"], kz)
+
     # ---- Knotenlasten -----------------------------------------------------
     kl = []
     for name, lc in model.load_cases.items():
@@ -238,5 +286,13 @@ def write_tables(model: Model, path: str, results=None, log: list = None,
         (n_mitte, "quadratische Schale (geht über ihre Eckknoten hinaus)",
          "quadratische Schalen (gehen über ihre Eckknoten hinaus)"),
         (len(C.solid_elements(model)), "Volumenelement", "Volumenelemente"),
+        (n_ek, "Ergebniskombination (Umhüllende über Alternativen)",
+         "Ergebniskombinationen (Umhüllende über Alternativen)"),
+        (n_ohne, "Kombination ohne Lastfall oder mit einem Lastfall, den das Modell nicht hat",
+         "Kombinationen ohne Lastfall oder mit einem Lastfall, den das Modell nicht hat"),
+        (n_art, "Kombination der Art „Benutzer“ (kommt als GZT zurück)",
+         "Kombinationen der Art „Benutzer“ (kommen als GZT zurück)"),
+        (n_zusatz, "Kombination mit eigener Stellung oder Theorie (geht ohne sie hinaus)",
+         "Kombinationen mit eigener Stellung oder Theorie (gehen ohne sie hinaus)"),
     ] + C.weiteres(model))
     return ordner
