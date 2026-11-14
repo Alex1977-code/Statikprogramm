@@ -24,6 +24,18 @@ Darum werden die Schalenelemente ausgerichtet:
   Newell-Summe ihres Randes - das Stueck folgt dem Umlauf. Ist die
   Flaechennormale null (geschlossener Mantel), bleibt das Element mit der
   kleinsten Nummer, wie es ist.
+  Eine **gewoelbte Flaeche aus mehreren Stuecken** (Elemente geloescht) wird
+  seit dem 14.11.2026 nicht mehr gegen die Normale des ganzen Randes
+  gerichtet - am Ort eines Stuecks sagt sie nichts (Zylinder 300° mit
+  geloeschtem Streifen 40-60°: das Stueck 0-40° kehrte sich um, 47,5 statt
+  21,8 kN; Befund A5). Je Stueck entscheidet der Umlauf des Randes, wie der
+  Vernetzer ihn anlegt: die Elemente eines richtig gerichteten Stuecks
+  durchlaufen jede Kante, die auf dem Rand der Flaeche liegt, in dessen
+  Umlaufrichtung. Ein Stueck ohne Kante auf dem Rand (eine Insel) folgt den
+  naechsten schon gerichteten Elementen. Ebene Flaechen bleiben bei n · N.
+* Das **Modell einer Stellung** behaelt die Lage des Grundmodells
+  (:func:`lage_festhalten`, Befund A6): es wird vor dem Bewegen
+  ausgerichtet und danach nicht mehr.
 * **Elemente ohne Flaeche** (Nastran, Abaqus, gmsh): je zusammenhaengendem
   Stueck einheitlich zum Element mit der kleinsten Nummer. Verbunden sind
   zwei Elemente ueber eine Kante, an der genau sie beide liegen; an einer
@@ -266,14 +278,140 @@ def plan(model) -> list:
     return aus
 
 
+#: Randknoten je Element im Umlauf, mit Seitenmitten (Indizes in Element.nodes)
+_UMLAUF = {"shell3": [0, 1, 2], "shell4": [0, 1, 2, 3], "shell6": [0, 3, 1, 4, 2, 5],
+           "shell8": [0, 4, 1, 5, 2, 6, 3, 7]}
+#: eine Flaeche gilt als eben, wenn keine Elementnormale mehr als 1° von der
+#: Flaechennormale abweicht
+_EBEN = math.cos(math.radians(1.0))
+
+
+def _eben(V: np.ndarray, N) -> bool:
+    """Liegen alle Elemente (Vektorflaechen ``V``) quer zur Flaechennormale
+    ``N``, also in einer Ebene?"""
+    n = float(np.linalg.norm(N))
+    if n <= 1e-300:
+        return False
+    lv = np.linalg.norm(V, axis=1)
+    gut = lv > 1e-300
+    if not gut.any():
+        return False
+    c = np.abs(V[gut] @ (np.asarray(N, float) / n)) / lv[gut]
+    return bool((c >= _EBEN).all())
+
+
+def _stimmen_rand(model, f, idx: list, stueck: np.ndarray, s: np.ndarray, n_st: int) -> np.ndarray:
+    """Je Stueck: wie seine Elemente den Rand der Flaeche durchlaufen - positiv,
+    wenn (relativ zum Bezugselement, ``s``) im Umlauf des Randes, negativ
+    gegen ihn, 0 ohne Kante auf dem Rand. Gewichtet mit der Kantenlaenge.
+
+    Der Vernetzer legt die Elemente im Umlauf des Randes an; ein richtig
+    gerichtetes Netz durchlaeuft jede Randkante in Umlaufrichtung (Satz von
+    Stokes, Kante fuer Kante). Das gilt am Ort jedes Stuecks, auch wenn die
+    Flaeche gewoelbt ist und die Normale des ganzen Randes dort nichts sagt."""
+    from .model import _randstuecke
+    stimmen = np.zeros(n_st)
+    try:
+        kette = _randstuecke(model, list(f.linien or []))
+    except Exception:                        # noqa: BLE001 - unlesbarer Rand: keine Stimme
+        return stimmen
+    if not kette:
+        return stimmen
+    els = model.elements
+    netz = {int(k) for i in idx for k in els[i].nodes}
+    for name, knoten in kette:
+        ln = model.lines.get(name)
+        if ln is None or len(knoten) < 2 or int(knoten[0]) == int(knoten[-1]):
+            continue
+        try:
+            P = np.asarray(ln.punkte(model, 16), float)
+            liste = model.knoten_auf_linie(name)
+        except Exception:                    # noqa: BLE001 - diese Linie gibt keine Stimme
+            continue
+        if len(P) < 2:
+            continue
+        # laeuft der Umlauf mit der Kurve der Linie (Lage s waechst) oder gegen sie?
+        x0 = np.asarray(model.nodes[int(knoten[0])], float)
+        mit = 1.0 if np.linalg.norm(P[0] - x0) <= np.linalg.norm(P[-1] - x0) else -1.0
+        liste = [(int(k), float(sk)) for k, sk in liste if int(k) in netz]
+        if len(liste) < 2:
+            continue
+        rang = {k: j for j, (k, _s) in enumerate(liste)}
+        lage = dict(liste)
+        for p, i in enumerate(idx):
+            el = els[i]
+            folge = _UMLAUF.get(el.typ)
+            if folge is None or len(el.nodes) < len(folge):
+                folge = list(range(_ECKEN[el.typ]))
+            kn = [int(el.nodes[j]) for j in folge]
+            for a, b in zip(kn, kn[1:] + kn[:1]):
+                if a in rang and b in rang and abs(rang[a] - rang[b]) == 1:
+                    ds = lage[b] - lage[a]
+                    stimmen[stueck[p]] += float(s[p]) * mit * ds
+    return stimmen
+
+
+def _stuecke_gewoelbt(model, f, idx: list, C, ne, V: np.ndarray, stueck: np.ndarray,
+                      bezug: np.ndarray, s: np.ndarray):
+    """Lage je Stueck einer gewoelbten Flaeche (+1 wie das Bezugselement,
+    -1 umgekehrt) oder None, wenn kein Stueck den Rand der Flaeche beruehrt.
+
+    Zuerst entscheidet der Umlauf des Randes am Ort des Stuecks
+    (:func:`_stimmen_rand`). Ein Stueck ohne Kante auf dem Rand (eine Insel)
+    folgt den naechsten schon gerichteten Elementen: je Element die Normale
+    gegen die des naechsten gerichteten Elements, gewichtet mit der Flaeche;
+    das naechstgelegene Stueck zuerst."""
+    from scipy.spatial import cKDTree
+    n_st = len(bezug)
+    stimmen = _stimmen_rand(model, f, idx, stueck, s, n_st)
+    lang = float(np.abs(stimmen).max()) if n_st else 0.0
+    if lang <= 0.0:
+        return None
+    lage = np.zeros(n_st)
+    fest = np.abs(stimmen) > 1e-9 * lang
+    lage[fest] = np.sign(stimmen[fest])
+    if fest.all():
+        return lage
+    X = np.asarray(model.nodes, float)
+    mitte = np.array([X[C[p, :ne[p]]].mean(axis=0) for p in range(len(idx))])
+    flaeche = np.linalg.norm(V, axis=1)
+    Vn = V / np.maximum(flaeche, 1e-300)[:, None]
+    while not fest.all():
+        gerichtet = np.flatnonzero(fest[stueck])
+        baum = cKDTree(mitte[gerichtet])
+        offen = np.flatnonzero(~fest[stueck])
+        d, j = baum.query(mitte[offen])
+        q = gerichtet[j]
+        # das Stueck mit dem kleinsten Abstand zuerst
+        st = int(stueck[offen[int(np.argmin(d))]])
+        im = stueck[offen] == st
+        p, q = offen[im], q[im]
+        beitrag = s[p] * (s[q] * lage[stueck[q]]) * np.einsum("ij,ij->i", Vn[p], Vn[q]) * flaeche[p]
+        lage[st] = -1.0 if float(beitrag.sum()) < 0.0 else 1.0
+        fest[st] = True
+    return lage
+
+
 def _plan_flaeche(model, f, idx: list) -> list:
     C, ne = _ecken(model, idx)
     V = _vektorflaechen(model, idx, C, ne)
     stueck, bezug, s, wid = _stuecke(model, idx, V, C, ne)
     N = flaechennormale(model, f)
-    if N is not None:
+    lage = None
+    if len(bezug) > 1 and (N is None or not _eben(V, N)):
+        # gewoelbte Flaeche aus mehreren Stuecken (Befund A5, 14.11.2026): die
+        # Normale des ganzen Randes sagt am Ort eines Stuecks nichts - am
+        # Zylinder 300° mit geloeschtem Streifen kehrte sich das Stueck
+        # 0-40° um. Es entscheidet der Umlauf des Randes am Stueck.
+        lage = _stuecke_gewoelbt(model, f, idx, C, ne, V, stueck, bezug, s)
+    if lage is not None:
+        s = s * lage[stueck].astype(s.dtype)
+    elif N is not None:
         # je Stueck: Vektorflaeche (relativ zum Bezugselement) gegen die
-        # Flaechennormale; nahe null (geschlossener Mantel) bleibt das Bezugselement
+        # Flaechennormale - bei einer ebenen Flaeche je Element n · N; bei
+        # einer gewoelbten aus einem Stueck nach Stokes die halbe
+        # Newell-Summe ihres Randes. Nahe null (geschlossener Mantel) bleibt
+        # das Bezugselement
         S = np.bincount(stueck, weights=s * (V @ N), minlength=len(bezug))
         groesse = np.bincount(stueck, weights=np.linalg.norm(V, axis=1),
                               minlength=len(bezug)) * float(np.linalg.norm(N))
@@ -286,7 +424,11 @@ def _plan_flaeche(model, f, idx: list) -> list:
 
 def gegen_flaeche(model, f) -> set:
     """Die Schalenelemente der Flaeche ``f``, die gegen ihre Flaeche liegen
-    (die :func:`schalen_ausrichten` umdrehen wuerde)."""
+    (die :func:`schalen_ausrichten` umdrehen wuerde). Im Modell einer Stellung
+    (:func:`lage_festhalten`) liegt jedes Element, wie es im Grundmodell
+    ausgerichtet wurde: keines."""
+    if getattr(model, FEST, False):
+        return set()
     idx = sorted({int(e) for e in (f.elemente or [])
                   if 0 <= int(e) < len(model.elements) and model.elements[int(e)].typ in WENDEN})
     if not idx:
@@ -295,6 +437,26 @@ def gegen_flaeche(model, f) -> set:
         return {int(e) for _a, _n, drehen, _w in _plan_flaeche(model, f, idx) for e in drehen}
     except Exception:                        # noqa: BLE001 - nicht pruefbar: wie es ist
         return set()
+
+
+def gewoelbte_flaechen(model) -> dict:
+    """{Flaechenname: Zahl der Netzstuecke} der gewoelbten Flaechen mit
+    Schalenelementen (Merkmal der Verfahrenstabelle, Stand 42)."""
+    alle = set(_schalen_indizes(model))
+    aus: dict = {}
+    if not alle:
+        return aus
+    for name, f in (getattr(model, "flaechen", None) or {}).items():
+        idx = sorted({int(e) for e in (f.elemente or []) if int(e) in alle})
+        if not idx:
+            continue
+        C, ne = _ecken(model, idx)
+        V = _vektorflaechen(model, idx, C, ne)
+        N = flaechennormale(model, f)
+        if N is not None and _eben(V, N):
+            continue
+        aus[name] = len(_stuecke(model, idx, V, C, ne)[1])
+    return aus
 
 
 def uneinheitlich(model) -> bool:
@@ -466,7 +628,12 @@ def schalen_ausrichten(model, log: list = None, nur_flaeche=None) -> list:
     """Alle Schalenelemente ausrichten (siehe Moduldoku); Rueckgabe die
     Meldungen (leer, wenn nichts umzudrehen war). ``log`` bekommt sie
     zusaetzlich angehaengt; ``nur_flaeche`` beschraenkt auf eine Flaeche (nach
-    ihrem Vernetzen)."""
+    ihrem Vernetzen).
+
+    Ein Modell mit festgehaltener Lage (:func:`lage_festhalten`, das Modell
+    einer Stellung) wird nicht mehr ausgerichtet."""
+    if nur_flaeche is None and getattr(model, FEST, False):
+        return []
     schritte = plan(model) if nur_flaeche is None else (
         _plan_flaeche(model, nur_flaeche,
                       sorted({int(e) for e in (nur_flaeche.elemente or [])
@@ -502,6 +669,30 @@ def schalen_ausrichten(model, log: list = None, nur_flaeche=None) -> list:
             meldungen[-1] += " Die Lasten der Flächen sind neu verteilt."
     if log is not None:
         log.extend(meldungen)
+    return meldungen
+
+
+#: Merkmal am Modell einer Stellung: die Schalen behalten die Lage, die sie im
+#: Grundmodell haben (:func:`lage_festhalten`)
+FEST = "_schalenlage_fest"
+
+
+def lage_festhalten(model) -> list:
+    """Die Kopie eines Modells fuer eine Stellung, **bevor** die Stellung sie
+    bewegt: ausrichten (in der Geometrie des Grundmodells - dasselbe, was die
+    Rechnung am Grundmodell tut) und die Lage festhalten; danach richtet
+    :func:`schalen_ausrichten` dieses Modell nicht mehr aus. Rueckgabe die
+    Meldungen des Ausrichtens (leer, wenn das Grundmodell schon ausgerichtet war).
+
+    Bis zum 14.11.2026 richtete StaticSystem das Modell der Situation in der
+    gedrehten Lage neu aus. Die Stellung bewegte nur die Knoten, die
+    Stuetzpunkte der Boegen blieben; die Normale des Randes war dort eine
+    andere, und an einem Zylindersegment 120° in einer Stellung 180° um x
+    drehte das Ausrichten alle Elemente um - die Flaechenlast senkrecht zur
+    Flaeche wirkte verkehrt (Befund A6). Die Lage eines Elements aendert die
+    Rechnung nicht; sie wird darum einmal festgelegt, in der Grundstellung."""
+    meldungen = schalen_ausrichten(model)
+    setattr(model, FEST, True)
     return meldungen
 
 

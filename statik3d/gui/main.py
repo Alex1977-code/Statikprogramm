@@ -23645,6 +23645,9 @@ class MainWindow(QtWidgets.QMainWindow):
                   + (f"; Windkanal Re = {wk_['re']:.0f}, c_p {wk_['cp_min']:+.2f} … {wk_['cp_max']:+.2f}" if wk_ else "")
                   + (f"; {bg.anzahl(len(kw['hinweise']), 'Hinweis', 'Hinweise')} im Protokoll"
                      if kw.get("hinweise") else ""))
+        # vor dem Erzeugen umgedrehte Schalenelemente (Befund A10, 14.11.2026)
+        for zeile in kw.get("schalenlage") or []:
+            self.log.appendPlainText("  Hinweis: " + zeile)
         for zeile in wm.erlaeuterung(wd, kw):
             self.log.appendPlainText("  " + zeile)
         self.refresh_all()
@@ -23772,6 +23775,9 @@ class MainWindow(QtWidgets.QMainWindow):
                   f"Kontrollsumme {kw['kontrolle']['betrag'] / 1e3:.1f} kN"
                   + (f", q = {kw['q']:.3f} m³/(s·m), v_max = {kw['v_max']:.2f} m/s, p_max = {kw['p_max'] / 1e3:.1f} kN/m²"
                      if kw.get("verfahren") == "numerisch" else ""))
+        # vor dem Erzeugen umgedrehte Schalenelemente (Befund A10, 14.11.2026)
+        for zeile in kw.get("schalenlage") or []:
+            self.log.appendPlainText("  Hinweis: " + zeile)
         for zeile in wdm.erlaeuterung(wd, kw):
             self.log.appendPlainText("  " + zeile)
         self.refresh_all()

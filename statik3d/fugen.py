@@ -1512,8 +1512,15 @@ def _schalenseiten_richten(model: Model, seite: list, gegen: list, weite: float)
     """Die Schalenfacetten der Kontaktseite zur naechsten Gegenflaeche
     richten: je Facette wird mit beiden Normalen gesucht
     (:func:`gegenseite_finden`), es gilt die mit dem kleineren Betrag des
-    Spalts. Ohne Gegenflaeche auf beiden Seiten bleibt die Facette, wie sie
-    ist. Volumenseiten haben eine Aussenseite und bleiben."""
+    Spalts, bei gleichem Betrag die mit dem nichtnegativen Spalt. Ohne
+    Gegenflaeche auf beiden Seiten bleibt die Facette, wie sie ist.
+    Volumenseiten haben eine Aussenseite und bleiben.
+
+    Zwei Schalen mit Spalt g sehen sich von beiden Seiten im Abstand g: mit
+    der einen Normale +g, mit der anderen -g. Bis zum 14.11.2026 blieb dann
+    die Facette, wie sie war, und je nach Umlauf der Flaechen meldete die
+    Fuge „durchdringend, tiefste 2,00 mm“ statt eines Spalts von 2 mm
+    (Befund A10)."""
     from .assemble import SHELL_TYPES
     ne = len(model.elements)
     schale = [i for i, f in enumerate(seite)
@@ -1525,7 +1532,10 @@ def _schalenseiten_richten(model: Model, seite: list, gegen: list, weite: float)
     _p, ab = gegenseite_finden(model, list(seite) + gewendet, gegen, weite)
     out = list(seite)
     for k, i in enumerate(schale):
-        if abs(float(ab[len(seite) + k])) < abs(float(ab[i])):
+        a_g, a_s = float(ab[len(seite) + k]), float(ab[i])
+        b_g, b_s = abs(a_g), abs(a_s)
+        gleich = np.isfinite(b_g) and np.isfinite(b_s) and abs(b_g - b_s) <= 1e-9 * max(b_g, b_s, 1e-3)
+        if (b_g < b_s and not gleich) or (gleich and a_g >= 0.0 > a_s):
             out[i] = gewendet[k]
     return out
 

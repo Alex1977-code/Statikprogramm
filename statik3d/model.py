@@ -1470,15 +1470,18 @@ class Geometrielast:
     achse: str = ""
     ks: str = ""
 
-    def wert(self, punkt, normale=None, beidseitig: bool = False) -> float:
+    def wert(self, punkt, normale=None, beidseitig: bool = False, lage: float = None) -> float:
         """Die Flaechenlast an einem Punkt [N/m^2] - gleichmaessig, linear oder
         aus dem Wasserdruck-Generierer (verlauf["art"] == "wasser") bzw. dem
         Wind. ``normale`` ist die Aussennormale der Elementseite (die
         Stroemungsfelder tasten ihr Gitter vor der Seite ab), ``beidseitig``
-        sagt, dass eine duenne Schale von beiden Seiten belastet ist (Netto)."""
+        sagt, dass eine duenne Schale von beiden Seiten belastet ist (Netto).
+        ``lage``: +1, wenn das Schalenelement wie seine Flaeche liegt, -1, wenn
+        gegen sie (schalenlage.gegen_flaeche; der Wasserdruck an Schalen)."""
         if self.verlauf and self.verlauf.get("art") == "wasser":
             from .wasserdruck import druck_aus_verlauf
-            return druck_aus_verlauf(self.verlauf, punkt, normale=normale, beidseitig=beidseitig)
+            return druck_aus_verlauf(self.verlauf, punkt, normale=normale, beidseitig=beidseitig,
+                                     lage=lage)
         if self.verlauf and self.verlauf.get("art") == "wind":
             from .wind import druck_aus_verlauf as wind_druck
             return wind_druck(self.verlauf, punkt, normale=normale, beidseitig=beidseitig)
@@ -8349,6 +8352,22 @@ class Model:
             # Unterseite eines Koerpers statt das Dach (Befund 9 der
             # Pruefagenten vom 11.11.2026, Korrektur A3 unvollstaendig).
 
+        # Lage der Schalenelemente zu ihrer Flaeche - fuer den Wasserdruck an
+        # Schalen (Befund A7, 14.11.2026): welche Seite benetzt ist, sagt die
+        # Lage des Elements zu seiner Flaeche, nicht der Vergleich mit einer
+        # gemittelten Flaechennormale (die an einem Mantel ueber 180° auf einem
+        # Teil der Elemente quer bis gegenlaeufig steht)
+        gegen_je_flaeche: dict = {}
+
+        def lage_zur_flaeche(e: int, seite: int, flaeche):
+            if (seite != 0 or flaeche is None or (gl.verlauf or {}).get("art") != "wasser"
+                    or self.elements[int(e)].typ not in _EL.SCHALEN_TYPEN):
+                return None
+            if flaeche.name not in gegen_je_flaeche:
+                from .schalenlage import gegen_flaeche
+                gegen_je_flaeche[flaeche.name] = gegen_flaeche(self, flaeche)
+            return -1.0 if int(e) in gegen_je_flaeche[flaeche.name] else 1.0
+
         def nimm(e: int, seite: int, flaeche=None):
             if not 0 <= int(e) < len(self.elements):
                 return
@@ -8374,7 +8393,8 @@ class Model:
                 if gl.bereich and not gl.trifft(mitte):
                     return
                 p = gl.wert(mitte, normale=self._seitennormale_oder_schale(e, seite),
-                            beidseitig=(seite == 0 and self.elements[int(e)].typ in _EL.SCHALEN_TYPEN))
+                            beidseitig=(seite == 0 and self.elements[int(e)].typ in _EL.SCHALEN_TYPEN),
+                            lage=lage_zur_flaeche(e, seite, flaeche))
                 if p == 0.0:
                     return
                 d_seite = -d_achse if p < 0.0 else d_achse
@@ -8403,7 +8423,8 @@ class Model:
                 pass
             elif gl.verlauf:
                 p = gl.wert(mitte, normale=self._seitennormale_oder_schale(e, seite),
-                            beidseitig=(seite == 0 and self.elements[int(e)].typ in _EL.SCHALEN_TYPEN))
+                            beidseitig=(seite == 0 and self.elements[int(e)].typ in _EL.SCHALEN_TYPEN),
+                            lage=lage_zur_flaeche(e, seite, flaeche))
                 if p == 0.0:
                     return          # ausserhalb des Verlaufs (ueber dem Wasserspiegel)
             else:

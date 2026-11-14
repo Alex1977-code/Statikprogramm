@@ -1092,6 +1092,42 @@ def _schalen_uneinheitlich(model) -> bool:
         return True
 
 
+def _schalen_gewoelbt_betroffen(model) -> bool:
+    """Gewoelbte Schalenflaechen, deren Lage oder Wasserdruck bis Stand 41
+    falsch bestimmt sein konnte (Befunde A5-A7 vom 14.11.2026, Stand 42): eine
+    gewoelbte Flaeche aus mehreren Netzstuecken; eine Situation mit bewegter
+    Stellung oder eine bewegte Stellung im Modell, wenn es gewoelbte Flaechen
+    gibt; ein Wasserdruck des Generators ohne globale Richtung auf einer
+    gewoelbten Schalenflaeche."""
+    from .schalenlage import gewoelbte_flaechen
+    try:
+        gew = gewoelbte_flaechen(model)
+    except Exception:                    # noqa: BLE001 - nicht pruefbar: nicht betroffen
+        return False
+    if not gew:
+        return False
+    if any(n > 1 for n in gew.values()):
+        return True
+    for st in getattr(model, "stellungen", None) or []:
+        v = [float(x) for x in (getattr(st, "verschiebung", None) or ())]
+        if float(getattr(st, "dreh_winkel", 0.0) or 0.0) or any(abs(x) > 0.0 for x in v):
+            return True
+    koerper = getattr(model, "koerper", None) or {}
+    for lc in (getattr(model, "load_cases", None) or {}).values():
+        for gl in getattr(lc, "geometrielasten", None) or []:
+            v = getattr(gl, "verlauf", None) or {}
+            if v.get("art") != "wasser" or getattr(gl, "richtung", None):
+                continue
+            if getattr(gl, "art", "flaeche") == "flaeche":
+                ziele = [str(gl.ziel)]
+            else:
+                k = koerper.get(str(gl.ziel))
+                ziele = [str(n) for n in (getattr(k, "flaechen", None) or [])] if k is not None else []
+            if any(n in gew for n in ziele):
+                return True
+    return False
+
+
 def _quader_teilung_ungleich(model) -> bool:
     """Ein Koerper mit einer Teilung, die nicht in allen Richtungen gleich ist (A14)."""
     for k in (getattr(model, "koerper", None) or {}).values():
@@ -2270,6 +2306,27 @@ MERKMALE: list = [
         modellgrund="Kontaktfuge mit einem älteren Programmstand ausgeführt",
         vorschlag="Kontaktfugen neu ausführen (Netz › Vernetzen, oder die Kontaktbedingung öffnen und "
                   "übernehmen)"),
+    # Befunde A5-A7 der Pruefagenten (14.11.2026) zur Korrektur Stand 31/32:
+    # eine gewoelbte Flaeche aus mehreren Netzstuecken wurde stueckweise gegen
+    # die Normale des ganzen Randes gerichtet (Zylinder 300° mit geloeschtem
+    # Streifen: 47,5 statt 21,8 kN); in einer Stellung richtete die Rechnung
+    # die gedrehten Schalen neu aus, die Boegen blieben stehen (Flaechenlast
+    # verkehrt); der Wasserdruck an einem Mantel ueber 180° nahm das Vorzeichen
+    # aus der gemittelten Flaechennormale (78,4 statt 43,4 kN). Seitdem
+    # entscheidet der Umlauf des Randes am Stueck, die Stellung behaelt die
+    # Lage des Grundmodells und dreht die Liniengeometrie mit, der Wasserdruck
+    # nimmt die Lage des Elements zur Flaeche. Fehlerkorrektur
+    Merkmal(
+        name="schalenlage_gewoelbt", titel="Lage der Schalen an gewölbten Flächen",
+        texte={"alt": "Stücke einer gewölbten Fläche gegen die Normale des ganzen Randes gerichtet, in "
+                      "einer Stellung neu ausgerichtet, Wasserdruck nach der gemittelten Flächennormale",
+               "neu": "Stücke nach dem Randumlauf an ihrem Ort, in einer Stellung die Lage des "
+                      "Grundmodells, Wasserdruck nach der Lage des Elements zur Fläche"},
+        wechsel=(Wechsel(stand=42, datum="14.11.2026", commit="fix/k5-a-schale", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="gewölbte Schalenfläche aus mehreren Netzstücken, mit einer bewegten Stellung oder "
+                      "mit Wasserdruck ohne globale Richtung",
+        betrifft=_schalen_gewoelbt_betroffen),
     # Befund A19 (09.11.2026): Schalenflaechen, die sich ohne gemeinsame Linie
     # beruehren, waren im Netz nicht verbunden - Stoss mit ungeteilter Linie
     # 0,742 statt 0,143 mm, Rippe auf ungeteilter Platte 33,1 statt 0,52 mm.
