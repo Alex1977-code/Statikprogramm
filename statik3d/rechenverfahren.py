@@ -348,7 +348,8 @@ def _wind_freie_wand_lh(model) -> bool:
             if v.get("art") != "wind" or v.get("rolle") != "freie_wand" or v.get("feld") or not g:
                 continue
             try:
-                if float(g.get("l", g.get("b", 0.0))) > 3.0 * float(g["h"]) + 1e-9:
+                # h der Tab. 7.9: die Hoehe der Wand selbst, wo die Last sie traegt (Stand 56)
+                if float(g.get("l", g.get("b", 0.0))) > 3.0 * float(g.get("h_wand", g["h"])) + 1e-9:
                     return True
             except (KeyError, TypeError, ValueError):
                 return True
@@ -357,14 +358,33 @@ def _wind_freie_wand_lh(model) -> bool:
 
 def _wind_freie_wand_zonen(model) -> bool:
     """Windlasten des Generators auf freien Waenden bzw. Tafeln mit Zonen quer
-    zum Wind oder auf einer Schale parallel zum Wind (wind.alte_wandzonen, Befund B5)."""
+    zum Wind oder auf einer Schale parallel zum Wind (wind.alte_wandzonen, Befund B5) -
+    die Lasten mit den Abmessungen der Wand (Stand 33 bis 48); die aelteren ohne
+    Abmessungen nennt seit dem 14.11.2026 das Merkmal wind_freie_wand_hoehe (Befund A'10)."""
     from .wind import alte_wandzonen
-    return bool(alte_wandzonen(model))
+    return bool(alte_wandzonen(model, "objekt"))
 
 
 def _wind_freie_wand_zonen_im_ergebnis(model, _analyse) -> str:
     from .wind import alte_wandzonen_text
-    return alte_wandzonen_text(model)
+    return alte_wandzonen_text(model, "objekt")
+
+
+def _wind_freie_wand_hoehe(model) -> bool:
+    """Windlasten des Generators auf freien Waenden, die ein Programmstand vor Stand
+    56 erzeugt hat: an einer Wand ueber dem Gelaende mit der Oberkante ueber Gelaende
+    als h der Tab. 7.9 (wind.alte_wandhoehen), oder vor Stand 33 ohne Abmessungen und
+    schraeg angestroemt mit Zonen quer zum Wind (wind.alte_wandzonen „aelter“; bis zum
+    14.11.2026 uebersprang die Pruefung sie, Befund A'10)."""
+    from .wind import alte_wandhoehen, alte_wandzonen
+    return bool(alte_wandhoehen(model)) or bool(alte_wandzonen(model, "aelter"))
+
+
+def _wind_freie_wand_hoehe_im_ergebnis(model, _analyse) -> str:
+    from .wind import alte_wandhoehen, alte_wandzonen
+    alt = list(alte_wandhoehen(model))
+    alt += [x for x in alte_wandzonen(model, "aelter") if x not in alt]
+    return ", ".join(f"Wind {w} in {lf}" for lf, w in alt[:5]) + (" …" if len(alt) > 5 else "")
 
 
 def _wasserdruck_geneigt(model) -> bool:
@@ -670,15 +690,25 @@ def _versatz_achsen_arm(model) -> bool:
     und Stablast nach Theorie III. Ordnung (A2); eine Vorspannkraft
     (Sollkraft) in einem Stab mit Versatz (Knicken, A3) oder mit alpha_cr im
     Modus „auto“ (A3); ein Stab mit Versatz nach Theorie II. Ordnung
-    (Konvergenz, A4)."""
+    (Konvergenz, A4).
+
+    Stablast heisst nach Theorie III. Ordnung jede Last, die theorie3._Stab.F_last
+    traegt: Strecken- und Einzellasten auf dem Stab (beam_loads) und das
+    Eigengewicht (Lastfall mit Schwere, Stab mit Dichte und Flaeche). Bis zum
+    14.11.2026 (Befund A'10) zaehlten nur die beam_loads: Kragarm 4 m, Versatz
+    0,5 m, nur Eigengewicht 400 kN/m - Einspannmoment 3061,42 statt 3171,17 kNm
+    ohne Status. Laesst sich die Sollkraft nicht lesen (Ausnahme), gilt ein
+    Modell mit Versatz oder mit alpha_cr „auto“ als möglicherweise betroffen."""
     if _stab_mit_ungleichem_versatz(model):
         return True
+    import numpy as np
     from . import assemble as asm
     els = getattr(model, "elements", None) or []
     mit = {i for i, e in enumerate(els)
            if getattr(e, "typ", "") in asm.LINE_TYPES and asm.beam_versatz(e) is not None}
     faelle = getattr(model, "load_cases", None) or {}
     kombis = getattr(model, "combinations", None) or {}
+    auto = str(getattr(getattr(model, "design", None), "theorie2", "aus") or "aus") == "auto"
     soll_els: set = set()
     try:
         from .vorspannkraft import sollkraefte, _elemente
@@ -686,8 +716,10 @@ def _versatz_achsen_arm(model) -> bool:
             for s_ in sollkraefte(model, {n: 1.0}):
                 soll_els.update(int(i) for i in _elemente(model, s_.stab))
     except Exception:                                   # noqa: BLE001 - lieber betroffen
+        if mit or auto:
+            return True
         soll_els = set()
-    if soll_els and str(getattr(getattr(model, "design", None), "theorie2", "aus") or "aus") == "auto":
+    if soll_els and auto:
         return True
     if not mit:
         return False
@@ -697,8 +729,26 @@ def _versatz_achsen_arm(model) -> bool:
     if "II" in theorien or str(getattr(getattr(model, "design", None), "theorie2", "aus") or "aus") != "aus":
         return True
     if "III" in theorien:
-        return any(int(getattr(bl, "elem", -1)) in mit for lc in faelle.values()
-                   for bl in (getattr(lc, "beam_loads", None) or []))
+        if any(int(getattr(bl, "elem", -1)) in mit for lc in faelle.values()
+               for bl in (getattr(lc, "beam_loads", None) or [])):
+            return True
+        # das Eigengewicht eines Stabs mit Versatz (asm.element_equivalent_loads)
+        try:
+            schwer = any(np.any(np.asarray(getattr(lc, "gravity", None) or [0.0, 0.0, 0.0], float))
+                         for lc in faelle.values())
+            if not schwer:
+                return False
+            mats = getattr(model, "materials", None) or {}
+            secs = getattr(model, "sections", None) or {}
+            for i in mit:
+                e = els[i]
+                mat, sec = mats.get(e.mat), secs.get(e.sec)
+                if mat is None or sec is None:
+                    return True                         # nicht pruefbar: möglicherweise betroffen
+                if float(getattr(mat, "rho", 0.0) or 0.0) * float(getattr(sec, "A", 0.0) or 0.0) > 0.0:
+                    return True
+        except Exception:                               # noqa: BLE001 - lieber betroffen
+            return True
     return False
 
 
@@ -2854,7 +2904,7 @@ MERKMALE: list = [
         texte={"alt": "Schalenfacetten nach ihrer Knotenfolge, Schalen der Gegenseite nur von einer Seite – "
                       "ein Blech mit Normale vom Gegenkörper weg band sich an dessen abgewandte Seite",
                "neu": "Schalenfacetten zur nächsten Gegenfläche, Schalen der Gegenseite von beiden Seiten"},
-        wechsel=(Wechsel(stand=31, datum="12.11.2026", commit="d2711c7, fix/k2-schalenlage", alt="alt",
+        wechsel=(Wechsel(stand=31, datum="12.11.2026", commit="d2711c7, fix/k2-nach", alt="alt",
                          neu="neu", art=FEHLERKORREKTUR),),
         modellmerkmal="Ausgeführte Kontaktfuge an Schalen, deren Kontaktpaar Knoten an eine entferntere "
                       "Gegenfläche bindet als die nächste (mehr als 1 mm)",
@@ -3356,10 +3406,30 @@ MERKMALE: list = [
         modellmerkmal="Wasserdruck des Generators mit globaler Lastrichtung auf einer Fläche, die nicht "
                       "senkrecht zu dieser Richtung steht",
         betrifft=_wasserdruck_richtung_schraeg),
+    # Entscheidung des Anwenders vom 14.11.2026 (erhoehte freie Wand): h der Tab. 7.9
+    # ist die Hoehe der Wand selbst, nicht ihre Oberkante ueber Gelaende (Wand 30 x 3 m
+    # auf z = 10 … 13 m: l/h 10 statt 2,31, ΣF_x 157,7 statt 140,2 kN); q_p bleibt in
+    # der Hoehe der Wand. Dazu Befund A'10: Lasten vor Stand 33 ohne Abmessungen,
+    # schraeg angestroemt, zaehlten die Zonen still quer zum Wind (30 x 3 m bei 75°:
+    # 82,73 statt 94,44 kN). Die Abmessungen stehen im Verlauf der Last - erst das
+    # Neuerzeugen behebt es. Fehlerkorrektur am Modell
+    Merkmal(
+        name="wind_freie_wand_hoehe", titel="Windlast auf freie Wand über dem Gelände oder von vor Stand 33 "
+                                           "schräg angeströmt",
+        texte={"alt": "h der Tab. 7.9 als Oberkante über Gelände; Lasten vor Stand 33 mit Zonen quer zum Wind",
+               "neu": "h der Tab. 7.9 als Höhe der Wand selbst (q_p in der Höhe der Wand), Zonen entlang der "
+                      "Wand; ab h/4 über Gelände Hinweis „Anzeigetafel nach 7.4.3“"},
+        wechsel=(Wechsel(stand=56, datum="14.11.2026", commit="fix/k6-status", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Windlast des Generators auf einer freien Wand über dem Gelände, erzeugt vor Stand 56, "
+                      "oder auf einer schräg angeströmten freien Wand, erzeugt vor Stand 33",
+        betrifft=_wind_freie_wand_hoehe, import_korrektur=True, im_ergebnis=_wind_freie_wand_hoehe_im_ergebnis,
+        modellgrund="Windlasten mit einem älteren Programmstand erzeugt",
+        vorschlag="Lasten › Wind: den Wind öffnen und die Windlasten neu erzeugen"),
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 55
+VERFAHRENSSTAND = 56
 
 
 def merkmal(name: str) -> Optional[Merkmal]:
@@ -3543,8 +3613,18 @@ def modell_teile(model, analyse=None) -> list:
     wirken (``Merkmal.im_modell``, Befunde 41, 42, 44 vom 11.11.2026): solange das
     Modell die alten Kombinationen traegt, gilt der Status fuer jede Ergebnisdatei
     und fuer eine neue Rechnung. Mit ``analyse`` nur, wenn eine betroffene
-    Kombination gerechnet ist."""
-    teile = []
+    Kombination gerechnet ist.
+
+    Dazu jede Korrektur am Modell (``import_korrektur``), mit ``modellgrund`` (alte
+    Windlasten, Befund 40) wie ohne (Korrekturen am RFEM-Import, Grund „Modell vor
+    dem <Datum> aus RFEM übernommen“): auch eine neue Rechnung traegt ihren Status,
+    bis der Grund im Modell behoben ist. Bis zum 14.11.2026 (Befund A'10) nahm diese
+    Liste nur die mit ``modellgrund`` - der Status der Importkorrekturen
+    (Lagerreibung, Stabtypen, Vorspannung, Lastkategorien, Eigengewicht aus RFEM)
+    verschwand nach „neu rechnen“ bis zum erneuten Oeffnen. Reihenfolge wie im Status
+    beim Oeffnen: Importkorrekturen ohne ``modellgrund``, dann die Kombinationen,
+    dann die mit ``modellgrund``."""
+    import_teile, teile, grund_teile = [], [], []
     for mk in MERKMALE:
         if mk.im_modell is None:
             continue
@@ -3555,18 +3635,17 @@ def modell_teile(model, analyse=None) -> list:
             continue                    # keine betroffene Kombination gerechnet
         teile.append(f"{mk.titel}: {wo}")
     for mk in MERKMALE:
-        # Korrekturen am Modell, die nicht vom Import kommen (``modellgrund``, alte
-        # Windlasten, Befund 40): auch eine neue Rechnung traegt den Status, bis der
-        # Grund im Modell behoben ist - nicht erst nach dem erneuten Oeffnen
-        if not (mk.import_korrektur and mk.modellgrund) or not _sicher(lambda: mk.betrifft(model)):
+        if not mk.import_korrektur or not _sicher(lambda: mk.betrifft(model)):
             continue
         wo = (_sicher(lambda: mk.im_ergebnis(model, analyse))
               if (mk.im_ergebnis is not None and analyse is not None) else None)
         if wo == "":
             continue
-        teile.append(f"{mk.titel}: {mk.modellgrund} ({mk.text('alt')}"
-                     + (f"; {wo}" if wo else "") + f") – {mk.vorschlag}, danach neu rechnen")
-    return teile
+        grund = mk.modellgrund or f"Modell vor dem {mk.wechsel[-1].datum} aus RFEM übernommen"
+        (grund_teile if mk.modellgrund else import_teile).append(
+            f"{mk.titel}: {grund} ({mk.text('alt')}" + (f"; {wo}" if wo else "")
+            + f") – {mk.vorschlag}, danach neu rechnen")
+    return import_teile + teile + grund_teile
 
 
 def modell_betroffen(model, analyse=None) -> str:
@@ -3600,16 +3679,7 @@ def bewerten(model, merkmale: dict, analyse=None) -> dict:
         else:
             betr.append(f"{mk.titel}: gerechnet mit „{mk.text(wert)}“" + (f" ({wo})" if wo else "")
                         + f", seit {_seit(mk, jetzt, w)} korrigiert: „{mk.text(jetzt)}“")
-    for mk in MERKMALE:
-        if mk.import_korrektur and not mk.modellgrund and _sicher(lambda: mk.betrifft(model)):
-            wo = (_sicher(lambda: mk.im_ergebnis(model, analyse))
-                  if (mk.im_ergebnis is not None and analyse is not None) else None)
-            if wo == "":
-                continue
-            w = mk.wechsel[-1]
-            grund = f"Modell vor dem {w.datum} aus RFEM übernommen"
-            betr.append(f"{mk.titel}: {grund} ({mk.text('alt')}"
-                        + (f"; {wo}" if wo else "") + f") – {mk.vorschlag}, danach neu rechnen")
+    # die Korrekturen am Modell, mit und ohne ``modellgrund`` (modell_teile, Befund A'10)
     betr += _sicher(lambda: modell_teile(model, analyse)) or []
     return {"hinweis": ("gerechnet mit älterem Rechenverfahren: " + "; ".join(hinw)
                         + " – die Ergebnisse gelten, eine neue Rechnung liefert sie nach dem aktuellen Verfahren")

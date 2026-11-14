@@ -11601,9 +11601,12 @@ Knicken; Theorie I. und III. Ordnung und Modelle ohne Versatz sind bitgleich.
 Verfahrensstand 40; geprüft in `tests/test_versatz_arm_kg.py`.
 
 **Querschnittsachsen, Stablast und Sollkraft bei Versatz** (seit 14.11.2026).
-Hat ein Stab an Anfang und Ende verschiedenen Versatz, liegen seine
-Querschnittsachsen in den Achsen der Knotenlinie, nur so weit gedreht, dass sie
-auf der Stabachse zwischen den versetzten Enden senkrecht stehen. Seit Stand 38
+Hat ein Stab an Anfang und Ende verschiedenen Versatz, entstehen seine
+Querschnittsachsen aus denen der Knotenlinie: die y-Achse wird senkrecht zur
+Stabachse zwischen den versetzten Enden projiziert, z steht senkrecht auf beiden.
+Das ist eine Projektion, nicht die kleinste Drehung; um die Stabachse weichen
+beide um 0,05° bei 3,6° Neigung der Stabachse gegen die Knotenlinie, 0,44° bei
+10° und 5,8° bei 35° voneinander ab. Seit Stand 38
 konnte der Querschnitt einer lotrechten Stütze dabei um 90° oder 180° springen
 (Kopfverdrehung 0,96 statt 3,82 mrad, Auflager unter lokaler Streckenlast +4,0
 statt −4,0 kN). Nach Theorie III. Ordnung dreht eine Stablast auf einem Stab mit

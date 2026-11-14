@@ -468,7 +468,14 @@ def objekt_geometrie(model, name: str, geo: dict, gruppe=None) -> dict:
     Bild 7.19 entlang der Wand, l/h wählt die Zeile der Tab. 7.9. Bis dahin
     zählten sie quer zur Windrichtung (t_min/t_max) - bei schrägem Wind
     gestaucht (Befund B5 der Prüfagenten). t_min/t_max und b bleiben die
-    Ausdehnung quer zum Wind."""
+    Ausdehnung quer zum Wind.
+
+    Seit dem 14.11.2026 (Stand 56, Entscheidung des Anwenders) dazu ``h_wand``,
+    die Höhe der Wand selbst (Oberkante minus Unterkante): sie ist das h der
+    Tab. 7.9 (Zonen und l/h, :func:`beiwert_am_punkt`); ``h`` bleibt die
+    Oberkante über Gelände, q_p nimmt weiter die Höhe des Punkts. Bis dahin
+    nahm Tab. 7.9 die Oberkante über Gelände: Wand 30 × 3 m auf z = 10 … 13 m
+    mit l/h = 2,31 statt 10."""
     kn = set()
     namen = list(gruppe or [name])
     for n in namen:
@@ -479,6 +486,7 @@ def objekt_geometrie(model, name: str, geo: dict, gruppe=None) -> dict:
     quer = np.asarray(geo["quer"], float)
     out = _abmessungen(model, kn, d, quer, float(geo["z_boden"]))
     out["abmessungen"] = ABMESSUNGEN_OBJEKT
+    out["h_wand"] = max(float(np.ptp(model.nodes[sorted(kn)][:, 2])), 1e-6)
     laengs = _wandrichtung(model, namen, d, quer)
     s = model.nodes[sorted(kn)] @ laengs
     out.update({"laengs": laengs.tolist(), "s_min": float(s.min()), "s_max": float(s.max()),
@@ -627,17 +635,29 @@ def _komma(x: float, stellen: int = 2) -> str:
 
 def wand_satz(namen, geo: dict) -> str:
     """Der Satz fuers Protokoll zu einer freien Wand: Laenge entlang der Wand,
-    h, l/h und c_p,net der Zonen (Tab. 7.9, :func:`cp_freie_wand`)."""
+    h, l/h und c_p,net der Zonen (Tab. 7.9, :func:`cp_freie_wand`). h ist die
+    Hoehe der Wand selbst (``h_wand``, Stand 56); steht die Wand mindestens h/4
+    ueber dem Gelaende, ist sie nach DIN EN 1991-1-4, 7.4.3 eine Anzeigetafel -
+    der Satz sagt es, die Rolle setzt der Anwender (Entscheidung vom 14.11.2026)."""
     namen = list(namen)
-    h, l_w = float(geo["h"]), float(geo.get("l", geo["b"]))
+    h_ok = float(geo["h"])
+    h, l_w = float(geo.get("h_wand", h_ok)), float(geo.get("l", geo["b"]))
+    abstand = h_ok - h                       # Unterkante der Wand ueber Gelaende
     cp = cp_freie_wand(l_w / h)
     wer = (f"Fläche {namen[0]}" if len(namen) == 1 else
            f"Flächen {', '.join(namen[:-1])} und {namen[-1]}")
-    return (f"Freie Wand ({wer}): Länge l = {_komma(l_w)} m entlang der Wand, h = {_komma(h)} m, "
+    hoehe = (f"h = {_komma(h)} m (Höhe der Wand, Oberkante {_komma(h_ok)} m über Gelände)"
+             if abstand > 1e-6 else f"h = {_komma(h)} m")
+    satz = (f"Freie Wand ({wer}): Länge l = {_komma(l_w)} m entlang der Wand, {hoehe}, "
             f"l/h = {_komma(l_w / h)}; c_p,net A/B/C/D = "
             + "/".join(_komma(cp[k]) for k in "ABCD")
             + " (DIN EN 1991-1-4, Tab. 7.9, φ = 1 ohne Eckausbildung, geradlinig zwischen l/h = 3, 5 "
               "und 10), Zonen bis 0,3·h, 2·h und 4·h ab beiden freien Enden entlang der Wand (Bild 7.19).")
+    if abstand > 1e-6 and abstand >= 0.25 * h - 1e-9:
+        satz += (f" Die Wand steht {_komma(abstand)} m über dem Gelände, mindestens h/4 = {_komma(0.25 * h)} m: "
+                 "nach DIN EN 1991-1-4, 7.4.3 ist sie eine Anzeigetafel (c_f = 1,8) – die Rolle "
+                 "„Anzeigetafel“ setzt der Anwender in der Windmaske.")
+    return satz
 
 
 #: Zwei Flaechen gehoeren zu derselben Wand, wenn ihre Normalen hoechstens rund
@@ -1163,7 +1183,7 @@ def _flaechenpunkte(model, name: str) -> np.ndarray:
     return np.asarray(pkt, float).reshape(-1, 3)
 
 
-def alte_wandzonen(model) -> list:
+def alte_wandzonen(model, nur: Optional[str] = None) -> list:
     """[(Lastfall, Wind)] der Windlasten des Generators (Normverfahren) auf freien
     Waenden und Tafeln, die ein Programmstand vor dem 14.11.2026 (Stand 49)
     erzeugt hat (Geometrie ohne ``laengs``) und die heute anders entstehen
@@ -1176,7 +1196,14 @@ def alte_wandzonen(model) -> list:
       Beiwert ergeben als heute.
 
     Bei senkrechtem Wind ist beides dasselbe - dort ist nichts neu zu erzeugen;
-    die Zeile der Tab. 7.9 nach l/h (Befund B4) waehlt schon das Verteilen."""
+    die Zeile der Tab. 7.9 nach l/h (Befund B4) waehlt schon das Verteilen.
+
+    Seit dem 14.11.2026 (Befund A'10) auch Lasten ohne ``abmessungen`` (vor Stand
+    33), an Schalen wie an Volumenflaechen: bis dahin uebersprang die Pruefung sie,
+    eine Wand 30 × 3 m bei 75° rechnete still mit 82,73 statt 94,44 kN. Die Hoehe
+    der Wand (``h_wand``, Stand 56) bleibt beim Vergleich aussen vor - sie prueft
+    :func:`alte_wandhoehen`. ``nur``: "objekt" nur Lasten mit den Abmessungen der
+    Wand (Stand 33 bis 48), "aelter" nur die ohne ``abmessungen``."""
     aus = []
     cache: dict = {}
     for lf, lc in (getattr(model, "load_cases", None) or {}).items():
@@ -1191,26 +1218,30 @@ def alte_wandzonen(model) -> list:
             eintrag = (str(lf), str(v.get("name", "")))
             if eintrag in aus:
                 continue
+            objekt = g.get("abmessungen") == ABMESSUNGEN_OBJEKT
+            if (nur == "objekt" and not objekt) or (nur == "aelter" and "abmessungen" in g):
+                continue
             ziel = str(gl.ziel)
             try:
                 d = np.asarray(g["richtung"], float)
                 if schale_quer(model, ziel, d):
                     aus.append(eintrag)
                     continue
-                if rolle != "freie_wand" or g.get("abmessungen") != ABMESSUNGEN_OBJEKT:
-                    continue                 # aeltere Abmessungen: alte_abmessungen
+                if rolle != "freie_wand" or not (objekt or "abmessungen" not in g):
+                    continue                 # Abmessungen des Gebaeudes: alte_abmessungen
                 n = _flaechennormale(model, ziel)
-                if n is None:
-                    continue
-                nh = np.array([n[0], n[1], 0.0])
-                if float(np.linalg.norm(nh)) > 1e-9 and abs(float(nh @ d)) / float(np.linalg.norm(nh)) >= 1 - 1e-9:
-                    continue                 # senkrecht angestroemt: quer = entlang
+                if n is not None:
+                    nh = np.array([n[0], n[1], 0.0])
+                    if (float(np.linalg.norm(nh)) > 1e-9
+                            and abs(float(nh @ d)) / float(np.linalg.norm(nh)) >= 1 - 1e-9):
+                        continue             # senkrecht angestroemt: quer = entlang
                 schl = eintrag + (rolle,)
                 if schl not in cache:
                     w = _param(v.get("param") or {})
                     cache[schl] = (gebaeude(w, model), wand_gruppen(model, w.freie_waende))
                 geo, gruppen = cache[schl]
                 heute = objekt_geometrie(model, ziel, geo, gruppen.get(ziel))
+                heute.pop("h_wand", None)        # die Hoehe prueft alte_wandhoehen
                 for P in _flaechenpunkte(model, ziel):
                     if (abs(beiwert_am_punkt({}, g, rolle, P)[0] - beiwert_am_punkt({}, heute, rolle, P)[0])
                             > 1e-9):
@@ -1221,8 +1252,59 @@ def alte_wandzonen(model) -> list:
     return aus
 
 
-def alte_wandzonen_text(model) -> str:
-    alt = alte_wandzonen(model)
+def alte_wandzonen_text(model, nur: Optional[str] = None) -> str:
+    alt = alte_wandzonen(model, nur)
+    return ", ".join(f"Wind {w} in {lf}" for lf, w in alt[:5]) + (" …" if len(alt) > 5 else "")
+
+
+def alte_wandhoehen(model) -> list:
+    """[(Lastfall, Wind)] der Windlasten des Generators (Normverfahren) auf freien
+    Waenden, die ein Programmstand vor dem 14.11.2026 (Stand 56) erzeugt hat
+    (Geometrie ohne ``h_wand``) und deren Wand ueber dem Gelaende steht: die Last
+    nimmt als h der Tab. 7.9 die Oberkante ueber Gelaende statt der Hoehe der Wand
+    (Entscheidung des Anwenders vom 14.11.2026; Wand 30 × 3 m auf z = 10 … 13 m:
+    l/h 2,31 statt 10). Gemeldet, wenn sich der Beiwert an einem Elementpunkt
+    aendert; die Last steht im Modell, erst das Neuerzeugen aendert sie."""
+    aus = []
+    cache: dict = {}
+    for lf, lc in (getattr(model, "load_cases", None) or {}).items():
+        for gl in getattr(lc, "geometrielasten", None) or []:
+            v = getattr(gl, "verlauf", None) or {}
+            g = v.get("geometrie") or {}
+            if (getattr(gl, "art", "flaeche") != "flaeche" or v.get("art") != "wind"
+                    or v.get("rolle") != "freie_wand" or v.get("feld") or g.get("richtung") is None
+                    or "h_wand" in g):
+                continue
+            eintrag = (str(lf), str(v.get("name", "")))
+            if eintrag in aus:
+                continue
+            ziel = str(gl.ziel)
+            try:
+                if eintrag not in cache:
+                    w = _param(v.get("param") or {})
+                    cache[eintrag] = wand_gruppen(model, w.freie_waende)
+                gruppe = cache[eintrag].get(ziel) or [ziel]
+                kn = set()
+                for n_ in gruppe:
+                    kn |= _flaechenknoten(model, n_)
+                if not kn:
+                    continue
+                h_wand = max(float(np.ptp(model.nodes[sorted(kn)][:, 2])), 1e-6)
+                if abs(h_wand - float(g["h"])) <= 1e-6 * max(1.0, h_wand):
+                    continue                 # Wand am Gelaende: dasselbe h
+                g_neu = dict(g, h_wand=h_wand)
+                for P in _flaechenpunkte(model, ziel):
+                    if (abs(beiwert_am_punkt({}, g, "freie_wand", P)[0]
+                            - beiwert_am_punkt({}, g_neu, "freie_wand", P)[0]) > 1e-9):
+                        aus.append(eintrag)
+                        break
+            except Exception:                    # noqa: BLE001
+                continue
+    return aus
+
+
+def alte_wandhoehen_text(model) -> str:
+    alt = alte_wandhoehen(model)
     return ", ".join(f"Wind {w} in {lf}" for lf, w in alt[:5]) + (" …" if len(alt) > 5 else "")
 
 
@@ -1336,6 +1418,11 @@ def windlasten_hinweis(model) -> list:
                    "Windrichtung statt entlang der Wand, oder eine Schale parallel zur Windrichtung trägt als "
                    f"freie Wand bzw. Anzeigetafel eine Nettolast quer zum Wind ({WIND_NEU_ERZEUGEN}, danach "
                    "neu rechnen).")
+    if alte_wandhoehen(model):
+        aus.append(f"Windlasten neu erzeugen: {alte_wandhoehen_text(model)} mit einem älteren Programmstand "
+                   "erzeugt – an einer freien Wand über dem Gelände nimmt Tab. 7.9 darin die Oberkante über "
+                   "Gelände als h statt der Höhe der Wand selbst (Zonen und l/h; q_p bleibt in der Höhe der "
+                   f"Wand) ({WIND_NEU_ERZEUGEN}, danach neu rechnen).")
     if alte_nordsee_stablasten(model):
         aus.append(f"Windlasten neu erzeugen: {alte_nordsee_stablasten_text(model)} mit einem älteren "
                    "Programmstand erzeugt – die Stablasten darin stammen aus dem Mischprofil „Inseln der "
@@ -1369,6 +1456,10 @@ def beiwert_am_punkt(param: dict, geo: dict, rolle: str, punkt) -> tuple:
         z = zone_flachdach(x, y_rand, e)
         return CPE_FLACHDACH[z] - c_pi, z
     if rolle == "freie_wand":
+        # h der Tab. 7.9: die Hoehe der Wand selbst (Stand 56, :func:`objekt_geometrie`);
+        # eine Last eines aelteren Programmstands traegt sie nicht und rechnet mit der
+        # Oberkante ueber Gelaende (:func:`alte_wandhoehen`)
+        h = float(geo.get("h_wand", h))
         if "laengs" in geo:
             # Abstand zum naechsten freien Ende entlang der Wand, l/h der ganzen
             # Wand (objekt_geometrie, 14.11.2026, Befunde B4/B5)
