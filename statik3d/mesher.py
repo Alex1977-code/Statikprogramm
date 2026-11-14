@@ -1376,6 +1376,7 @@ def elementbezug_sichern(model: Model, flaechen) -> list:
                     tuple(sorted(id(s) for s in x["lager"].get(i, []))))
         z0 = zeichen(0)
         x["gleich"] = all(zeichen(i) == z0 for i in range(1, x["n"]))
+        x["grund"] = _nicht_eindeutig_grund(model, x)
     return aus
 
 
@@ -1406,26 +1407,29 @@ def elementbezug_nicht_eindeutig(model: Model, flaechen) -> list:
     Sonst - Teilmengen auf einer gewoelbten Flaeche oder auf einer Flaeche,
     deren Geometrie sich seit dem Vernetzen geaendert hat - ist der Ort im
     neuen Netz nicht eindeutig."""
-    aus = []
-    for x in elementbezug_sichern(model, flaechen):
-        if x["gleich"]:
-            continue
-        f = x["objekt"]
-        try:
-            eben = str(getattr(f, "typ", "eben") or "eben") == "eben" and bool(f.eben(model))
-            A_geo = float(f.inhalt(model))
-        except Exception:                      # noqa: BLE001 - Geometrie nicht lesbar: nicht eindeutig
-            eben, A_geo = False, 0.0
-        A_netz = float(np.linalg.norm(x["vektor"], axis=1).sum())
-        if eben and A_geo > 0 and abs(A_netz - A_geo) <= ELEMENTBEZUG_FLAECHENTOL * A_geo:
-            continue
-        if not eben:
-            warum = "die Fläche ist gewölbt"
-        else:
-            warum = (f"das Netz passt nicht mehr zur Geometrie der Fläche (Netz {A_netz:.4f} m², "
-                     f"Fläche {A_geo:.4f} m²)").replace(".", ",")
-        aus.append((x["flaeche"], f"{_bezug_text(x)} – nicht auf der ganzen Fläche gleich, und {warum}"))
-    return aus
+    return [(x["flaeche"], x["grund"]) for x in elementbezug_sichern(model, flaechen) if x["grund"]]
+
+
+def _nicht_eindeutig_grund(model: Model, x) -> str:
+    """"" wenn der Elementbezug der Sicherung ``x`` eindeutig uebertragbar ist
+    (:func:`elementbezug_nicht_eindeutig`), sonst der Grund im Klartext."""
+    if x["gleich"]:
+        return ""
+    f = x["objekt"]
+    try:
+        eben = str(getattr(f, "typ", "eben") or "eben") == "eben" and bool(f.eben(model))
+        A_geo = float(f.inhalt(model))
+    except Exception:                          # noqa: BLE001 - Geometrie nicht lesbar: nicht eindeutig
+        eben, A_geo = False, 0.0
+    A_netz = float(np.linalg.norm(x["vektor"], axis=1).sum())
+    if eben and A_geo > 0 and abs(A_netz - A_geo) <= ELEMENTBEZUG_FLAECHENTOL * A_geo:
+        return ""
+    if not eben:
+        warum = "die Fläche ist gewölbt"
+    else:
+        warum = (f"das Netz passt nicht mehr zur Geometrie der Fläche (Netz {A_netz:.4f} m², "
+                 f"Fläche {A_geo:.4f} m²)").replace(".", ",")
+    return f"{_bezug_text(x)} – nicht auf der ganzen Fläche gleich, und {warum}"
 
 
 def _nachbar_text(offen, grund) -> str:
@@ -1481,7 +1485,13 @@ def elementbezug_uebertragen(model: Model, sicherung: list, log: list = None) ->
     senkrecht zum Element (``FaceLoad`` ohne Richtung, ``dT_z``) wechselt das
     Vorzeichen, wenn das neue Element anders herum liegt als das alte - die
     Physik bleibt. Ist der Bezug auf der ganzen Flaeche gleich, bekommt jedes
-    neue Element ihn. Neue Elemente ohne Zuordnung bei ungleichem Bezug nennt
+    neue Element ihn. Ist er ungleich und passt das alte Netz nicht mehr zur
+    Flaeche (:func:`elementbezug_nicht_eindeutig` - fuer eine vom Anwender
+    gewaehlte Flaeche, Nachbarn bricht mit_vernetzten_nachbarn vorher ab), wird
+    nichts uebertragen: das Protokoll warnt und nennt, was entfaellt, ein
+    Flaechenlager behaelt die Meldung „Netz geändert – Lager prüfen“ - nie
+    liegt etwas still an einem anderen Ort (Befund 11 vom 11.11.2026). Neue
+    Elemente ohne Zuordnung bei ungleichem Bezug nennt
     das Protokoll als Warnung (dort fehlt dann, was vorher da war), und ein
     Flaechenlager darauf bleibt bei der Meldung „Netz geändert – Lager prüfen“;
     sonst zaehlt sein Teil auf dieser Flaeche nicht mehr als entfallen.
@@ -1499,6 +1509,12 @@ def elementbezug_uebertragen(model: Model, sicherung: list, log: list = None) ->
         f = x["objekt"]
         neu = [int(e) for e in (f.elemente or []) if 0 <= int(e) < ne
                and str(model.elements[int(e)].typ).startswith("shell")]
+        if x.get("grund"):
+            aus["ohne"][x["flaeche"]] = len(neu)
+            if log is not None:
+                C.warn(log, f"Fläche {x['flaeche']}: nicht auf das neue Netz übertragen, der Ort ist nicht "
+                            f"eindeutig – {x['grund']}. Das entfällt; bitte prüfen und neu setzen.")
+            continue
         if not neu:
             if log is not None:
                 C.warn(log, f"Fläche {x['flaeche']}: ohne neues Netz – nicht übertragen: {_bezug_text(x)}")

@@ -150,34 +150,69 @@ def test_ganze_flaeche_folgt(weg):
 
 
 def test_teil_der_flaeche_meldet(weg):
-    """Bettung auf zwei der vier Elemente von A: im neuen Netz ist der Ort
-    nicht eindeutig - Meldung, nie still auf anderen Elementen."""
+    """Bettung auf zwei der vier Elemente von A, A feiner neu vernetzt.
+
+    Bis Stand 51 galt der Ort im neuen Netz als nicht eindeutig - Meldung, kein
+    Element mehr. Seit dem 14.11.2026 (Befund A'2, Behebung freigegeben:
+    „Teilmengen über den Elementmittelpunkt in den alten Elementen“) folgt die
+    Bettung auf die neuen Elemente, deren Mittelpunkt in einem ihrer alten
+    Elemente liegt: dieselbe Flaeche (0,5 m²), keine Meldung. Nicht eindeutig
+    ist es erst, wenn die Geometrie nicht mehr zum alten Netz passt - dann
+    bleibt die Meldung, und nie liegt die Bettung still ausserhalb ihres alten
+    Orts."""
     m = zwei_flaechen()
     alt = list(m.flaechen["A"].elemente)[:2]
+    ecken = [np.asarray(m.nodes)[m.elements[int(e)].nodes[:4]] for e in alt]
+    lo = np.min([E.min(axis=0) for E in ecken], axis=0)
+    hi = np.max([E.max(axis=0) for E in ecken], axis=0)
     ss = m.add_surface_support(elements=alt, name="Bettung", uz=DofBehaviour("spring", stiffness=1e7))
+    m.netz.ziellaenge = 0.25
     if weg == "Oberfläche":
         gui_vernetzen(m, flaechen=[m.flaechen["A"]], koerper=[])
     else:
         still(mesher.modell_vernetzen, m, [], workers=1, flaechen=[m.flaechen["A"]], koerper=[])
     mel = lager_meldung(m, ss)
-    check(f"**Befund 11, {weg}: Bettung auf einem Teil von A, A neu vernetzt – Meldung, kein Element mehr**",
-          ss.elements == [] and mel and mel[0].stufe != "WARNUNG",
+    X = np.asarray(m.nodes)
+    mitten = [X[m.elements[int(e)].nodes].mean(axis=0) for e in ss.elements]
+    drin = all(np.all(c >= lo - 1e-9) and np.all(c <= hi + 1e-9) for c in mitten)
+    check(f"**Befund 11, {weg}: Bettung auf einem Teil von A, A feiner neu vernetzt – sie folgt über den "
+          "Elementmittelpunkt (0,500 m², nur am alten Ort), keine Meldung**",
+          len(ss.elements) > len(alt) and drin and abs(flaeche_von(m, ss) - 0.5) < 1e-9 and not mel,
+          f"Bettung {len(ss.elements)} Elemente, {flaeche_von(m, ss):.4f} m², Meldung "
+          f"{[b.text[:70] for b in mel]}")
+    # Geometrie von A nach dem Vernetzen geaendert: nicht eindeutig - die Meldung bleibt
+    m = zwei_flaechen()
+    alt = list(m.flaechen["A"].elemente)[:2]
+    ss = m.add_surface_support(elements=alt, name="Bettung", uz=DofBehaviour("spring", stiffness=1e7))
+    m.nodes[3] = [-0.5, 1.0, 0.0]
+    log = []
+    if weg == "Oberfläche":
+        log = gui_vernetzen(m, flaechen=[m.flaechen["A"]], koerper=[])
+    else:
+        still(mesher.modell_vernetzen, m, log, workers=1, flaechen=[m.flaechen["A"]], koerper=[])
+    mel = lager_meldung(m, ss)
+    check(f"**Befund 11, {weg}: dasselbe, aber die Geometrie von A passt nicht mehr zum alten Netz – "
+          "Meldung „Netz geändert“ bleibt, das Protokoll warnt**",
+          bool(mel) and mel[0].stufe != "" and any("nicht eindeutig" in z for z in log),
           f"Bettung {ss.elements}, Meldung {[b.text[:70] for b in mel]}")
 
 
 def test_beide_flaechen_teilweise():
-    """Bettung auf ganz B und halb A, beide neu vernetzt: B folgt, der Teil auf A
-    entfaellt - die Meldung sagt es, die Bettung liegt nur auf B."""
+    """Bettung auf ganz B und halb A, beide neu vernetzt: B folgt (ganze Flaeche),
+    der Teil auf A folgt seit dem 14.11.2026 ueber den Elementmittelpunkt
+    (Befund A'2) - bis Stand 51 entfiel er mit WARNUNG. Zusammen 1,5 m²."""
     m = zwei_flaechen()
     ss = m.add_surface_support(elements=list(m.flaechen["A"].elemente)[:2] + list(m.flaechen["B"].elemente),
                                name="Bettung", uz=DofBehaviour("spring", stiffness=1e7))
     gui_vernetzen(m)
     xm = x_mitten(m, ss.elements)
     mel = lager_meldung(m, ss)
-    check("Befund 11, Oberfläche: ganz B und halb A – B folgt, halb A entfällt mit WARNUNG (2 Elemente)",
-          sorted(ss.elements) == sorted(m.flaechen["B"].elemente) and min(xm) > 1.0
-          and mel and mel[0].stufe == "WARNUNG" and int(mel[0].wert) == 2,
-          f"Bettung {ss.elements}, Meldung {[b.text[:90] for b in mel]}")
+    auf_b = set(int(e) for e in m.flaechen["B"].elemente)
+    check("Befund 11, Oberfläche: ganz B und halb A – B folgt, halb A folgt über den Elementmittelpunkt "
+          "(1,500 m²), keine Meldung",
+          auf_b <= set(int(e) for e in ss.elements) and min(xm) < 1.0
+          and abs(flaeche_von(m, ss) - 1.5) < 1e-9 and not mel,
+          f"Bettung {ss.elements}, {flaeche_von(m, ss):.4f} m², Meldung {[b.text[:90] for b in mel]}")
 
 
 def quader() -> Model:
