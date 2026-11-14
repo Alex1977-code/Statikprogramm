@@ -411,7 +411,11 @@ def test_merkmale():
         mk = rv.merkmal(nm)
         check(f"Merkmal {nm} mit Stand 51 (Fehlerkorrektur)", mk is not None and mk.wechsel[-1].stand == 51
               and mk.wechsel[-1].art == rv.FEHLERKORREKTUR, mk and [w.stand for w in mk.wechsel])
-    check("VERFAHRENSSTAND 51", rv.VERFAHRENSSTAND == 51, str(rv.VERFAHRENSSTAND))
+    # Nach dem Zusammenfuehren mit spaeteren Staenden (bis 58) ist der hoechste Stand
+    # groesser; geprueft wird, dass Stand 51 enthalten ist und der hoechste Stand gilt.
+    check("VERFAHRENSSTAND mindestens 51 und gleich dem hoechsten Stand",
+          rv.VERFAHRENSSTAND >= 51 and rv.VERFAHRENSSTAND == max(w.stand for m in rv.MERKMALE for w in m.wechsel),
+          str(rv.VERFAHRENSSTAND))
     # Woelbnachweis an einem U-Profil -> Merkmal betrifft das Modell
     from statik3d.profiles import make_section
     m = _modell_mit(make_section("UPE 200"), benutzt=["UPE 200"])
