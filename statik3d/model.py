@@ -10838,6 +10838,16 @@ class Model:
         n_loads = sum(lc.n_loads for lc in self.load_cases.values())
         if n_loads == 0:
             msgs.append("WARNUNG: keine Lasten definiert")
+        # Theorie III. Ordnung rechnet keine Woelbkrafttorsion (Befund B3 vom
+        # 14.11.2026, Entscheidung des Anwenders: vor dem Rechnen abweisen)
+        th3 = [str(o.name) for o in list(self.load_cases.values()) + list(self.combinations.values())
+               if self.theorie_von(o) == "III"]
+        if th3 and any(self.stab_woelbt(e) for e in self.elements):
+            from .theorie3 import woelb_sperre
+            text = woelb_sperre(self)
+            if text:
+                msgs.append(f"FEHLER: {text} (nach Theorie III. Ordnung gestellt: "
+                            + ", ".join(th3[:6]) + (" …" if len(th3) > 6 else "") + ")")
         # einmal, nicht je Flaechenlast: auf Modulebene steht der Import in
         # model.py nirgends (Ringschluss mit elements.solid)
         from .elements import solid as _sl

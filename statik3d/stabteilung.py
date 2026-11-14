@@ -160,9 +160,11 @@ def kraefte_theorie1(model, system, factors: dict) -> dict:
     from .solver import case_loads, case_prescribed, anfangsnormalkraefte
     from .theorie2 import normalkraefte_kg
     aktiv = getattr(system, "aktiv", None)
-    F, _feq, _q, _temp = case_loads(model, factors, aktiv)
+    F, feq, _q, _temp = case_loads(model, factors, aktiv)
     u = system.solve(F, us=case_prescribed(model, factors))
-    return normalkraefte_kg(model, u, aktiv, anfangsnormalkraefte(model, factors, aktiv))
+    # mit den Stablasten: ein Laengsgelenk traegt die Last in Stabrichtung
+    # (Befund B1 vom 14.11.2026 - bis dahin N = 0, der Stab blieb ungeteilt)
+    return normalkraefte_kg(model, u, aktiv, anfangsnormalkraefte(model, factors, aktiv), feq)
 
 
 def teilzahlen(model, aktiv=None, faktor: int = 1, kraefte: dict = None) -> dict:
