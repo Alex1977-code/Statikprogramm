@@ -707,13 +707,26 @@ def _dreh(sig: tuple, phi: float) -> tuple:
     return su, sv, tuv
 
 
+def _spannungsachsen(model, e, d):
+    """Die Achsen, in denen res.shell_stress die Schnittgroessen n eines
+    Schalenelements fuehrt: das Flaechensystem (solver.flaechen_bezugssystem),
+    das shell_derived unter "T3" mitgibt."""
+    import numpy as np
+    T3 = d.get("T3") if isinstance(d, dict) else None
+    if T3 is not None:
+        return np.asarray(T3, float)
+    from ..elements import shell as sh
+    from ..solver import flaechen_bezugssystem
+    X = model.nodes[e.nodes]
+    return flaechen_bezugssystem(sh.shell_frame(X[0], X[1], X[2])[0])
+
+
 def feldspannungen(model, res, elemente, u, v) -> dict:
     """Membranspannungen des Feldes in den Feldachsen u und v [Pa].
 
     Druck wird **positiv** zurueckgegeben (so rechnet EN 1993-1-5).
     """
     import numpy as np
-    from ..elements import shell as sh
     su_l, sv_l, t_l = [], [], []
     for i in elemente:
         i = int(i)
@@ -724,8 +737,11 @@ def feldspannungen(model, res, elemente, u, v) -> dict:
         t = model.shells[e.sec].t
         n = d["n"]
         sig = (float(n[0]) / t, float(n[1]) / t, float(n[2]) / t)
-        X = model.nodes[e.nodes]
-        T3, _a, _b = sh.shell_frame(X[0], X[1], X[2])
+        # n steht im Flaechensystem d["T3"] (Befund A20, 09.11.2026); bis zum
+        # 12.11.2026 wurde es hier mit der ersten Elementkante gedreht - ein Feld
+        # mit gegen die Flaechenachsen verdrehten Elementen bekam andere
+        # Beulspannungen (30°: σ_u 22,6 statt 25,9 N/mm², 90°: σ_u und σ_v vertauscht)
+        T3 = _spannungsachsen(model, e, d)
         ex = np.asarray(T3[0], float)
         phi = math.atan2(float(ex @ v), float(ex @ u))
         a, b, c = _dreh(sig, -phi)
@@ -791,7 +807,6 @@ def _zylinderrahmen(model, elemente) -> tuple:
 def zylinderspannungen(model, res, elemente, achse, mitte) -> dict:
     """Membranspannungen in Meridian- und Umfangsrichtung [Pa], Druck positiv."""
     import numpy as np
-    from ..elements import shell as sh
     sm, su, tt = [], [], []
     for i in elemente:
         i = int(i)
@@ -802,8 +817,7 @@ def zylinderspannungen(model, res, elemente, achse, mitte) -> dict:
         t = model.shells[e.sec].t
         n = d["n"]
         sig = (float(n[0]) / t, float(n[1]) / t, float(n[2]) / t)
-        X = model.nodes[e.nodes]
-        T3, _a, _b = sh.shell_frame(X[0], X[1], X[2])
+        T3 = _spannungsachsen(model, e, d)      # Flaechensystem wie feldspannungen
         ex = np.asarray(T3[0], float)
         ey = np.asarray(T3[1], float)
         nz = np.asarray(T3[2], float)

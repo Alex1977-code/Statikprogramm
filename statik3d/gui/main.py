@@ -14014,49 +14014,14 @@ class MainWindow(QtWidgets.QMainWindow):
         Elementnummern sind Positionen in einer Liste; loescht man eine, wandern
         alle dahinter. Darum werden hier Stabzuege, Lasten, Bereiche und die
         Netze der anderen Objekte in einem Zug mitgefuehrt.
+
+        Seit dem 12.11.2026 ueber Model.elemente_loeschen - derselbe Weg wie
+        ohne Fenster (mesher.modell_vernetzen). Bis dahin nummerierte diese
+        Methode selbst um und liess die elementbezogenen Flaechenlager stehen:
+        nach dem Neuvernetzen einer Nachbarflaeche lag eine Bettung still auf
+        deren Elementen (Befund 11 der Pruefagenten, Korrektur A22 unvollstaendig).
         """
-        weg = sorted({int(e) for e in (elemente or [])}, reverse=True)
-        if not weg:
-            return
-        m = self.model
-        wegmenge = set(weg)
-        neu_nr = {}
-        k = 0
-        for i in range(len(m.elements)):
-            if i in wegmenge:
-                continue
-            neu_nr[i] = k
-            k += 1
-        m.elements = [e for i, e in enumerate(m.elements) if i not in wegmenge]
-
-        def um(liste):
-            return [neu_nr[i] for i in (liste or []) if i in neu_nr]
-
-        for mem in m.members.values():
-            mem.elements = um(mem.elements)
-        for f in m.flaechen.values():
-            f.elemente = um(f.elemente)
-            # Die Randseiten zeigen auf Element **und** lokale Seite; ohne sie
-            # nachzuziehen haenge jede Flaechenlast auf einem Volumen falsch.
-            f.randseiten = [[neu_nr[int(e)], int(seite)]
-                            for e, seite in (f.randseiten or [])
-                            if int(e) in neu_nr]
-        for kb in m.koerper.values():
-            kb.elemente = um(kb.elemente)
-        for vb in m.volumenbereiche.values():
-            vb.elemente = um(vb.elemente)
-        for h in m.hinges.values():
-            h.elemente = um(getattr(h, "elemente", []) or [])
-        for lc in m.load_cases.values():
-            lc.beam_loads = [l for l in lc.beam_loads if l.elem in neu_nr]
-            for l in lc.beam_loads:
-                l.elem = neu_nr[l.elem]
-            lc.face_loads = [l for l in lc.face_loads if l.elem in neu_nr]
-            for l in lc.face_loads:
-                l.elem = neu_nr[l.elem]
-            lc.temp_loads = [l for l in lc.temp_loads if l.elem in neu_nr]
-            for l in lc.temp_loads:
-                l.elem = neu_nr[l.elem]
+        self.model.elemente_loeschen(elemente)
 
     def _fortschritt_beginnen(self, gesamt: int, text: str = "", abbrechbar: bool = True):
         """Fortschrittsbalken in der Statuszeile: bestimmt (0 … gesamt), mit
@@ -23680,6 +23645,9 @@ class MainWindow(QtWidgets.QMainWindow):
                   + (f"; Windkanal Re = {wk_['re']:.0f}, c_p {wk_['cp_min']:+.2f} … {wk_['cp_max']:+.2f}" if wk_ else "")
                   + (f"; {bg.anzahl(len(kw['hinweise']), 'Hinweis', 'Hinweise')} im Protokoll"
                      if kw.get("hinweise") else ""))
+        # vor dem Erzeugen umgedrehte Schalenelemente (Befund A10, 14.11.2026)
+        for zeile in kw.get("schalenlage") or []:
+            self.log.appendPlainText("  Hinweis: " + zeile)
         for zeile in wm.erlaeuterung(wd, kw):
             self.log.appendPlainText("  " + zeile)
         self.refresh_all()
@@ -23807,6 +23775,9 @@ class MainWindow(QtWidgets.QMainWindow):
                   f"Kontrollsumme {kw['kontrolle']['betrag'] / 1e3:.1f} kN"
                   + (f", q = {kw['q']:.3f} m³/(s·m), v_max = {kw['v_max']:.2f} m/s, p_max = {kw['p_max'] / 1e3:.1f} kN/m²"
                      if kw.get("verfahren") == "numerisch" else ""))
+        # vor dem Erzeugen umgedrehte Schalenelemente (Befund A10, 14.11.2026)
+        for zeile in kw.get("schalenlage") or []:
+            self.log.appendPlainText("  Hinweis: " + zeile)
         for zeile in wdm.erlaeuterung(wd, kw):
             self.log.appendPlainText("  " + zeile)
         self.refresh_all()
@@ -26550,6 +26521,13 @@ class MainWindow(QtWidgets.QMainWindow):
         log = []
         fugen.stabenden_erneuern(self.model, log)
         for z in log:
+            self.log.appendPlainText(z)
+        # Schalenelemente einheitlich ausrichten (statik3d.schalenlage,
+        # 12.11.2026) - hier, vor dem Festhalten des Modellstands: der Solver
+        # taete es sonst im Hintergrund, und das Ergebnis gaelte als „Modell
+        # waehrend der Rechnung geaendert“
+        from ..schalenlage import schalen_ausrichten
+        for z in schalen_ausrichten(self.model):
             self.log.appendPlainText(z)
         d = diagnose(self.model)
         nf, nk = len(d["unvernetzte_flaechen"]), len(d["unvernetzte_koerper"])

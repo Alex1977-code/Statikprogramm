@@ -144,7 +144,17 @@ def _vorschlag(art, kw, fy, fu, sorte=""):
 
 def test_vorschlag():
     for art, kw in KRAEFTE:
-        t, meldung = _vorschlag(art, kw, 235e6, 360e6)
+        if art == "kopfplatte":
+            # Die Naehte der Kopfplatte bemisst der Vorschlag mit β_w der Stahlsorte - ohne
+            # Sorte seit dem 12.11.2026 kein Vorschlag (bis dahin still S355, Pruefbericht
+            # 11.11.2026, Befund 2); mit Sorte und Werten wie bisher
+            t, meldung = _vorschlag(art, kw, 235e6, 360e6)
+            check(f"Vorschlag {art}: f_y 235, f_u 360 ohne Sorte: kein Vorschlag, Meldung nennt Stahlsorte und „X“",
+                  t is None and "Stahlsorte" in meldung and "„X“" in meldung and "kein Vorgabewert" in meldung,
+                  meldung or "Vorschlag ohne Sorte")
+            t, meldung = _vorschlag(art, kw, 235e6, 360e6, "S235")
+        else:
+            t, meldung = _vorschlag(art, kw, 235e6, 360e6)
         check(f"Vorschlag {art}: f_y 235, f_u 360 angegeben: Vorschlag mit 235/360 N/mm² wie bisher",
               t is not None and (t.fy, t.fu) == (235e6, 360e6), meldung or f"{t.fy / 1e6:.1f}/{t.fu / 1e6:.1f}")
         t, meldung = _vorschlag(art, kw, None, None, "S235")

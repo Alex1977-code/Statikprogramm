@@ -1403,7 +1403,7 @@ def gelenkkette(model, voll) -> "dict | None":
             if C is None:
                 continue
             ul = T @ u[[int(k) for k in e.nodes]].reshape(-1)
-            A = asm.beam_versatz(e)
+            A = asm.stab_versatz(model, e)
             if A is not None:
                 ul = A @ ul
             sprung = C @ ul - ul

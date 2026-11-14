@@ -62,17 +62,34 @@ def element_dofs(e, model: Model = None) -> np.ndarray:
     return np.array(d, dtype=int)
 
 
-def beam_local(model: Model, e):
+def beam_local(model: Model, e, punkte=None):
     """Lokale Steifigkeitsmatrix (12x12), T3, T (12x12), L eines Stabelements.
 
     Fachwerkstab und Seil: nur die Laengssteifigkeit (das Seil ist nach
     Theorie I. Ordnung ein Zugstab; Ausfall bei Druck ueber die
     Aktivmengen-Iteration, die Kettenlinie rechnet Theorie III. Ordnung).
+
+    ``punkte``: Anfang und Ende des Stabes statt seiner Knoten (Theorie III.
+    Ordnung legt einen Stab mit Versatz zwischen seine Stabenden, 12.11.2026).
+    Ohne ``punkte`` liegt ein Stab mit verschiedenem Versatz an den Enden
+    zwischen seinen versetzten Stabenden (:func:`stab_achsen`, seit dem
+    12.11.2026 auch nach Theorie I. und II. Ordnung). Die Achsen sind in
+    beiden Faellen die der Knotenlinie, auf die Stabrichtung gedreht
+    (bm.stab_achsen_versetzt, Verfahrensstand 41); mit gleichem Versatz an
+    beiden Enden (die Punkte nur parallel verschoben) wie bisher local_axes
+    zwischen ihnen (bitgleich).
     """
     mat = model.materials[e.mat]
     sec = model.sections[e.sec]
-    X = model.nodes[e.nodes]
-    T3, L = bm.local_axes(X[0], X[1], e.roll)
+    if punkte is None:
+        T3, L = stab_achsen(model, e)
+    else:
+        P = np.asarray(punkte, float)
+        if stab_arme(model, e) is None:
+            T3, L = bm.local_axes(P[0], P[1], e.roll)
+        else:
+            X = np.asarray(model.nodes[e.nodes], float)
+            T3, L = bm.stab_achsen_versetzt(X[0], X[1], e.roll, P[0], P[1])
     T = bm.transform_matrix(T3)
     if e.typ in ("truss", "seil"):
         kl = bm.k_local_truss(mat.E, sec.A, L)
@@ -84,22 +101,62 @@ def beam_local(model: Model, e):
 
 def beam_versatz(e):
     """Starre Versaetze der Stabenden (Exzentrizitaet) als 12x12-Matrix A
-    in lokalen Achsen: u_stab = A u_knoten. None ohne Versatz."""
+    in den lokalen Achsen der **Knotenlinie**: u_stab = A u_knoten. None ohne
+    Versatz. Die Rechnung nimmt :func:`stab_versatz` (die Achsen des Stabs
+    zwischen seinen versetzten Enden); bei gleichem Versatz an beiden Enden
+    ist es dieselbe Matrix."""
+    rr = bm.versatz_vektoren(getattr(e, "exzentrizitaet", None))
+    if rr is None:
+        return None
+    return bm.versatz_matrix(rr[0], rr[1])
+
+
+def stab_arme(model: Model, e):
+    """Die starren Arme (2, 3) global vom Knoten zum Stabende, wenn der Versatz
+    an Anfang und Ende verschieden ist - sonst None (bm.versatz_arme)."""
     ex = getattr(e, "exzentrizitaet", None)
-    if not ex:
+    if not ex or e.typ not in LINE_TYPES or len(e.nodes) < 2:
         return None
-    r1 = np.zeros(3)
-    r2 = np.zeros(3)
-    try:
-        if len(ex) >= 1 and ex[0] is not None:
-            r1[:len(ex[0])] = np.asarray(ex[0], float)[:3]
-        if len(ex) >= 2 and ex[1] is not None:
-            r2[:len(ex[1])] = np.asarray(ex[1], float)[:3]
-    except (TypeError, ValueError):
+    X = model.nodes[e.nodes]
+    return bm.versatz_arme(X[0], X[1], e.roll, ex)
+
+
+def stab_achsen(model: Model, e):
+    """(T3, L) eines Stabelements: lokale Achsen und Laenge des Stabs.
+
+    Mit verschiedenem Versatz an Anfang und Ende liegt der Stab zwischen
+    seinen versetzten Enden P_i = x_i + a_i (:func:`stab_arme`), sonst
+    zwischen den Knoten (gleicher Versatz verschiebt nur parallel). Bis zum
+    12.11.2026 kamen Achsen und Laenge nach Theorie I. und II. Ordnung immer
+    von der Knotenlinie: Kragarm, Zug 50 kN durch die Einspannung, Versatz
+    0,1 m quer nur am Ende - Einspannmoment 5,0 statt 0 kNm, die Momente um
+    die Einspannung nicht im Gleichgewicht (tests/test_versatz_starrer_arm.py).
+
+    Die Achsen des Stabs sind die der Knotenlinie, durch die kleinste Drehung
+    auf die Stabrichtung gebracht (bm.stab_achsen_versetzt, Verfahrensstand
+    41, 14.11.2026). Bis dahin kamen sie aus local_axes der versetzten Linie:
+    an einer lotrechten Knotenlinie drehte der Querschnitt um 90 bzw. 180 Grad.
+    """
+    X = model.nodes[e.nodes]
+    arme = stab_arme(model, e)
+    if arme is None:
+        return bm.local_axes(X[0], X[1], e.roll)
+    return bm.stab_achsen_versetzt(X[0], X[1], e.roll, X[0] + arme[0], X[1] + arme[1])
+
+
+def stab_versatz(model: Model, e):
+    """Die Versatzmatrix A (12x12, u_stab = A u_knoten) in den Achsen des
+    Stabs (:func:`stab_achsen`): der Versatz als starrer Arm vom Knoten zum
+    Stabende, wie in Theorie III. Ordnung. None ohne Versatz; bei gleichem
+    Versatz an beiden Enden :func:`beam_versatz` (bitgleich wie bisher)."""
+    A = beam_versatz(e)
+    if A is None:
         return None
-    if not (np.any(r1) or np.any(r2)):
-        return None
-    return bm.versatz_matrix(r1, r2)
+    arme = stab_arme(model, e)
+    if arme is None:
+        return A
+    T3, _L = stab_achsen(model, e)
+    return bm.versatz_matrix(T3 @ arme[0], T3 @ arme[1])
 
 
 def beam_woelb_local(model: Model, e):
@@ -107,8 +164,7 @@ def beam_woelb_local(model: Model, e):
     (12 Stab-FHG + Verwoelbung an beiden Enden), dazu T3, L."""
     mat = model.materials[e.mat]
     sec = model.sections[e.sec]
-    X = model.nodes[e.nodes]
-    T3, L = bm.local_axes(X[0], X[1], e.roll)
+    T3, L = stab_achsen(model, e)
     kl = bm.k_local_beam14(mat.E, mat.G, sec.A, sec.Iy, sec.Iz, sec.It,
                            float(getattr(sec, "Iw", 0.0) or 0.0), L, sec.Asy, sec.Asz)
     return kl, T3, L
@@ -275,7 +331,7 @@ def element_matrix(model: Model, e):
     if e.typ in LINE_TYPES:
         if model.stab_woelbt(e):
             kl, T3, L = beam_woelb_local(model, e)
-            A = beam_versatz(e)
+            A = stab_versatz(model, e)
             if A is not None:
                 A14 = np.eye(14)
                 A14[:12, :12] = A
@@ -287,7 +343,7 @@ def element_matrix(model: Model, e):
             kl, _, _ = hinge_springs(kl, np.zeros(12), e.hinge_springs)
         if e.hinges:
             kl, _, _ = condense(kl, np.zeros(12), e.hinges)
-        A = beam_versatz(e)
+        A = stab_versatz(model, e)
         if A is not None:
             kl = A.T @ kl @ A
         return T.T @ kl @ T
@@ -348,11 +404,11 @@ def element_mass(model: Model, e):
     X = model.nodes[e.nodes]
     if e.typ in LINE_TYPES:
         sec = model.sections[e.sec]
-        T3, L = bm.local_axes(X[0], X[1], e.roll)
+        T3, L = stab_achsen(model, e)
         if model.stab_woelbt(e):
             ml = bm.m_local_beam14(mat.rho, sec.A, L, sec.Iy + sec.Iz,
                                    float(getattr(sec, "Iw", 0.0) or 0.0))
-            A = beam_versatz(e)
+            A = stab_versatz(model, e)
             if A is not None:
                 A14 = np.eye(14)
                 A14[:12, :12] = A
@@ -361,7 +417,7 @@ def element_mass(model: Model, e):
             return T.T @ ml @ T
         T = bm.transform_matrix(T3)
         ml = bm.m_local_beam(mat.rho, sec.A, L, sec.Iy + sec.Iz)
-        A = beam_versatz(e)
+        A = stab_versatz(model, e)
         if A is not None:
             ml = A.T @ ml @ A
         return T.T @ ml @ T
@@ -1774,17 +1830,28 @@ def stab_normalkraft(model: Model, e, u: np.ndarray, n_anfang: float = 0.0, _ach
     Ohne Versatz, Laengsfeder und Anfangsdehnung ist es dieselbe Zahl wie bis
     zum 13.10.2026 (E A Δl/L). Gemittelt ueber das Element - eine
     Streckenlast in Stabrichtung aendert N entlang des Stabs.
-    ``_achsen`` (T, L): schon gerechnete Transformation (geometric_stiffness)."""
+    ``_achsen`` (T, L): schon gerechnete Transformation (geometric_stiffness).
+
+    Ein Laengsgelenk (lokaler FHG 0 oder 6 frei, auch Federgelenk mit k = 0,
+    das als Gelenk am Element steht) laesst das Stabende in Stabrichtung
+    frei: der Stab traegt keine Normalkraft, auch nicht aus seiner
+    Anfangsdehnung - N = 0 wie im Ergebnis (kondensierte Steifigkeit). Bis
+    zum 12.11.2026 nahm die Funktion E A Δl/L aus den Knotenverschiebungen:
+    die geometrische Steifigkeit rechnete mit einer Scheinnormalkraft
+    (Befund 33 des Pruefberichts vom 11.11.2026: Stuetze mit Laengsgelenk
+    unter Querlast nach Theorie II. Ordnung 3,88 statt 3,125 kNm, alpha_cr
+    4,374 statt keiner Verzweigung; gezogen 2,69 kNm, unsichere Seite)."""
+    if any(int(d) in (0, 6) for d in (e.hinges or [])):
+        return 0.0
     mat = model.materials[e.mat]
     sec = model.sections[e.sec]
     if _achsen is None:
-        X = model.nodes[e.nodes]
-        T3, L = bm.local_axes(X[0], X[1], e.roll)
+        T3, L = stab_achsen(model, e)
         T = bm.transform_matrix(T3)
     else:
         T, L = _achsen
     ul = T @ np.asarray(u, float)[element_dofs(e, model)[:12]]
-    A = beam_versatz(e)
+    A = stab_versatz(model, e)
     if A is not None:
         ul = A @ ul                     # das Stabende hinter dem Versatz
     federn = [(int(d), float(k)) for d, k in (getattr(e, "hinge_springs", None) or [])
@@ -1797,9 +1864,167 @@ def stab_normalkraft(model: Model, e, u: np.ndarray, n_anfang: float = 0.0, _ach
     return N + float(n_anfang) if n_anfang else N
 
 
-def geometric_stiffness(model: Model, u: np.ndarray, aktiv=None, n_anfang: dict = None) -> sparse.csr_matrix:
+def versatz_arme_global(model: Model, e):
+    """Die starren Arme (2, 3) global vom Knoten zum Stabende fuer **jeden**
+    Versatz ungleich null, auch gleichen an beiden Enden (anders als
+    :func:`stab_arme`, das nur den verschiedenen meldet) - None ohne Versatz.
+    a_i = T3_Knotenlinie^T r_i wie bm.versatz_arme und theorie3._Stab."""
+    if e.typ not in LINE_TYPES or len(e.nodes) < 2:
+        return None
+    rr = bm.versatz_vektoren(getattr(e, "exzentrizitaet", None))
+    if rr is None:
+        return None
+    X = model.nodes[e.nodes]
+    T3n, _L = bm.local_axes(X[0], X[1], e.roll)
+    return np.vstack([T3n.T @ rr[0], T3n.T @ rr[1]])
+
+
+def stab_endkraefte_linear(model: Model, e, u: np.ndarray, f0=None):
+    """(f_l (12,), T3): die Stabendkraefte eines Stabelements nach Theorie I.
+    Ordnung aus dem Verschiebungsvektor ``u`` (ndof,) in den Achsen des Stabs
+    (:func:`stab_achsen`), hinter dem Versatz, mit Gelenken, Federgelenken und
+    den Stablasten ``f0`` (lokale Festeinspannkraefte, unkondensiert, wie
+    solver.case_loads sie als feq liefert) - derselbe Weg wie die
+    Ergebnisrueckrechnung (solver.postprocess, Stabendkraefte ohne k_G). Mit
+    T3 (die Achsen des Stabs) wird f_l global."""
+    d = element_dofs(e, model)
+    f0 = np.zeros(12) if f0 is None else np.asarray(f0, float)
+    u = np.asarray(u, float)
+    if model.stab_woelbt(e):
+        kl, T3, _L = beam_woelb_local(model, e)
+        ul = transform14(T3) @ u[d]
+        A = stab_versatz(model, e)
+        if A is not None:
+            A14 = np.eye(14)
+            A14[:12, :12] = A
+            ul = A14 @ ul
+        f14 = np.zeros(14)
+        f14[:12] = f0
+        return (kl @ ul - f14)[:12], T3
+    kl, T3, T, _L = beam_local(model, e)
+    ul = T @ u[d[:12]]
+    A = stab_versatz(model, e)
+    if A is not None:
+        ul = A @ ul
+    kl_s, f_s, rec = kl, f0, None
+    if getattr(e, "hinge_springs", None):
+        kl_s, f_s, rec = hinge_springs(kl, f0, e.hinge_springs)
+    if e.hinges:
+        _k, _f, cond = condense(kl_s, f_s, e.hinges)
+        if cond is not None:
+            c, r, Kcc_inv, Kcr = cond
+            ul = ul.copy()
+            ul[c] = Kcc_inv @ (f_s[c] - Kcr @ ul[r])
+    if rec is not None:
+        ul = hinge_local_disp(rec, ul)
+    return kl @ ul - f0, T3
+
+
+# Armanteil der geometrischen Steifigkeit (14.11.2026, Verfahrensstand 40).
+# Der Versatz eines Stabendes ist ein starrer Arm a vom Knoten zum Stabende
+# (stab_versatz, seit Stand 38 auch nach Theorie I. und II. Ordnung). Dreht
+# sich der Knoten um theta, liegt das Stabende bei x + R(theta) a; die
+# Stabendkraft F greift dort an, und der Knoten bekommt das Moment
+# R(theta) a x F. Linear in theta:
+#
+#     delta (R a x F) = (delta_theta x a) x F = [F]x [a]x delta_theta,
+#
+# ein Beitrag K_a = [F]x [a]x = a F^T - (a . F) I zum Drehblock des Knotens -
+# wie die Tangente der Theorie III. Ordnung (theorie3._Stab.knoten). Bis
+# dahin blieb das Moment a x F beim unverdrehten Arm: Kragarm 4 m, Versatz bis
+# 0,11 m, Druck 200 kN mit Momenten an der Spitze - Einspannmoment Mz nach
+# Theorie II. Ordnung 1,355 statt 1,301 kNm (Theorie III.), das Gleichgewicht
+# am verformten System fehlte um (theta x a) x F; Gelenkstuetze mit axialen
+# Armen 0,5 m an beiden Enden alpha_cr 129,54 (Euler des Stabs allein) statt
+# 83,96 - 54 % auf der unsicheren Seite (tests/test_versatz_arm_kg.py).
+#
+# K_a ist unsymmetrisch, sobald F nicht laengs des Arms liegt (der
+# schiefsymmetrische Teil -1/2 [a x F]x gehoert zum Moment des Arms). Die
+# Iteration nach Theorie II. Ordnung nimmt K_a voll: das ist die Statik des
+# gedrehten Arms, dieselbe wie nach Theorie III. Ordnung. Den symmetrischen
+# Teil hat sie in der Matrix, den schiefsymmetrischen als Last aus dem
+# vorigen Schritt (:func:`versatz_arm_schief`) - die Matrix bleibt
+# symmetrisch (ama verlangt das), im konvergierten Zustand gilt
+# (K + K_G + K_a) u = F wie mit der vollen Matrix. alpha_cr und das
+# Knicken nehmen den symmetrischen Teil: ihre Eigenwertloeser (eigsh, die
+# Zerlegung ohne Tausch in theorie2.groesstes_mu) setzen Symmetrie voraus,
+# und fuer jeden reellen Eigenvektor v des vollen Problems ist v^T K_a v =
+# v^T sym(K_a) v - nach Rayleigh liegt alpha_cr aus dem symmetrischen Teil
+# darum nie ueber dem kleinsten reellen Verzweigungsfaktor des vollen
+# Problems (sichere Seite). Liegt F laengs des Arms, sind beide gleich.
+def versatz_arm_kg(model: Model, u: np.ndarray, aktiv=None, feq: dict = None,
+                   teil: str = "voll", endkraefte: dict = None):
+    """Der Armanteil der geometrischen Steifigkeit (siehe oben) als
+    (rows, cols, vals) fuer alle wirkenden Stabelemente mit Versatz, oder
+    None ohne einen solchen. F ist die Stabendkraft nach Theorie I. Ordnung
+    des Zustands ``u`` mit den Stablasten ``feq`` (:func:`stab_endkraefte_linear`)
+    global, aus den Achsen des Stabs zwischen seinen versetzten Enden.
+    ``teil``: "voll", "symmetrisch" (alpha_cr, Knicken, Matrix der Theorie II.
+    Ordnung) oder "schief" (der Rest, :func:`versatz_arm_schief`).
+
+    ``endkraefte`` {Element: lokale Stabendkraefte (12,)} aus einem Ergebnis
+    (Results.beam_end) gehen fuer ihre Elemente der Rechnung aus ``u`` und
+    ``feq`` vor: die Verriegelung einer Vorspannkraft (Sollkraft) steht nur im
+    Ergebnis, nicht in ``feq`` (Verfahrensstand 41, 14.11.2026; bis dahin las
+    das Knicken mit Sollkraft im Band mit Arm die Kraft ohne sie - Knickfaktor
+    88,34 bzw. 1038,76 statt 801,61 bzw. 817,69)."""
+    feq = feq or {}
+    endkraefte = endkraefte or {}
+    rows, cols, vals = [], [], []
+    for i, e in enumerate(model.elements):
+        if e.typ not in LINE_TYPES or not _wirkt(aktiv, i):
+            continue
+        arme = versatz_arme_global(model, e)
+        if arme is None:
+            continue
+        if i in endkraefte:
+            fl = np.asarray(endkraefte[i], float)
+            T3, _L = stab_achsen(model, e)
+        else:
+            fl, T3 = stab_endkraefte_linear(model, e, u, feq.get(i))
+        d = element_dofs(e, model)
+        for k in range(2):
+            F = T3.T @ fl[6 * k:6 * k + 3]
+            Ka = bm._skew(F) @ bm._skew(arme[k])
+            if teil == "symmetrisch":
+                Ka = 0.5 * (Ka + Ka.T)
+            elif teil == "schief":
+                Ka = 0.5 * (Ka - Ka.T)
+            dd = d[6 * k + 3:6 * k + 6]
+            r, c = np.meshgrid(dd, dd, indexing="ij")
+            rows.append(r.ravel())
+            cols.append(c.ravel())
+            vals.append(Ka.ravel())
+    if not rows:
+        return None
+    return rows, cols, vals
+
+
+def versatz_arm_schief(model: Model, u: np.ndarray, aktiv=None, feq: dict = None):
+    """Der schiefsymmetrische Teil des Armanteils (:func:`versatz_arm_kg`) als
+    Matrix (ndof, ndof), oder None ohne Stab mit Versatz. Die Iteration nach
+    Theorie II. Ordnung setzt ihn als Last -K_s u des vorigen Schritts an."""
+    arm = versatz_arm_kg(model, u, aktiv, feq, "schief")
+    if arm is None:
+        return None
+    n = model.ndof
+    return sparse.coo_matrix(
+        (np.concatenate(arm[2]), (np.concatenate(arm[0]), np.concatenate(arm[1]))),
+        shape=(n, n)).tocsr()
+
+
+def geometric_stiffness(model: Model, u: np.ndarray, aktiv=None, n_anfang: dict = None,
+                        feq: dict = None, symmetrisch: bool = False,
+                        endkraefte: dict = None) -> sparse.csr_matrix:
     """Geometrische Steifigkeit aus vorhandenem Verformungszustand (nur Staebe);
     abgeschaltete Elemente (``aktiv`` False) bleiben weg.
+
+    Stabelemente mit Versatz bekommen den Armanteil (:func:`versatz_arm_kg`,
+    seit dem 14.11.2026) mit den Stablasten ``feq`` (solver.case_loads) in
+    ihrer Stabendkraft; ``symmetrisch`` nimmt davon nur den symmetrischen
+    Teil (alpha_cr, Knicken, Matrix der Theorie II. Ordnung). Ohne Stab mit
+    Versatz wie bisher. ``endkraefte`` (Results.beam_end, nur fuer Elemente
+    einer Sollkraft) siehe :func:`versatz_arm_kg`.
 
     ``n_anfang`` {Element: Normalkraft der Anfangsdehnung} (seit dem
     13.10.2026, solver.anfangsnormalkraefte): Temperatur, Vorspannung und
@@ -1822,8 +2047,7 @@ def geometric_stiffness(model: Model, u: np.ndarray, aktiv=None, n_anfang: dict 
         if e.typ not in LINE_TYPES or not _wirkt(aktiv, i):
             continue
         sec = model.sections[e.sec]
-        X = model.nodes[e.nodes]
-        T3, L = bm.local_axes(X[0], X[1], e.roll)
+        T3, L = stab_achsen(model, e)
         T = bm.transform_matrix(T3)
         d = element_dofs(e, model)[:12]
         N = stab_normalkraft(model, e, u, n_anfang.get(i, 0.0), _achsen=(T, L))
@@ -1839,8 +2063,10 @@ def geometric_stiffness(model: Model, u: np.ndarray, aktiv=None, n_anfang: dict 
         # Steifigkeit (element_matrix): K_G = A^T k_G A. Bis zum 09.11.2026
         # wirkte k_G auf die Knoten statt auf die Stabenden - ein Druckstab
         # 0,2 m neben seiner Knotenlinie hatte alpha_cr 1,158 statt 2,000
-        # (Nebenbefund 16 b, tests/test_theorie_nebenbefund16.py)
-        A = beam_versatz(e)
+        # (Nebenbefund 16 b, tests/test_theorie_nebenbefund16.py). Laenge und
+        # Achsen des Stabs zwischen seinen versetzten Enden (stab_achsen,
+        # 12.11.2026)
+        A = stab_versatz(model, e)
         if A is not None:
             kg = A.T @ kg @ A
         kg = T.T @ kg @ T
@@ -1848,6 +2074,12 @@ def geometric_stiffness(model: Model, u: np.ndarray, aktiv=None, n_anfang: dict 
         rows.append(r.ravel())
         cols.append(c.ravel())
         vals.append(kg.ravel())
+    # der Armanteil der Staebe mit Versatz (14.11.2026); ohne Versatz None
+    arm = versatz_arm_kg(model, u, aktiv, feq, "symmetrisch" if symmetrisch else "voll", endkraefte)
+    if arm is not None:
+        rows.extend(arm[0])
+        cols.extend(arm[1])
+        vals.extend(arm[2])
     if not rows:
         return sparse.csr_matrix((n, n))
     return sparse.coo_matrix(
@@ -2042,9 +2274,10 @@ def beam_load_local(model: Model, e, bl) -> tuple[np.ndarray, np.ndarray]:
     Länge“, seit 14.10.2026) gilt je Laenge der Projektion des Stabs senkrecht
     zur Lastrichtung; je Stablaenge ist sie um :func:`projektionsfaktor`
     kleiner, die Summe q l_proj bleibt. Bis zum 14.10.2026 liess der
-    RFEM-Import solche Lasten weg („Lastrichtung unbekannt“)."""
-    X = model.nodes[e.nodes]
-    T3, L = bm.local_axes(X[0], X[1], e.roll)
+    RFEM-Import solche Lasten weg („Lastrichtung unbekannt“). Die Achsen sind
+    die des Stabs (:func:`stab_achsen`, mit verschiedenem Versatz an den Enden
+    zwischen den versetzten Stabenden)."""
+    T3, L = stab_achsen(model, e)
     q1 = np.asarray(bl.q, float)
     q2 = np.asarray(bl.q2, float) if bl.q2 is not None else q1.copy()
     if bl.system == "global":
@@ -2087,8 +2320,7 @@ def element_equivalent_loads(model: Model, case: LoadCase, aktiv=None) -> dict[i
             if e.typ in LINE_TYPES and _wirkt(aktiv, i):
                 mat = model.materials[e.mat]
                 sec = model.sections[e.sec]
-                X = model.nodes[e.nodes]
-                T3, L = bm.local_axes(X[0], X[1], e.roll)
+                T3, L = stab_achsen(model, e)
                 q = T3 @ (mat.rho * sec.A * g)
                 out[i] = out.get(i, np.zeros(12)) + bm.fixed_end_forces(q, L)
     for tl in case.temp_loads:
@@ -2158,8 +2390,7 @@ def element_distributed_loads(model: Model, case: LoadCase, aktiv=None) -> dict[
             if e.typ in LINE_TYPES and _wirkt(aktiv, i):
                 mat = model.materials[e.mat]
                 sec = model.sections[e.sec]
-                X = model.nodes[e.nodes]
-                T3, L = bm.local_axes(X[0], X[1], e.roll)
+                T3, L = stab_achsen(model, e)
                 q = T3 @ (mat.rho * sec.A * g)
                 anhaengen(i, [0.0, L, *q, *q])
     return out
@@ -2305,7 +2536,7 @@ def stablasten_einbauen(model: Model, feq: dict, F: np.ndarray) -> None:
             kl, fl, _ = hinge_springs(kl, fl, e.hinge_springs)
         if e.hinges:
             _, fl, _ = condense(kl, fl, e.hinges)
-        A = beam_versatz(e)
+        A = stab_versatz(model, e)
         if A is not None:
             fl = A.T @ fl
         F[element_dofs(e, model)[:12]] += T.T @ fl

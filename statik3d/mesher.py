@@ -636,6 +636,7 @@ def mesh_flaeche(model: Model, flaeche, log: list = None, dreiecke: bool = None,
                 els.extend(_flaechenelemente(model, [a, b, c, d], mat, prop,
                                              flaeche.name, dreiecke, ordnung, kanten))
         flaeche.elemente = els
+        _ausrichten(model, flaeche, log)
         C.say(log, f"Fläche {flaeche.name}: {len(els)} "
                    + ("Dreieckelemente" if dreiecke else "Viereckelemente")
                    + (" (quadratisch)" if ordnung >= 2 else "") + f" ({nu} x {nv})")
@@ -654,6 +655,17 @@ def mesh_flaeche(model: Model, flaeche, log: list = None, dreiecke: bool = None,
 # ---------------------------------------------------------------------------
 # Schalenflaechen mit gemeinsamen Randlinien (09.11.2026)
 # ---------------------------------------------------------------------------
+def _ausrichten(model: Model, flaeche, log: list = None) -> None:
+    """Die neuen Elemente einer Flaeche zur Flaechennormalen ausrichten
+    (statik3d.schalenlage, 12.11.2026). Der Vernetzer legt sie schon im
+    Randumlauf an; frei vernetzte Dreiecke einer gewoelbten Flaeche richtet er
+    je Dreieck an der Normalen des Umlaufs aus, und die steht dort nicht
+    senkrecht auf jedem Dreieck - das Ausrichten verbindet sie ueber die
+    Kanten."""
+    from .schalenlage import schalen_ausrichten
+    schalen_ausrichten(model, log, nur_flaeche=flaeche)
+
+
 def _ist_schale(model: Model, f) -> bool:
     """Bekommt die Flaeche ein eigenes Schalennetz (Dicke, eigene Steifigkeit)?"""
     if getattr(f, "steifigkeit", ""):
@@ -781,10 +793,16 @@ def _teilplan(model: Model, schalen: list) -> dict:
     unverbunden und steht mit dem Grund in ``warnungen``. Gekruemmte Linien
     und Linien mit Zwischenknoten werden nicht geteilt.
 
+    Zwei Randlinien verschiedener Flaechen zwischen denselben Knoten (gerade,
+    oder gekruemmt auf derselben Kurve) sind im Netz immer eine Linie, mit
+    oder ohne fremden Knoten darauf (Befund 39 vom 11.11.2026).
+
     Rueckgabe: ``teilstuecke`` {Name: Line} (nur fuer :class:`_Netzgeometrie`),
     ``ersetzt`` (Linienliste -> Linienliste im Netz), ``zwang`` {Flaeche:
     [Linien]}, ``geteilt`` (Flaechen, die deshalb frei vernetzt werden),
-    ``beteiligt`` (alle Flaechen an einer Stelle), ``meldungen``, ``warnungen``."""
+    ``beteiligt`` (alle Flaechen an einer Stelle), ``doppelt`` [(Linie,
+    Doppellinie)], ``umgelegt`` {Doppellinie: Linie, als die das Netz sie
+    nimmt - aus beiden Wegen unten}, ``meldungen``, ``warnungen``."""
     from .model import Line, _randstuecke
     ersatz: dict = {}
     umlegen: dict = {}
@@ -795,7 +813,7 @@ def _teilplan(model: Model, schalen: list) -> dict:
             aus.extend(ersatz.get(x) or [umlegen.get(x, x)])
         return aus
     plan = {"teilstuecke": {}, "ersetzt": ersetzt, "zwang": {}, "geteilt": set(), "beteiligt": set(),
-            "meldungen": [], "warnungen": [], "aktiv": False}
+            "meldungen": [], "warnungen": [], "aktiv": False, "doppelt": [], "umgelegt": umlegen}
     lines = getattr(model, "lines", None) or {}
     if len(schalen) < 2 or not lines:
         return plan
@@ -935,6 +953,48 @@ def _teilplan(model: Model, schalen: list) -> dict:
             namen.append(paar[key])
         ersatz[x] = namen
 
+    # ---- Doppellinien: dieselben Knoten, anderer Name ---------------------
+    # Befund 39 vom 11.11.2026: eine Rippe mit eigener Linie R0d auf dem
+    # Plattenrand R0 (dieselben zwei Knoten) hing nur an den Linienenden - 2
+    # von 17 Rippenknoten gemeinsam; nur wenn zufaellig ein fremder Knoten auf
+    # R0 lag, legte (a) oben die Doppellinie um (20 von 20). Jetzt ist eine
+    # Doppellinie fuer das Netz immer dieselbe Linie: gerade mit denselben
+    # Knoten, gekruemmt nur, wenn sie auch dieselbe Kurve ist (ein anderer
+    # Bogen zwischen denselben Knoten beruehrt nur an den Enden).
+    gruppen: dict = {}
+    for x in besitzer:
+        if x in ketten or x in umlegen:
+            continue
+        kn = tuple(int(k) for k in lines[x].nodes)
+        if kn[0] == kn[-1]:
+            continue                           # geschlossene Linie
+        gruppen.setdefault((gerade(lines[x]), min(kn, kn[::-1])), []).append(x)
+
+    def gleiche_kurve(a, b) -> bool:
+        Pa, Pb = kurve_fein(model, a), kurve_fein(model, b)
+        if len(Pa) < 2 or len(Pa) != len(Pb):
+            return False
+        L = float(np.linalg.norm(np.diff(Pa, axis=0), axis=1).sum())
+        tol = STUETZKNOTEN_TOL * L + 1e-9
+        return min(float(np.abs(Pa - Pb).max()), float(np.abs(Pa - Pb[::-1]).max())) <= tol
+    for (ist_gerade, _kn), namen in gruppen.items():
+        vertreter: list = []
+        for y in namen:
+            haupt = next((h for h in vertreter if ist_gerade or gleiche_kurve(h, y)), None)
+            if haupt is None:
+                vertreter.append(y)
+                continue
+            wh, wy = besitzer[haupt], besitzer[y]
+            if set(wh) & set(wy):
+                continue                       # dieselbe Flaeche an beiden: nicht zusammenlegen
+            umlegen[y] = haupt
+            stelle(wh, wy)
+            plan["doppelt"].append((haupt, y))
+            plan["meldungen"].append(
+                f"Linien {haupt} ({fl(wh)}) und {y} ({fl(wy)}) verbinden dieselben Knoten"
+                + ("" if ist_gerade else " auf derselben Kurve")
+                + f": im Netz eine Linie ({haupt}) – gemeinsame Netzknoten.")
+
     # ---- (b) Linie in Flaeche -------------------------------------------
     geo = _Netzgeometrie(model, plan["teilstuecke"])
     glines = geo.lines
@@ -1066,6 +1126,14 @@ def flaechen_teilstellen(model: Model) -> list:
     return sorted(_teilplan(model, schalen)["geteilt"])
 
 
+def doppelte_randlinien(model: Model) -> list:
+    """[(Linie, Doppellinie), ...]: Randlinien von Schalenflaechen, die der
+    Vernetzer als eine Linie nimmt, weil sie dieselben Knoten (und dieselbe
+    Kurve) haben (:func:`_teilplan`, Befund 39 vom 11.11.2026)."""
+    schalen = [f for f in (getattr(model, "flaechen", None) or {}).values() if _ist_schale(model, f)]
+    return list(_teilplan(model, schalen)["doppelt"])
+
+
 def _gruppe_und_plan(model: Model, flaechen) -> tuple:
     """(gemeinsam zu vernetzende Schalenflaechen, Teilplan) - siehe
     :func:`gemeinsame_schalen` und :func:`_teilplan`."""
@@ -1121,18 +1189,47 @@ def unverbundene_schalenlinien(model: Model) -> list:
     Knoten jeder anliegenden Flaeche geschnitten; verbunden ist die Linie, wenn
     jede Flaeche dieselben Linienknoten traegt. Entscheidung des Anwenders vom
     09.11.2026: alte, unverbundene Schalennetze beim Oeffnen erkennen und zum
-    Neuvernetzen auffordern."""
+    Neuvernetzen auffordern.
+
+    Doppelte Randlinien (eigene Linie je Flaeche zwischen denselben Knoten)
+    sind fuer den Vernetzer seit dem 12.11.2026 eine Linie (:func:`_teilplan`,
+    ``umgelegt``); hier zaehlen sie darum ebenfalls als **eine** gemeinsame
+    Linie, unter dem Namen, den das Netz benutzt (Befund A10 vom 14.11.2026:
+    ein Netz von vor dem 12.11.2026, an der Doppellinie getrennt, blieb beim
+    Oeffnen ungemeldet und nach „neu rechnen“ ohne Status)."""
+    return [x[:4] for x in _unverbunden(model)]
+
+
+def getrennte_doppellinien(model: Model) -> list:
+    """Doppelte Randlinien, an denen das vorhandene Netz getrennt ist:
+    [(Linie, [Doppellinien], Flaeche A, Flaeche B, Knoten nur auf einer Seite)]
+    (:func:`unverbundene_schalenlinien`, Verfahrensmerkmal
+    „doppelte_randlinien“). Leer, wenn das Netz dort verbunden ist oder fehlt."""
+    return [(x[0], x[4], x[1], x[2], x[3]) for x in _unverbunden(model) if x[4]]
+
+
+def _unverbunden(model: Model, doppellinien: bool = True) -> list:
+    """[(Linie, Flaeche A, Flaeche B, Knoten nur auf einer Seite, [Doppellinien])]
+    - siehe :func:`unverbundene_schalenlinien`; ohne ``doppellinien`` jede Linie
+    fuer sich (wie bis zum 14.11.2026)."""
     schalen = [f for f in (getattr(model, "flaechen", None) or {}).values()
                if _ist_schale(model, f) and f.elemente]
     if len(schalen) < 2 or not len(model.elements):
         return []
+    # Doppellinien wie im Netz auf eine Linie legen (_teilplan)
+    umgelegt = dict(_teilplan(model, schalen).get("umgelegt") or {}) if doppellinien else {}
     knoten_von = {}
     an_linie: dict = {}
+    doppel: dict = {}
     for f in schalen:
         knoten_von[f.name] = {int(k) for e in f.elemente if 0 <= int(e) < len(model.elements)
                               for k in model.elements[int(e)].nodes}
         for x in set(list(f.linien or []) + [y for loch in (f.oeffnungen or []) for y in loch]):
-            an_linie.setdefault(x, []).append(f.name)
+            h = umgelegt.get(x, x)
+            if f.name not in an_linie.setdefault(h, []):
+                an_linie[h].append(f.name)
+            if h != x:
+                doppel.setdefault(h, set()).add(x)
     out = []
     cache: dict = {}
     X = model.nodes
@@ -1164,7 +1261,7 @@ def unverbundene_schalenlinien(model: Model) -> list:
         a, ka = seiten[0]
         for b, kb in seiten[1:]:
             if ka != kb:
-                out.append((linie, a, b, len(ka ^ kb)))
+                out.append((linie, a, b, len(ka ^ kb), sorted(doppel.get(linie, ()))))
     return out
 
 
@@ -1367,6 +1464,7 @@ def schalen_gemeinsam_vernetzen(model: Model, flaechen, hs: dict = None, log: li
                 C.warn(log, f"Fläche {f.name}: die Zwangslinie {x} ist im Netz nicht durchgehend "
                             "Elementkante – dort nicht verbunden.")
         f.elemente = els
+        _ausrichten(model, f, log)
         out[f.name] = els
     C.say(log, f"{len(out)} Flächen mit gemeinsamen Randlinien zusammenhängend vernetzt "
                f"({n_vier} abgebildet, {n_drei} frei)")

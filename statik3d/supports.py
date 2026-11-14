@@ -487,6 +487,63 @@ def knoten_auf_linie(model: Model, P: np.ndarray, tol: float) -> list[int]:
     return [n for n, _s in sorted(lage.items(), key=lambda x: x[1])]
 
 
+def flaechenlager_folgen(model: Model, log: list = None) -> int:
+    """Elementbezogene Flaechenlager auf das neue Netz ganzer Flaechen legen.
+
+    Befund 11 der Pruefagenten (11.11.2026): ein Flaechenlager mit
+    Elementliste (Bettung auf ``elements``) lag nach dem Neuvernetzen still auf
+    anderen Elementen. Seit A22 ruecken seine Nummern in
+    Model.elemente_loeschen mit; lag es auf **allen** Elementen einer Flaeche
+    (bzw. eines Koerpers mit face = -1), deren Netz entfiel, merkt es sich die
+    Flaeche (``SurfaceSupport.folgt``). Hier, sobald die Flaeche wieder ein
+    Netz hat, kommen deren Elemente dazu - derselbe Ort wie vorher, in jeder
+    Feinheit - und die Meldung „Netz geändert“ endet fuer diesen Teil. Hat der
+    Anwender dem Lager inzwischen selbst Elemente gegeben, gilt der Vormerk
+    nicht mehr. Ohne Fenster, damit Oberflaeche, Befehlszeile und Pruefungen
+    denselben Weg gehen. Rueckgabe: so viele Lager sind gefolgt."""
+    flaechen = getattr(model, "flaechen", {}) or {}
+    koerper = getattr(model, "koerper", {}) or {}
+    ne = len(getattr(model, "elements", None) or [])
+    n = 0
+    for ss in (getattr(model, "surface_supports", None) or []):
+        vormerk = list(getattr(ss, "folgt", None) or [])
+        if not vormerk:
+            continue
+        eigene = [int(i) for i in (ss.elements or [])]
+        offen = (int(getattr(ss, "entfallen", 0) or 0) > 0
+                 and eigene == [int(i) for i in (getattr(ss, "entfallen_rest", None) or [])])
+        if not offen:
+            ss.folgt = []                 # der Anwender hat das Lager neu gesetzt
+            continue
+        bleibt, dazu, namen, weg = [], [], [], 0
+        for eintrag in vormerk:
+            art, name, anzahl = str(eintrag[0]), str(eintrag[1]), int(eintrag[2])
+            obj = (flaechen if art == "flaeche" else koerper).get(name)
+            if obj is None:
+                continue                  # geloescht: die Meldung bleibt
+            els = [int(e) for e in (obj.elemente or []) if 0 <= int(e) < ne]
+            if not els:
+                bleibt.append(eintrag)    # noch ohne Netz
+                continue
+            dazu.extend(els)
+            weg += anzahl
+            namen.append(f"{'der Fläche' if art == 'flaeche' else 'des Körpers'} {name} "
+                         f"({len(els)} {'Element' if len(els) == 1 else 'Elemente'})")
+        if dazu:
+            vorhanden = set(eigene)
+            ss.elements = eigene + [e for e in dict.fromkeys(dazu) if e not in vorhanden]
+            rest = int(ss.entfallen) - weg
+            if rest > 0:
+                ss.entfallen, ss.entfallen_rest = rest, list(ss.elements)
+            else:
+                ss.entfallen, ss.entfallen_rest, bleibt = 0, [], []
+            n += 1
+            if log is not None:
+                log.append(f"  Flächenlager „{ss.name}“ folgt dem neuen Netz " + ", ".join(namen))
+        ss.folgt = bleibt
+    return n
+
+
 def lager_auf_netz(model: Model, log: list = None) -> dict:
     """Linien- und Flaechenlager von der Geometrie auf das Netz bringen.
 
@@ -503,9 +560,14 @@ def lager_auf_netz(model: Model, log: list = None) -> dict:
     Aufruf ist beliebig wiederholbar (nach dem Vernetzen, nach dem Loeschen
     des Netzes, vor jeder Rechnung).
 
+    Ein elementbezogenes Flaechenlager, das auf einer ganzen Flaeche lag,
+    deren Netz entfallen ist, folgt hier ihrem neuen Netz
+    (:func:`flaechenlager_folgen`).
+
     Rueckgabe {"flaechenlager": n, "linienlager": n} - so viele Lager haben
     ihre Knoten aus dem Netz bekommen.
     """
+    flaechenlager_folgen(model, log)
     flaechen = getattr(model, "flaechen", {}) or {}
     linien = getattr(model, "lines", {}) or {}
     n_f = n_l = 0

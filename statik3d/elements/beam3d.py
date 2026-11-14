@@ -36,6 +36,42 @@ def local_axes(p1, p2, roll: float = 0.0):
     return np.vstack([ex, ey, ez]), L
 
 
+def stab_achsen_versetzt(p1, p2, roll, P1, P2):
+    """(T3, L) eines Stabs zwischen seinen versetzten Enden P1, P2, dessen
+    Knotenlinie p1 -> p2 mit Drehwinkel ``roll`` ist: die Achsen der
+    Knotenlinie, durch die kleinste Drehung von ihrer Richtung auf die
+    Stabrichtung t gebracht,
+
+        y' = y_n - (y_n . t) t  (normiert),   z' = t x y',
+
+    so wie Theorie III. Ordnung die Achsen mitfuehrt (theorie3._Stab.zustand).
+    Verfahrensstand 41 (14.11.2026): bis dahin kamen die Achsen aus
+    :func:`local_axes` fuer die Linie P1 -> P2 neu. Fuer eine lotrechte
+    Knotenlinie springt dort die Bezugsrichtung (|e_x,z| > 0,9999 nimmt global
+    X statt Z), und ein schon leicht geneigter Stab drehte seinen Querschnitt
+    um 90 bzw. 180 Grad gegen den der Knotenlinie: lotrechte Stuetze 4 m,
+    Versatz oben 0,1 m, Fx 10 kN, Kopfverdrehung 0,9639 statt 3,8119 mrad;
+    lokale Streckenlast qz 1 kN/m, Lager Rx +4,0 statt -4,0 kN
+    (tests/test_versatz_achsen_lotrecht.py)."""
+    T3n, _Ln = local_axes(p1, p2, roll)
+    d = np.asarray(P2, float) - np.asarray(P1, float)
+    L = float(np.linalg.norm(d))
+    if L <= 0:
+        raise ValueError("Stab mit Laenge 0")
+    t = d / L
+    y = T3n[1] - float(T3n[1] @ t) * t
+    n = float(np.linalg.norm(y))
+    if n > 1e-9:
+        y = y / n
+        z = np.cross(t, y)
+    else:
+        # y der Knotenlinie laengs des Stabs (Arm quer um 90 Grad): von z aus
+        z = T3n[2] - float(T3n[2] @ t) * t
+        z = z / np.linalg.norm(z)
+        y = np.cross(z, t)
+    return np.vstack([t, y, z]), L
+
+
 def transform_matrix(T3: np.ndarray) -> np.ndarray:
     """12x12 Blockdiagonale aus 3x3 Richtungskosinus."""
     T = np.zeros((12, 12))
@@ -252,6 +288,49 @@ def versatz_matrix(r1, r2) -> np.ndarray:
         # theta x r = -[r]x theta
         A[6 * i:6 * i + 3, 6 * i + 3:6 * i + 6] = -_skew(r)
     return A
+
+
+def versatz_vektoren(ex):
+    """(r1, r2) aus ``Element.exzentrizitaet`` - je (3,), in den lokalen
+    Achsen der Knotenlinie - oder None ohne Versatz (leer, beide null oder
+    unlesbar; unlesbar heisst ohne, wie bisher in assemble.beam_versatz)."""
+    if not ex:
+        return None
+    r1 = np.zeros(3)
+    r2 = np.zeros(3)
+    try:
+        if len(ex) >= 1 and ex[0] is not None:
+            r1[:len(ex[0])] = np.asarray(ex[0], float)[:3]
+        if len(ex) >= 2 and ex[1] is not None:
+            r2[:len(ex[1])] = np.asarray(ex[1], float)[:3]
+    except (TypeError, ValueError):
+        return None
+    if not (np.any(r1) or np.any(r2)):
+        return None
+    return r1, r2
+
+
+def versatz_arme(p1, p2, roll, ex):
+    """Die starren Arme a_i (global, Feld (2, 3)) vom Knoten zum Stabende,
+    wenn der Versatz an Anfang und Ende **verschieden** ist - sonst None.
+
+    Der Versatz r_i steht in den lokalen Achsen der Knotenlinie (p1 -> p2,
+    Drehwinkel ``roll``): a_i = T3_Knotenlinie^T r_i. Der Stab liegt zwischen
+    seinen Stabenden P_i = p_i + a_i; Laenge und lokale Achsen kommen von dort
+    (assemble.stab_achsen). Gleicher Versatz an beiden Enden verschiebt den
+    Stab nur parallel - Achsen und Laenge sind die der Knotenlinie, und dafuer
+    bleibt alles beim bisherigen Weg (bitgleich).
+
+    Bis zum 12.11.2026 lag der Stab nach Theorie I. und II. Ordnung auch bei
+    verschiedenem Versatz auf der Knotenlinie, nur seine Enden waren starr
+    versetzt: das Momentengleichgewicht ging verloren (Kragarm 4 m, Zug 50 kN
+    durch die Einspannung, Versatz 0,1 m quer nur am Ende: Einspannmoment
+    5,0 statt 0 kNm; tests/test_versatz_starrer_arm.py)."""
+    rr = versatz_vektoren(ex)
+    if rr is None or np.array_equal(rr[0], rr[1]):
+        return None
+    T3n, _L = local_axes(p1, p2, roll)
+    return np.vstack([T3n.T @ rr[0], T3n.T @ rr[1]])
 
 
 # ==========================================================================

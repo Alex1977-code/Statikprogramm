@@ -107,6 +107,10 @@ def write_bdf(model: Model, path: str, results=None, log: list = None, **_) -> s
     karten: list[str] = []
     eid_von: dict[int, int] = {}
     n_ohne_qs = n_ohne_dicke = n_seil = n_fachwerk = 0
+    # Tetraeder mit Ordnung p und Elemente ohne Karte (Befund 17, 11.11.2026:
+    # beide fielen bis dahin mit „else: continue“ ohne ein Wort weg)
+    tetp_linear: list[int] = []
+    ohne_karte: list[int] = []
 
     def pid(key) -> tuple[int, bool]:
         neu = key not in prop_id
@@ -178,7 +182,11 @@ def write_bdf(model: Model, path: str, results=None, log: list = None, **_) -> s
                 karten.append(karte + _i(eid) + _i(p) + "".join(_i(x) for x in n[:6]))
                 if e.typ == "shell8":
                     karten.append("        " + "".join(_i(x) for x in n[6:8]))
-        elif e.typ in ("tet4", "tet10"):
+        elif e.typ in ("tet4", "tet10", "tetp2", "tetp3", "tetp4"):
+            # tetp: die vier Eckknoten als linearer CTETRA - Nastran kennt die
+            # hierarchischen Ansaetze hoeherer Ordnung nicht; der Hinweis sagt es
+            if e.typ.startswith("tetp"):
+                tetp_linear.append(idx)
             eid += 1
             p, neu = pid(("solid", e.mat))
             if neu:
@@ -202,6 +210,8 @@ def write_bdf(model: Model, path: str, results=None, log: list = None, **_) -> s
                 karten.append("        " + "".join(_i(x) for x in rest[:8]))
                 rest = rest[8:]
         else:
+            if not C.von_weiteres(e):
+                ohne_karte.append(idx)
             continue
         eid_von[idx] = eid
     n_elemente = eid
@@ -376,6 +386,16 @@ def write_bdf(model: Model, path: str, results=None, log: list = None, **_) -> s
                   or getattr(m, "Ep", None) is not None)
     kategorien = {lc.category for lc in model.load_cases.values()} - {"G"}
     C.nicht_uebertragen(log, "Nastran", [
+        C.elementhinweis(model, tetp_linear, "Tetraeder mit Ordnung p", "Tetraeder mit Ordnung p",
+                         "(geht als linearer Tetraeder CTETRA über die vier Eckknoten hinaus; die "
+                         "Ansätze höherer Ordnung kennt die Karte nicht, er rechnet dort steifer)",
+                         "(gehen als lineare Tetraeder CTETRA über die vier Eckknoten hinaus; die "
+                         "Ansätze höherer Ordnung kennt die Karte nicht, sie rechnen dort steifer)"),
+        C.elementhinweis(model, ohne_karte, "Element", "Elemente",
+                         "ohne passende Nastran-Karte (fehlt ganz in der Datei; für ebene "
+                         "Elemente kennt Nastran im Grundumfang keine Karte)",
+                         "ohne passende Nastran-Karte (fehlen ganz in der Datei; für ebene "
+                         "Elemente kennt Nastran im Grundumfang keine Karte)"),
         (n_seil, "Seil (geht als Fachwerkstab CROD hinaus)",
          "Seile (gehen als Fachwerkstäbe CROD hinaus)"),
         (n_gelenkfeder, "Stabende mit Gelenkfeder", "Stabenden mit Gelenkfeder"),

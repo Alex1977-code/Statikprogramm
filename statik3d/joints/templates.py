@@ -30,7 +30,7 @@ import numpy as np
 
 from ..model import Model, Material, Section, ShellProp, FU_S355
 from .bolts import Bolt, BoltGeometry, min_spacing, check_spacing
-from .welds import Fillet, min_throat, max_throat
+from .welds import Fillet, beta_w, min_throat, max_throat
 from .tstub import TStub, effective_lengths
 from .design import (Check, JointCheck, check_bolt, check_weld, check_net_section,
                      check_block_tearing, fatigue_check)
@@ -135,6 +135,16 @@ class JointTemplate:
         return Fillet(a=a, length=0.0, fu=self.fu, grade=self.grade,
                       gamma_M2=self.gamma_M2)
 
+    #: der Anschluss hat Kehlnaehte (ihr beta_w haengt an der Stahlsorte)
+    hat_naehte = False
+
+    @property
+    def sorte_text(self) -> str:
+        """Die Stahlsorte fuer Beschreibung und Kennwerte. Ohne Sorte steht das
+        da - bis zum 12.11.2026 stand dort still S355 (Pruefbericht 11.11.2026,
+        Befund 2)."""
+        return self.grade or "ohne Stahlsorte"
+
     def describe(self) -> str:
         raise NotImplementedError
 
@@ -183,6 +193,9 @@ class EndPlate(JointTemplate):
     sec: Section = None
     ex: float = 0.045
 
+    #: Flansch- und Stegnaht
+    hat_naehte = True
+
     # -- Vorschlag ------------------------------------------------------
     @staticmethod
     def propose(model: Model, elem: int, end: int = 1, N: float = 0.0,
@@ -198,7 +211,13 @@ class EndPlate(JointTemplate):
         tw = sec.tw or 0.008
         a = EndPlate(name=name or f"Kopfplatte {model.elements[int(elem)].sec}",
                      model=model, elem=int(elem), end=int(end),
-                     grade=mat.grade or "S355", fy=fy, fu=fu, sec=sec)
+                     grade=mat.grade or "", fy=fy, fu=fu, sec=sec)
+        # die Naehte bemisst improve() mit beta_w der Stahlsorte: ohne Sorte kein
+        # Vorschlag, sondern die Meldung (bis 12.11.2026 still S355, Befund 2)
+        try:
+            beta_w(a.grade)
+        except ValueError as ex:
+            raise ValueError(f"Werkstoff „{mat.name}“: {ex}") from None
         a.bolt = bolt or Bolt("M20", "10.9", category="D")
         # Zugkraft im Flansch aus Moment und Normalkraft
         hebel = max(h - tf, 0.1 * h)
@@ -319,7 +338,7 @@ class EndPlate(JointTemplate):
     def describe(self) -> str:
         z = ", ".join(f"{v * 1e3:+.0f}" for v in self.rows)
         t = [f"{self.name}: Blech {self.bp * 1e3:.0f} x {self.hp * 1e3:.0f} x "
-             f"{self.tp * 1e3:.0f} mm, {self.grade}",
+             f"{self.tp * 1e3:.0f} mm, {self.sorte_text}",
              f"  Schrauben {self.bolt.describe()}",
              f"  Reihen bei z = {z} mm, Riss w = {self.w * 1e3:.0f} mm",
              f"  Naehte: Flansch a = {self.a_f * 1e3:g} mm, Steg a = {self.a_w * 1e3:g} mm"]
@@ -461,7 +480,7 @@ class EndPlate(JointTemplate):
     def kennwerte(self) -> list:
         z = ", ".join(f"{v * 1e3:+.0f}" for v in self.rows)
         kv = [("Kopfplatte", f"b × h × t = {self.bp * 1e3:.0f} × {self.hp * 1e3:.0f} × "
-                             f"{self.tp * 1e3:.0f} mm, {self.grade}"),
+                             f"{self.tp * 1e3:.0f} mm, {self.sorte_text}"),
               ("Schrauben", self.bolt.describe()),
               ("Anzahl", f"{2 * len(self.rows)} Stück in {len(self.rows)} Reihen"),
               ("Reihen z (ab Plattenmitte)", f"{z} mm"),
@@ -684,7 +703,7 @@ class Splice(JointTemplate):
         tw = sec.tw or 0.008
         a = Splice(name=name or f"Laschenstoss {model.elements[int(elem)].sec}",
                    model=model, elem=int(elem), end=int(end),
-                   grade=mat.grade or "S355", fy=fy, fu=fu, sec=sec)
+                   grade=mat.grade or "", fy=fy, fu=fu, sec=sec)
         a.bolt = bolt or Bolt("M20", "10.9", category="C", mu=0.5)
         hebel = max(h - tf, 0.1 * h)
         F_flansch = abs(My) / hebel + abs(N) * (b * tf) / max(sec.A, 1e-9)
@@ -763,7 +782,7 @@ class Splice(JointTemplate):
     def kennwerte(self) -> list:
         return [("Flanschlaschen", f"b × t = {self.b_fl * 1e3:.0f} × {self.t_fl * 1e3:.0f} mm, "
                                    + ("außen und innen (zweischnittig)" if self.inner_flange
-                                      else "nur außen (einschnittig)") + f", {self.grade}"),
+                                      else "nur außen (einschnittig)") + f", {self.sorte_text}"),
                 ("Steglaschen", f"h × t = {self.h_web * 1e3:.0f} × {self.t_web * 1e3:.0f} mm, "
                                 "beidseitig"),
                 ("Schrauben", self.bolt.describe()),
@@ -946,6 +965,10 @@ class Gusset(JointTemplate):
     l_weld: float = 0.200
     sec: Section = None
 
+    @property
+    def hat_naehte(self) -> bool:
+        return bool(self.welded)
+
     @staticmethod
     def propose(model: Model, elem: int, end: int = 1, N: float = 0.0,
                 bolt: Bolt = None, welded: bool = False,
@@ -956,12 +979,18 @@ class Gusset(JointTemplate):
         fy, fu = _festigkeiten(mat, sec.t_max)
         a = Gusset(name=name or f"Diagonalanschluss {model.elements[int(elem)].sec}",
                    model=model, elem=int(elem), end=int(end),
-                   grade=mat.grade or "S355", fy=fy, fu=fu, sec=sec, welded=welded)
+                   grade=mat.grade or "", fy=fy, fu=fu, sec=sec, welded=welded)
         a.bolt = bolt or Bolt("M20", "10.9", category="A")
         t_ref = max(sec.tw or 0.008, sec.tf or 0.010)
         a.t_g = max(0.008, math.ceil(max(t_ref, abs(N) / (0.6 * fy * 0.200)) * 1000) / 1000.0)
         if welded:
-            fvw = (fu / math.sqrt(3.0)) / (0.9 * a.gamma_M2)
+            # beta_w aus der Stahlsorte; bis zum 12.11.2026 fest 0,9 (S355), ohne
+            # Sorte jetzt kein Vorschlag, sondern die Meldung (Befund 2, 11.11.2026)
+            try:
+                bw = beta_w(a.grade)
+            except ValueError as ex:
+                raise ValueError(f"Werkstoff „{mat.name}“: {ex}") from None
+            fvw = (fu / math.sqrt(3.0)) / (bw * a.gamma_M2)
             a.a_w = max(min_throat(a.t_g), 0.004)
             a.l_weld = max(0.100, abs(N) / (2.0 * fvw * a.a_w)) if fvw * a.a_w else 0.200
             a.l_weld = math.ceil(a.l_weld * 1000) / 1000.0
@@ -1025,11 +1054,11 @@ class Gusset(JointTemplate):
 
     def describe(self) -> str:
         if self.welded:
-            t = [f"{self.name}: Knotenblech t = {self.t_g * 1e3:.0f} mm, {self.grade}",
+            t = [f"{self.name}: Knotenblech t = {self.t_g * 1e3:.0f} mm, {self.sorte_text}",
                  f"  geschweisst, a = {self.a_w * 1e3:g} mm, l = {self.l_weld * 1e3:.0f} mm "
                  "je Flanke"]
         else:
-            t = [f"{self.name}: Knotenblech t = {self.t_g * 1e3:.0f} mm, {self.grade}",
+            t = [f"{self.name}: Knotenblech t = {self.t_g * 1e3:.0f} mm, {self.sorte_text}",
                  f"  Schrauben {self.bolt.describe()}",
                  f"  {self.n_bolt} Schrauben in {self.reihen} Reihe(n), "
                  f"p_1 = {self.p1 * 1e3:.0f} mm, e_1 = {self.e1 * 1e3:.0f} mm",
@@ -1039,7 +1068,7 @@ class Gusset(JointTemplate):
         return "\n".join(t)
 
     def kennwerte(self) -> list:
-        kv = [("Knotenblech", f"t = {self.t_g * 1e3:.0f} mm, {self.grade}")]
+        kv = [("Knotenblech", f"t = {self.t_g * 1e3:.0f} mm, {self.sorte_text}")]
         if self.welded:
             kv.append(("Anschluss", f"geschweißt, Kehlnaht a = {self.a_w * 1e3:g} mm, "
                                     f"l = {self.l_weld * 1e3:.0f} mm je Flanke"))

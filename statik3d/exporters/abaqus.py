@@ -28,7 +28,11 @@ from . import _common as C
 ABQ = {"beam": "B31", "truss": "T3D2", "seil": "T3D2",
        "shell3": "S3", "shell4": "S4", "shell6": "STRI65", "shell8": "S8R",
        "tet4": "C3D4", "tet10": "C3D10", "hex8": "C3D8", "hex20": "C3D20",
-       "pent6": "C3D6", "pent15": "C3D15", "pyr5": "C3D5"}
+       "pent6": "C3D6", "pent15": "C3D15", "pyr5": "C3D5",
+       # Tetraeder mit Ordnung p: die vier Eckknoten als linearer C3D4; Abaqus
+       # kennt keine p-Elemente, der Hinweis sagt es (Befund 17, 11.11.2026:
+       # bis dahin fehlten sie ohne ein Wort)
+       "tetp2": "C3D4", "tetp3": "C3D4", "tetp4": "C3D4"}
 #: Ebene Elemente: (Zustand, Knotenzahl) -> Abaqus-Name
 ABQ_EBENE = {("spannung", 3): "CPS3", ("spannung", 4): "CPS4", ("spannung", 6): "CPS6",
              ("spannung", 8): "CPS8", ("dehnung", 3): "CPE3", ("dehnung", 4): "CPE4",
@@ -75,9 +79,12 @@ def write_inp(model: Model, path: str, results=None, log: list = None, **_) -> s
         z.append(f"{i}, {_z(p[0])}, {_z(p[1])}, {_z(p[2])}")
     gruppen: dict[tuple, list] = {}
     geschrieben = set()
+    ohne_karte: list[int] = []
     for i, e in enumerate(model.elements, 1):
         art = abq_typ(e)
         if not art:
+            if not C.von_weiteres(e):
+                ohne_karte.append(i - 1)
             continue
         # Balken je n1-Richtung (lokale y-Achse) in eigener Menge: n1 steht in
         # der Querschnittsdefinition und gilt fuer die ganze Menge
@@ -259,7 +266,16 @@ def write_inp(model: Model, path: str, results=None, log: list = None, **_) -> s
     n_lager_nl = sum(1 for s in model.supports if s.nonlinear)
     n_kat = sum(1 for k, lc in enumerate(model.load_cases.values())
                 if lc.category != ("G" if k == 0 else "Q"))
+    tetp = [i for i, e in enumerate(model.elements) if e.typ.startswith("tetp")]
     C.nicht_uebertragen(log, "Abaqus", [
+        C.elementhinweis(model, tetp, "Tetraeder mit Ordnung p", "Tetraeder mit Ordnung p",
+                         "(geht als linearer Tetraeder C3D4 über die vier Eckknoten hinaus; die "
+                         "Ansätze höherer Ordnung kennt Abaqus nicht, er rechnet dort steifer)",
+                         "(gehen als lineare Tetraeder C3D4 über die vier Eckknoten hinaus; die "
+                         "Ansätze höherer Ordnung kennt Abaqus nicht, sie rechnen dort steifer)"),
+        C.elementhinweis(model, ohne_karte, "Element", "Elemente",
+                         "ohne passende Abaqus-Elementart (fehlt ganz in der Datei)",
+                         "ohne passende Abaqus-Elementart (fehlen ganz in der Datei)"),
         (n_seil, "Seil (geht als Fachwerkstab T3D2 hinaus)",
          "Seile (gehen als Fachwerkstäbe T3D2 hinaus)"),
         (n_gelenk_weg, "Stabende mit Verschiebungsgelenk (Normalkraft- oder Querkraftgelenk)",

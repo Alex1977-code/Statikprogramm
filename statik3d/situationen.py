@@ -35,6 +35,12 @@ def situationsmodell(model: Model, name: str = "") -> tuple:
             raise ValueError(f"Situation '{sit.name}': Stellung '{sit.stellung}' unbekannt")
         m = model.copy()
         m.name = f"{model.name} – {sit.name}"
+        # Die Schalen behalten die Lage des Grundmodells (Befund A6,
+        # 14.11.2026): ausgerichtet wird in der Geometrie des Grundmodells,
+        # danach nicht mehr - die Lage aendert die Rechnung nicht, und in der
+        # Stellung waere jede Normale eine andere
+        from .schalenlage import lage_festhalten
+        log.extend(f"  {sit.name}: {z}" for z in lage_festhalten(m))
         # Ausgangsstellung, Verschiebung, Verdrehung, Lager und Gelenke der
         # Stellung - alles, was ihre Lage und Wirkung ausmacht
         st.anwenden(m, model, log)

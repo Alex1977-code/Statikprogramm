@@ -828,7 +828,7 @@ def pruefen(model, res, F_norm: float = None) -> dict:
             if i not in beam:
                 continue
             fl = np.asarray(beam[i], float)[:12]
-            A = asm.beam_versatz(e)
+            A = asm.stab_versatz(model, e)
             if A is not None:
                 fl = A.T @ fl
             _kl, _T3, T, _L = asm.beam_local(model, e)

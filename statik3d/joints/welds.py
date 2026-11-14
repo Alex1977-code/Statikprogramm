@@ -15,6 +15,7 @@ Einheiten SI: Kraefte N, Momente Nm, Laengen m, Spannungen Pa.
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field
 
 from ..model import FU_S355
@@ -28,11 +29,26 @@ MIN_THROAT = 0.003
 
 
 def beta_w(grade: str) -> float:
-    g = (grade or "S355").upper().replace(" ", "")
+    """Korrelationsbeiwert beta_w der Stahlsorte (EN 1993-1-8 Tab. 4.1; Sorten
+    ueber S460 1,0 wie EN 1993-1-12). Ohne Sorte oder mit einer unbekannten gibt
+    es keinen Wert, sondern ValueError - Festlegung des Anwenders: „Ohne
+    angegebenen Werkstoff kein Nachweis“. Bis zum 12.11.2026 galt ohne Sorte
+    still S355 (0,9), mit unbekannter Sorte 1,0 (Pruefbericht 11.11.2026,
+    Befund 2: S460-Werte ohne Sorte f_vw,d 277,1 statt 249,4 N/mm²)."""
+    g = "".join(str(grade or "").split()).upper()
+    if not g:
+        raise ValueError("Stahlsorte fehlt – der Korrelationsbeiwert β_w der Kehlnaht "
+                         "(EN 1993-1-8 Tab. 4.1) hängt an der Stahlsorte; ohne Sorte kein "
+                         "Nachweis der Naht, kein Vorgabewert")
     for k, v in BETA_W.items():
         if g.startswith(k):
             return v
-    return 1.0
+    zahl = re.match(r"S(\d{3})", g)
+    if zahl and int(zahl.group(1)) > 460:
+        return 1.0
+    raise ValueError(f"Stahlsorte „{grade}“ unbekannt – der Korrelationsbeiwert β_w der "
+                     "Kehlnaht (EN 1993-1-8 Tab. 4.1) ist nicht bestimmbar; ohne Sorte kein "
+                     "Nachweis der Naht, kein Vorgabewert")
 
 
 def fvw_d(fu: float, grade: str, gamma_M2: float = 1.25) -> float:

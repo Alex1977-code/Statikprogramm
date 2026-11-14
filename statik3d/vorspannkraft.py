@@ -203,11 +203,11 @@ def freie_laenge(model, elemente: list) -> float:
     """Freie Ankerlaenge L [m]: die Summe der Elementlaengen des Stabs - die
     Laenge, mit der :func:`k_stab` rechnet (k_A = E A / L bei einem
     Querschnitt). Sie steht im Spannstahlnachweis neben Δs und ΔP (15.10.2026)."""
-    from .elements import beam3d as bm
     L = 0.0
     for i in elemente:
-        e = model.elements[int(i)]
-        _T3, Li = bm.local_axes(model.nodes[e.nodes][0], model.nodes[e.nodes][1], e.roll)
+        # die Laenge des Stabs wie in seiner Steifigkeit (mit verschiedenem
+        # Versatz an den Enden zwischen den versetzten Enden, 12.11.2026)
+        _T3, Li = asm.stab_achsen(model, model.elements[int(i)])
         L += float(Li)
     return L
 
@@ -216,13 +216,11 @@ def k_stab(model, elemente: list) -> float:
     """Laengssteifigkeit k_A [N/m] eines Stabs aus seinen Elementen in Reihe:
     1 / Σ (L_i/(E_i A_i) + 1/k_Feder) - bei einem Querschnitt E A / L, mit L
     der Stablaenge zwischen den Ankerpunkten (Anfangsvorspannung, 14.10.2026)."""
-    from .elements import beam3d as bm
     nachgiebig = 0.0
     for i in elemente:
         e = model.elements[int(i)]
         mat, sec = model.materials[e.mat], model.sections[e.sec]
-        X = model.nodes[e.nodes]
-        _T3, L = bm.local_axes(X[0], X[1], e.roll)
+        _T3, L = asm.stab_achsen(model, e)
         nachgiebig += float(L) / (float(mat.E) * float(sec.A))
         nachgiebig += sum(1.0 / float(k) for d, k in (getattr(e, "hinge_springs", None) or [])
                           if int(d) in (0, 6) and k and float(k) > 0)

@@ -180,6 +180,15 @@ def flaechenachsen_bild(model, flaeche):
         M = np.array([model._seitenmitte(e, s) for e, s in seiten])
         j = int(np.argmin(np.linalg.norm(M - mitte, axis=1)))
         ax = seitenachsen(model, flaeche, *seiten[j])
+        if (ax is not None and getattr(flaeche, "lokale_achsen", "") != "zylinder"
+                and seiten[j][1] == 0):
+            # Ein Schalenelement, das (noch) gegen seine Flaeche liegt, zeigt
+            # die Achsen der Flaeche, nicht seine eigenen: ausgerichtet wird
+            # vor der Rechnung (statik3d.schalenlage, 12.11.2026)
+            from .schalenlage import gegen_flaeche
+            if seiten[j][0] in gegen_flaeche(model, flaeche):
+                A = ebenenachsen(-np.asarray(ax[2], float))
+                ax = (A[0], A[1], A[2])
         if ax is not None:
             return (M[j],) + tuple(ax)
     n = np.zeros(3)

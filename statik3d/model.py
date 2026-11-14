@@ -240,10 +240,18 @@ def schalennetz_hinweis(model) -> list:
     8,07 statt 6,49 mm nach Navier). Das Netz steht in der Datei und rechnet
     unveraendert falsch weiter, bis neu vernetzt wird. Entscheidung des
     Anwenders vom 09.11.2026 („10 ja“): erkennen und zum Neuvernetzen
-    auffordern. Umgestellt wird nichts. Rueckgabe die Zeilen."""
+    auffordern. Umgestellt wird nichts. Rueckgabe die Zeilen.
+
+    Doppelte Randlinien (eigene Linie je Flaeche zwischen denselben Knoten)
+    zaehlen als eine gemeinsame Linie (mesher._unverbunden, Befund A10 vom
+    14.11.2026): an ihnen vernetzte das Programm bis zum 12.11.2026 getrennt
+    (Platte aus zwei Flaechen mit Doppellinie: 397,70 statt 149,59 mm)."""
     try:
-        from .mesher import unverbundene_schalenlinien
-        lose = unverbundene_schalenlinien(model)
+        from .mesher import _unverbunden
+        try:
+            lose = _unverbunden(model)
+        except Exception:                   # noqa: BLE001 - dann wenigstens die gemeinsamen Linien
+            lose = _unverbunden(model, doppellinien=False)
     except Exception:                       # noqa: BLE001 - ein Hinweis sperrt kein Oeffnen
         return []
     if not lose:
@@ -255,10 +263,16 @@ def schalennetz_hinweis(model) -> list:
     linien = sorted({x[0] for x in lose})
     paare = sorted({tuple(sorted((x[1], x[2]))) for x in lose})
     beispiel = ", ".join(f"{a}/{b}" for a, b in paare[:3]) + (" …" if len(paare) > 3 else "")
+    doppel = sorted({(x[0], tuple(x[4])) for x in lose if len(x) > 4 and x[4]})
+    dtext = ""
+    if doppel:
+        dbsp = ", ".join(f"{h} = {'/'.join(d)}" for h, d in doppel[:3]) + (" …" if len(doppel) > 3 else "")
+        dtext = (f", an doppelten Randlinien (eigene Linie je Fläche zwischen denselben Knoten, hier "
+                 f"{dbsp}) bis zum 12.11.2026")
     text = (f"Schalennetz nicht verbunden: {len(paare)} Flächenpaar(e) an {len(linien)} gemeinsamen "
             f"Linie(n) haben verschiedene Netzknoten (z. B. {beispiel}). So vernetzte das Programm bis "
-            "zum 09.11.2026 – die Flächen hängen nur an den Linienenden zusammen, das Ergebnis ist zu "
-            "weich. Bitte neu vernetzen.")
+            f"zum 09.11.2026{dtext} – die Flächen hängen nur an den Linienenden zusammen, das Ergebnis "
+            "ist zu weich. Bitte neu vernetzen.")
     vorschlag = "Netz › Vernetzen (alle Flächen)"
     hinweise = getattr(model, "importhinweise", None)
     if hinweise is None:
@@ -1254,6 +1268,13 @@ class SurfaceSupport:
     #: der Anwender dem Lager seine Elemente neu, endet die Meldung von selbst.
     entfallen: int = 0
     entfallen_rest: list[int] = field(default_factory=list)
+    #: Ganze Flaechen und Koerper, deren Netz dabei entfallen ist, waehrend das
+    #: Lager auf **allen** ihren Elementen lag: [[Art "flaeche"/"koerper", Name,
+    #: Anzahl der entfallenen Elemente], ...]. Ihr Ort ist eindeutig - die ganze
+    #: Flaeche; sobald sie wieder ein Netz hat, legt supports.lager_auf_netz das
+    #: Lager auf dessen Elemente (Befund 11 vom 11.11.2026). Gilt nur, solange
+    #: das Lager noch der Rest von damals ist (wie die Meldung oben).
+    folgt: list = field(default_factory=list)
 
     def dof_behaviour(self, dof: int) -> DofBehaviour:
         b = self.behaviour.get(dof) or self.behaviour.get(str(dof))
@@ -1449,15 +1470,18 @@ class Geometrielast:
     achse: str = ""
     ks: str = ""
 
-    def wert(self, punkt, normale=None, beidseitig: bool = False) -> float:
+    def wert(self, punkt, normale=None, beidseitig: bool = False, lage: float = None) -> float:
         """Die Flaechenlast an einem Punkt [N/m^2] - gleichmaessig, linear oder
         aus dem Wasserdruck-Generierer (verlauf["art"] == "wasser") bzw. dem
         Wind. ``normale`` ist die Aussennormale der Elementseite (die
         Stroemungsfelder tasten ihr Gitter vor der Seite ab), ``beidseitig``
-        sagt, dass eine duenne Schale von beiden Seiten belastet ist (Netto)."""
+        sagt, dass eine duenne Schale von beiden Seiten belastet ist (Netto).
+        ``lage``: +1, wenn das Schalenelement wie seine Flaeche liegt, -1, wenn
+        gegen sie (schalenlage.gegen_flaeche; der Wasserdruck an Schalen)."""
         if self.verlauf and self.verlauf.get("art") == "wasser":
             from .wasserdruck import druck_aus_verlauf
-            return druck_aus_verlauf(self.verlauf, punkt, normale=normale, beidseitig=beidseitig)
+            return druck_aus_verlauf(self.verlauf, punkt, normale=normale, beidseitig=beidseitig,
+                                     lage=lage)
         if self.verlauf and self.verlauf.get("art") == "wind":
             from .wind import druck_aus_verlauf as wind_druck
             return wind_druck(self.verlauf, punkt, normale=normale, beidseitig=beidseitig)
@@ -7530,6 +7554,14 @@ class Model:
         wegmenge = {int(e) for e in (elemente or []) if 0 <= int(e) < len(self.elements)}
         if not wegmenge:
             return 0
+        # Flaechen und Koerper, deren Netz hier ganz entfaellt (vor dem
+        # Umnummerieren, in den alten Nummern) - fuer die Flaechenlager unten
+        ganz_weg = []
+        for art, objekte in (("flaeche", self.flaechen), ("koerper", self.koerper)):
+            for name, o in (objekte or {}).items():
+                els = {int(e) for e in (o.elemente or [])}
+                if els and els <= wegmenge:
+                    ganz_weg.append((art, name, els))
         neu_nr = {}
         k = 0
         for i in range(len(self.elements)):
@@ -7586,6 +7618,13 @@ class Model:
         # ein Element des Lagers selbst, ist nicht eindeutig, was der Anwender
         # will (Bettung kleiner oder auf die neuen Elemente) - das Lager merkt
         # es sich, die Modellpruefung meldet „Netz geändert – Lager prüfen“.
+        # Ausnahme (Befund 11 vom 11.11.2026): lag das Lager auf ALLEN
+        # Elementen einer Flaeche - oder eines Koerpers mit allen
+        # Aussenflaechen (face = -1) -, ist sein Ort eindeutig die ganze
+        # Flaeche. Das Lager merkt sie sich (``folgt``) und legt sich auf ihr
+        # neues Netz, sobald es eines gibt (supports.lager_auf_netz). Ein Teil
+        # einer Flaeche oder eine einzelne Elementseite hat im neuen Netz keinen
+        # eindeutigen Ort - dort bleibt es bei der Meldung.
         for ss in (getattr(self, "surface_supports", None) or []):
             alt = [int(i) for i in (ss.elements or [])]
             if not alt:
@@ -7594,13 +7633,17 @@ class Model:
                      and alt == [int(i) for i in (getattr(ss, "entfallen_rest", None) or [])])
             neu = um(alt)
             weg = len(alt) - len(neu)
+            alle_seiten = int(ss.face if ss.face is not None else -1) < 0
+            dazu = [[art, name, len(els)] for art, name, els in ganz_weg
+                    if els <= set(alt) and (art == "flaeche" or alle_seiten)]
             if weg > 0:
                 ss.entfallen = (int(ss.entfallen) if offen else 0) + weg
                 ss.entfallen_rest = list(neu)
+                ss.folgt = (list(getattr(ss, "folgt", None) or []) if offen else []) + dazu
             elif offen:
                 ss.entfallen_rest = list(neu)
             else:
-                ss.entfallen, ss.entfallen_rest = 0, []
+                ss.entfallen, ss.entfallen_rest, ss.folgt = 0, [], []
             ss.elements = neu
         return len(wegmenge)
 
@@ -8290,7 +8333,7 @@ class Model:
             richtung = [float(x) for x in r_b]
         elif bezug == "lokal":
             richtung = None
-        d = None
+        d = d_achse = None
         if gl.projiziert and richtung:
             d = np.asarray(richtung, float)
             d = d / (np.linalg.norm(d) or 1.0)
@@ -8299,8 +8342,31 @@ class Model:
             # „global Z, p = −5 kN/m²“ (Schnee) die Unterseite eines Koerpers
             # statt das Dach - Summe richtig, Angriffspunkt falsch (Befund A3).
             # Der Betrag p |n.d| bleibt; Schalen nehmen ohnehin |n.d|.
+            d_achse = d
             if float(gl.p) < 0.0:
                 d = -d
+            # Mit Verlauf (linear von A nach B) wirkt nicht gl.p - das ist nur
+            # der Wert bei A -, sondern der Wert an der Seite: je Seite richtet
+            # er den Windschatten (nimm). Bis zum 12.11.2026 galt auch dort das
+            # Vorzeichen von gl.p; A = 0, B = −5 kN/m² global Z traf die
+            # Unterseite eines Koerpers statt das Dach (Befund 9 der
+            # Pruefagenten vom 11.11.2026, Korrektur A3 unvollstaendig).
+
+        # Lage der Schalenelemente zu ihrer Flaeche - fuer den Wasserdruck an
+        # Schalen (Befund A7, 14.11.2026): welche Seite benetzt ist, sagt die
+        # Lage des Elements zu seiner Flaeche, nicht der Vergleich mit einer
+        # gemittelten Flaechennormale (die an einem Mantel ueber 180° auf einem
+        # Teil der Elemente quer bis gegenlaeufig steht)
+        gegen_je_flaeche: dict = {}
+
+        def lage_zur_flaeche(e: int, seite: int, flaeche):
+            if (seite != 0 or flaeche is None or (gl.verlauf or {}).get("art") != "wasser"
+                    or self.elements[int(e)].typ not in _EL.SCHALEN_TYPEN):
+                return None
+            if flaeche.name not in gegen_je_flaeche:
+                from .schalenlage import gegen_flaeche
+                gegen_je_flaeche[flaeche.name] = gegen_flaeche(self, flaeche)
+            return -1.0 if int(e) in gegen_je_flaeche[flaeche.name] else 1.0
 
         def nimm(e: int, seite: int, flaeche=None):
             if not 0 <= int(e) < len(self.elements):
@@ -8317,12 +8383,27 @@ class Model:
             # Zuerst also der Windschatten: er braucht nur die Normale und
             # wirft die Haelfte der Seiten weg.
             c = None
-            if d is not None:
+            mitte = None
+            p = None
+            d_seite = d
+            if d is not None and gl.verlauf:
+                # der wirkende Wert vor dem Windschatten (Befund 9): sein
+                # Vorzeichen sagt, von welcher Seite die Kraft p d kommt
+                mitte = self._seitenmitte(e, seite)
+                if gl.bereich and not gl.trifft(mitte):
+                    return
+                p = gl.wert(mitte, normale=self._seitennormale_oder_schale(e, seite),
+                            beidseitig=(seite == 0 and self.elements[int(e)].typ in _EL.SCHALEN_TYPEN),
+                            lage=lage_zur_flaeche(e, seite, flaeche))
+                if p == 0.0:
+                    return
+                d_seite = -d_achse if p < 0.0 else d_achse
+            if d_seite is not None:
                 schale = self.elements[int(e)].typ in _EL.SCHALEN_TYPEN
                 n = self._seitennormale_oder_schale(e, seite) if schale else self._seitennormale(e, seite)
                 if n is None:
                     return
-                c = float(n @ d)
+                c = float(n @ d_seite)
                 if schale:
                     # Eine Schale hat keine Aussenseite: die Last trifft sie von
                     # der Seite, von der sie kommt, mit p A |n.d|. Bis zum
@@ -8332,15 +8413,18 @@ class Model:
                     c = -abs(c)
                 if c >= 0:
                     return          # diese Seite liegt im Windschatten der Last
-            # Dann die Seitenmitte - aber nur, wenn jemand sie liest.
-            mitte = None
-            if gl.bereich or gl.verlauf:
+            # Dann die Seitenmitte - aber nur, wenn jemand sie liest (mit
+            # Verlauf und Projektion ist der Wert schon oben bestimmt).
+            if p is None and (gl.bereich or gl.verlauf):
                 mitte = self._seitenmitte(e, seite)
                 if gl.bereich and not gl.trifft(mitte):
                     return
-            if gl.verlauf:
+            if p is not None:
+                pass
+            elif gl.verlauf:
                 p = gl.wert(mitte, normale=self._seitennormale_oder_schale(e, seite),
-                            beidseitig=(seite == 0 and self.elements[int(e)].typ in _EL.SCHALEN_TYPEN))
+                            beidseitig=(seite == 0 and self.elements[int(e)].typ in _EL.SCHALEN_TYPEN),
+                            lage=lage_zur_flaeche(e, seite, flaeche))
                 if p == 0.0:
                     return          # ausserhalb des Verlaufs (ueber dem Wasserspiegel)
             else:
@@ -8994,7 +9078,18 @@ class Model:
         return self.nodes[e.nodes]
 
     def element_length(self, i: int) -> float:
+        """Laenge des Elements zwischen seinen ersten beiden Knoten - bei einem
+        Stabelement mit verschiedenem Versatz an Anfang und Ende die Laenge
+        des Stabs zwischen seinen versetzten Enden (assemble.stab_achsen; seit
+        dem 12.11.2026, vorher die der Knotenlinie). Stablasten (a, b),
+        Ersatzlasten und Schnittgroessen laufen entlang dieser Laenge."""
         e = self.elements[i]
+        if getattr(e, "exzentrizitaet", None) and e.typ in _EL.STAB_TYPEN:
+            from .elements import beam3d as _bm
+            X = self.nodes[e.nodes]
+            arme = _bm.versatz_arme(X[0], X[1], e.roll, e.exzentrizitaet)
+            if arme is not None:
+                return float(np.linalg.norm((X[1] + arme[1]) - (X[0] + arme[0])))
         return float(np.linalg.norm(self.nodes[e.nodes[1]] - self.nodes[e.nodes[0]]))
 
     def member_length(self, m: Member) -> float:
@@ -9846,6 +9941,15 @@ class Model:
                         else (versatz(s_neu + Ln), versatz(s_neu)))
                 ea.exzentrizitaet = [versatz(s_alt).tolist(), versatz(s_alt + La).tolist()]
                 en.exzentrizitaet = [(D @ v).tolist() for v in paar]
+        # Elementlasten laufen entlang des Stabs (element_length): mit
+        # verschiedenem Versatz an den Enden liegt er zwischen den versetzten
+        # Enden, beide Teile auf derselben Achse (12.11.2026); sonst ist es die
+        # Laenge der Knotenlinie wie oben
+        La_s, Ln_s = self.element_length(alt), self.element_length(neu)
+        if (La_s, Ln_s) != (La, Ln):
+            La, Ln = La_s, Ln_s
+            L0 = La + Ln
+            s_alt, s_neu = (0.0, La) if ende_alt == 1 else (Ln, 0.0)
         drehung = None                  # lokal alt -> lokal neu, erst bei Bedarf
         for lc in self.load_cases.values():
             liste = []
@@ -10275,6 +10379,39 @@ class Model:
                            "Last auf eine Seite mit Fläche legen")
         return aus
 
+    def _versatz_laenge_meldung(self, i: int, e) -> list:
+        """Die Zeile der Modellpruefung zu einem Stab, dessen verschiedener
+        Versatz an Anfang und Ende die Stabenden aufeinanderlegt (FEHLER: die
+        Rechnung bricht mit „Stab mit Laenge 0“ ab oder rechnet mit einem
+        beliebig steifen Stummel) oder ihn umkehrt (WARNUNG). Leer sonst.
+        Seit dem 14.11.2026 (Befund A10); bis dahin meldete die Pruefung nichts,
+        und die Rechnung nannte den Versatz nicht."""
+        if not getattr(e, "exzentrizitaet", None) or e.typ not in _EL.STAB_TYPEN or len(e.nodes) < 2:
+            return []
+        if any(n < 0 or n >= self.nn for n in e.nodes[:2]):
+            return []
+        from .elements import beam3d as _bm
+        from . import zahlen as _zl
+        X = self.nodes[e.nodes]
+        try:
+            arme = _bm.versatz_arme(X[0], X[1], e.roll, e.exzentrizitaet)
+        except (TypeError, ValueError):
+            return []
+        if arme is None:
+            return []
+        d = (X[1] + arme[1]) - (X[0] + arme[0])
+        Ln = float(np.linalg.norm(X[1] - X[0]))
+        Lp = float(np.linalg.norm(d))
+        text = (f"Länge zwischen den versetzten Stabenden {_zl.zahl_text(Lp, stellen=4)} m, "
+                f"Knotenlinie {_zl.zahl_text(Ln, stellen=4)} m")
+        if Lp <= 1e-3 * Ln:
+            return [f"FEHLER: Element {i}: der Versatz (Exzentrizität) der Stabenden legt Anfang und Ende "
+                    f"des Stabs aufeinander ({text}) – Versatz prüfen"]
+        if float(d @ (X[1] - X[0])) <= 0.0:
+            return [f"WARNUNG: Element {i}: der Versatz (Exzentrizität) der Stabenden kehrt den Stab um "
+                    f"({text}, Richtung entgegen der Knotenlinie) – Versatz prüfen"]
+        return []
+
     def check(self) -> list[str]:
         """Einfache Modellpruefung. Gibt Liste von Warnungen/Fehlern zurueck."""
         msgs = []
@@ -10310,6 +10447,7 @@ class Model:
                     msgs.append(f"FEHLER: Element {i}: Knoten {n} existiert nicht")
                 else:
                     used[n] = True
+            msgs += self._versatz_laenge_meldung(i, e)
         free = np.where(~used)[0]
         if len(free):
             # Nur Knoten, an denen etwas haengt (Last, Lager, Kopplung ...): ein
@@ -11285,7 +11423,8 @@ NEUE_FELDER = {
     # Rechnung: ergebnisse.MODELLTEILE)
     # vorspannung/je-anker (Definitionen der Vorspannung je Anker, 16.10.2026)
     # gruppe5/robustheit (Flaechenlager merkt sich entfallene Elemente, 09.11.2026)
-    "surface_supports": {"entfallen": 0, "entfallen_rest": []},
+    # netz/altbefunde (Flaechenlager folgt dem neuen Netz einer ganzen Flaeche, 12.11.2026)
+    "surface_supports": {"entfallen": 0, "entfallen_rest": [], "folgt": []},
     "": {"stabeinleitung": asdict(Stabeinleitung()), "ansichten": [], "vorspann_definitionen": [],
          # ui/paket-b (eigene Koordinatensysteme, 08.11.2026)
          "koordinatensysteme": []},
