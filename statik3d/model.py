@@ -11473,6 +11473,9 @@ class Model:
         # Windlasten eines aelteren Programmstands (Befund 40, 11.11.2026): nur ein Hinweis
         from .wind import windlasten_hinweis
         m._ladehinweise.extend(windlasten_hinweis(m))
+        # Stroemungsnumerischer Wasserdruck an geneigten Schalen (Befund B6, 14.11.2026): nur ein Hinweis
+        from .wasserdruck import wasserdruck_hinweis
+        m._ladehinweise.extend(wasserdruck_hinweis(m))
         # Werkstoffe, die wie Spannstahl aussehen, aber keine Art tragen
         # (13.10.2026, Drehlager vor diesem Tag importiert): nur ein Hinweis
         from .ec3.spannstahl import ladehinweise
