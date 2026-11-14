@@ -25,7 +25,11 @@ Karten:
     LOAD                               -> Kombination
     TEMP / TEMPD                       -> ignoriert (Hinweis)
 Achsen: Nastran-Ebene 1 (Orientierungsvektor) = lokale y-Achse; damit I1 -> Iz,
-I2 -> Iy. Einheiten SI, 'unit_scale' skaliert die Koordinaten.
+I2 -> Iy. Einheiten: ohne 'unit_scale' SI (m, N, Pa, kg); mit 'unit_scale' (z. B.
+0,001 fuer mm) gilt die Datei als konsistentes System Laenge-N-s - bei mm also mm, N,
+MPa, t, mm/s² - und alles wird umgerechnet: Koordinaten, Querschnitte, E, G, f_y,
+Dichte, Momente, Druecke, Streckenlasten, Federn, Daempfer, Massen, Erdbeschleunigung
+(_common.Einheitensystem; bis zum 14.11.2026 nur Koordinaten und Querschnitte).
 """
 from __future__ import annotations
 
@@ -217,6 +221,8 @@ def import_bdf(path: str, model: Model = None, log: list = None,
     if model is None:
         model = Model(os.path.splitext(os.path.basename(path))[0])
     scale = float(unit_scale)
+    es = C.Einheitensystem(scale)
+    es.melden(log, "Nastran")
     cards = read_cards(path, log)
     nodes = C.NodeIndex(model, tol)
 
@@ -261,6 +267,10 @@ def import_bdf(path: str, model: Model = None, log: list = None,
                 st = _num(_f(card, 9))
                 if nu is None and E and G:
                     nu = E / (2.0 * G) - 1.0
+                E = E * es.spannung if E else E
+                rho = rho * es.dichte if rho else rho
+                st = st * es.spannung if st else st
+                es.e_pruefen(log, f"MAT1 {mid}", E)
                 m = Material(f"MAT {mid}", E or 210e9, nu if nu is not None else 0.3,
                              rho if rho else 7850.0, alpha if alpha is not None else 1.2e-5,
                              fy=st if st else None)
@@ -489,11 +499,13 @@ def import_bdf(path: str, model: Model = None, log: list = None,
             elif name == "CONM2":
                 # CONM2 eid G cid M X1 X2 X3 / I11 I21 I22 I31 I32 I33
                 g = grids[_int(_f(card, 2))]
-                masse = _num(_f(card, 4)) or 0.0
-                # I11, I22, I33 stehen im Fortsetzungsteil (Felder 9, 11, 14)
-                J = [(_num(_f(card, 9)) or 0.0) * scale ** 2,
-                     (_num(_f(card, 11)) or 0.0) * scale ** 2,
-                     (_num(_f(card, 14)) or 0.0) * scale ** 2]
+                masse = (_num(_f(card, 4)) or 0.0) * es.masse
+                # I11, I22, I33 stehen im Fortsetzungsteil (Felder 9, 11, 14);
+                # Masse mal Laenge² im System der Datei (bis zum 14.11.2026 nur
+                # mal scale², die Masse selbst unumgerechnet)
+                J = [(_num(_f(card, 9)) or 0.0) * es.traegheit,
+                     (_num(_f(card, 11)) or 0.0) * es.traegheit,
+                     (_num(_f(card, 14)) or 0.0) * es.traegheit]
                 model.add_punktmasse(g, masse, J, name=f"CONM2 {eid}")
             elif name in ("CELAS1", "CELAS2", "CBUSH"):
                 # CELAS1 eid pid G1 C1 G2 C2 / CELAS2 eid k G1 C1 G2 C2.
@@ -521,6 +533,7 @@ def import_bdf(path: str, model: Model = None, log: list = None,
                         g1, g2 = g2, None
                     info = props.get(pid) or {}
                     kk = list(info.get("k", [0.0] * 6))
+                kk = [es.feder(k, d) for d, k in enumerate(kk)]
                 g1 = g1 or None
                 g2 = g2 or None
                 if g1 is None:
@@ -549,7 +562,7 @@ def import_bdf(path: str, model: Model = None, log: list = None,
                 g2 = _int(_f(card, 5))
                 cc = [0.0] * 6
                 if c1 and 1 <= c1 <= 6:
-                    cc[c1 - 1] = c
+                    cc[c1 - 1] = es.feder(c, c1 - 1)        # N s/L bzw. N L s
                 model.add_daempfer(grids[g1], grids[g2] if g2 in grids else -1, cc,
                                    name=f"{name} {eid}")
             elif name in ("RBE2", "RBE3"):
@@ -647,7 +660,7 @@ def import_bdf(path: str, model: Model = None, log: list = None,
                     continue
                 comp = [0.0] * 6
                 off = 0 if name == "FORCE" else 3
-                comp[off:off + 3] = vec
+                comp[off:off + 3] = vec if name == "FORCE" else [v * es.moment for v in vec]
                 model.load_node(grids[g], *comp, case=case_name(sid))
             elif name == "PLOAD1":
                 e = _int(_f(card, 2))
@@ -661,9 +674,10 @@ def import_bdf(path: str, model: Model = None, log: list = None,
                                 f"gelesen (nur Kräfte FX, FY, FZ, FXE, FYE, FZE) - übergangen")
                     continue
                 x1 = _num(_f(card, 5)) or 0.0
-                p1 = _num(_f(card, 6)) or 0.0
+                p1 = (_num(_f(card, 6)) or 0.0) * es.streckenlast
                 x2 = _num(_f(card, 7))
                 p2 = _num(_f(card, 8))
+                p2 = p2 * es.streckenlast if p2 is not None else None
                 if x2 is None or x2 == x1:
                     C.warn(log, f"PLOAD1 SID {sid}, Element {e}: Einzellast auf dem Stab "
                                 f"wird nicht gelesen - übergangen")
@@ -678,7 +692,7 @@ def import_bdf(path: str, model: Model = None, log: list = None,
                 q[0]["XYZ".index(typ[1])] += p1
                 q[1]["XYZ".index(typ[1])] += p2
             elif name == "PLOAD2":
-                p = _num(_f(card, 2)) or 0.0
+                p = (_num(_f(card, 2)) or 0.0) * es.spannung
                 for e in _expand_thru(card[3:]):
                     if e in elems:
                         model.load_face(elems[e], p, 0, case=case_name(sid))
@@ -686,7 +700,7 @@ def import_bdf(path: str, model: Model = None, log: list = None,
                 e1 = _int(_f(card, 2))
                 pv = [_num(_f(card, k)) for k in (3, 4, 5, 6)]
                 pv = [v for v in pv if v is not None]
-                p = sum(pv) / len(pv) if pv else 0.0
+                p = (sum(pv) / len(pv) if pv else 0.0) * es.spannung
                 eids = [e1]
                 if _f(card, 7).upper() == "THRU":
                     e2 = _int(_f(card, 8))
@@ -711,7 +725,7 @@ def import_bdf(path: str, model: Model = None, log: list = None,
                             model.load_face(elems[e], p, face, case=case_name(sid),
                                             direction=direction)
             elif name == "GRAV":
-                a = _num(_f(card, 3)) or 0.0
+                a = (_num(_f(card, 3)) or 0.0) * es.beschleunigung
                 vec = [(_num(_f(card, k)) or 0.0) * a for k in (4, 5, 6)]
                 model.load_cases[case_name(sid)].gravity = vec
             elif name == "LOAD":

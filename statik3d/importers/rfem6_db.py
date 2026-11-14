@@ -51,6 +51,7 @@ import sqlite3
 import tempfile
 import zipfile
 import xml.etree.ElementTree as ET
+from typing import Optional
 
 import numpy as np
 
@@ -108,6 +109,15 @@ NONLINEARITY_TYPES = {
 #: -> negative..., 2 (bei positiver) -> positive...
 FLAECHENLAGER_REIBUNG = 2
 FLAECHENLAGER_SEITE = {1: "negative", 2: "positive"}
+
+#: Erdbeschleunigung, wenn die Datei keine nennt und die Werkstoffe keine
+#: gemeinsame Beziehung gamma/rho haben [m/s^2]
+G_VORGABE = 9.81
+
+#: Merkmal am Modell (meta): das Eigengewicht kommt aus der Wichte gamma wie in
+#: RFEM (14.11.2026). Ein Modell aus einer RFEM-6-Datei ohne es rechnete das
+#: Eigengewicht mit rho * 9,81 (rechenverfahren, Merkmal import_eigengewicht).
+EIGENGEWICHT_MERKMAL = "rfem_eigengewicht"
 
 #: Merkmal am Modell (meta): der Import setzt einen Reibbeiwert nur mit
 #: Reibungsart an (15.10.2026). Ein Modell aus einer RFEM-6-Datei ohne es,
@@ -230,6 +240,14 @@ class Db:
         self.tables = {r[0] for r in cur.fetchall()}
         self._cols: dict[str, list[str]] = {}
         self._cache: dict[str, dict] = {}
+        #: je uebernommenem Werkstoff (Modellname): (Dichte rho im Modell, Wichte
+        #: gamma der Datei oder None, Dichte der Datei oder None) - fuer das
+        #: Eigengewicht aus der Wichte (14.11.2026)
+        self.wichten: dict[str, tuple] = {}
+        #: Erdbeschleunigung, mit der die Lastfaelle das Eigengewicht ansetzen, und
+        #: die Zeile dazu fuers Protokoll (:func:`_eigengewicht_aus_wichte`)
+        self.g_last: float = G_VORGABE
+        self.g_text: str = ""
 
     # -- Grundlagen ------------------------------------------------------
     def has(self, table: str) -> bool:
@@ -584,7 +602,10 @@ def _material(db: Db, mat_id: int, model: Model, cache: dict, log: list,
             if rho_p:
                 rho = rho_p
             elif gamma_p:
-                rho = gamma_p / 9.81             # Wichte [N/m^3] -> Dichte
+                # Wichte [N/m^3] -> Dichte; die Erdbeschleunigung des
+                # Eigengewichts steht erst nach allen Werkstoffen fest
+                # (_eigengewicht_aus_wichte setzt rho = gamma / g nach)
+                rho = gamma_p / G_VORGABE
             elif rho_p == 0.0 or gamma_p == 0.0:
                 rho = 0.0
             else:
@@ -602,6 +623,8 @@ def _material(db: Db, mat_id: int, model: Model, cache: dict, log: list,
         name, grade = _material_name(E, fy, h.get("userID") if h else mat_id, dbnr)
     grade = grade or C.steel_grade_from_text(name) or ""
     name = C.unique_name(model.materials, name)
+    if h is not None and impl is not None:
+        db.wichten[name] = (float(rho), props.get("gamma"), props.get("rho"))
     model.add_material(Material(name, E=E, nu=nu, rho=rho, alpha=alpha,
                                 fy=fy, fu=fu, grade=grade,
                                 fy_dicke=list(fy_dicke or []), fu_dicke=list(fu_dicke or []),
@@ -1417,6 +1440,7 @@ def _build(db: Db, m: Model, log: list, nlmap: dict, fortschritt=None) -> None:
     _liniengelenke(db, m, log, line_name, surf_name)
     _integrierte_objekte(db, m, log, line_name, surf_name, node_of)
     strukturmod = _strukturmodifikationen(db, m, log, member_user, node_user)
+    _eigengewicht_aus_wichte(db, m, log)
     _load_cases(db, m, log, surf_els, node_of, member_name, surf_name,
                 line_name, solid_name, strukturmod, fortschritt=fortschritt)
     _object_selections(db, m, log, node_user, line_name, member_user, surf_name, solid_name)
@@ -1978,6 +2002,148 @@ def _einwirkungen_zuordnen(db: "Db", m: Model, lc_name: dict, info: dict, log: l
                    "mit Einwirkung P und γ_P = 1,0.")
 
 
+def _g_der_datei(db: Db) -> Optional[float]:
+    """Die Erdbeschleunigung der RFEM-Datei (ModelData.gravitationalAcceleration,
+    am Drehlager und am CBG-Trolley 10 m/s^2) - oder None."""
+    for r in db.rows("ModelData"):
+        try:
+            g = float(r.get("gravitationalAcceleration") or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if g > 0.0:
+            return g
+    return None
+
+
+def _eigengewicht_aus_wichte(db: Db, m: Model, log: list) -> float:
+    """Die Erdbeschleunigung des Eigengewichts so waehlen, dass rho * g die
+    Wichte gamma der Werkstoffe ergibt - wie RFEM, das das Eigengewicht aus
+    gamma bildet (14.11.2026, Befund I3; Entscheidung des Anwenders: „Eigengewicht
+    aus der Wichte γ, wie RFEM“).
+
+    Gewaehlt wird das Verhaeltnis gamma/rho der Werkstoffe, wenn es fuer alle gleich
+    ist - RFEM verbindet Wichte und Dichte ueber die Erdbeschleunigung der Datei
+    (ModelData, am Drehlager und am CBG-Trolley 78 500 / 7 850 = 10 m/s^2). So gilt
+    eine Zahl fuer alle Werkstoffe, die Masse fuer Eigenformen bleibt rho der Datei,
+    und jeder Weg, der das Eigengewicht aus rho und der Erdbeschleunigung des
+    Lastfalls bildet (Stab, Schale, Volumen, Theorie III. Ordnung), traegt gamma.
+    Sind die Verhaeltnisse verschieden, gilt die Erdbeschleunigung der Datei, sonst
+    9,81, und jeder Werkstoff, dessen gamma davon abweicht, wird gemeldet. Ein
+    Werkstoff nur mit gamma bekommt rho = gamma / g. Gewichtslos (0) bleibt
+    gewichtslos. Rueckgabe g [m/s^2], auch in ``db.g_last``."""
+    from ..zahlen import zahl_text
+    g_datei = _g_der_datei(db)
+    paare = [(n, rho, gamma) for n, (rho, gamma, _r) in db.wichten.items()
+             if rho and gamma and rho > 0.0 and gamma > 0.0]
+    if paare and max(gm / r for _n, r, gm in paare) <= min(gm / r for _n, r, gm in paare) * 1.001:
+        g = sum(gm / r for _n, r, gm in paare) / len(paare)
+        woher = "Verhältnis Wichte/Dichte der Werkstoffe" + (
+            ", wie die Erdbeschleunigung der RFEM-Datei" if g_datei and abs(g - g_datei) <= 1e-3 * g_datei
+            else "")
+    elif g_datei:
+        g, woher = g_datei, "Erdbeschleunigung der RFEM-Datei"
+    else:
+        g, woher = G_VORGABE, "Vorgabe, die Datei nennt keine Erdbeschleunigung"
+    db.g_last = float(g)
+    # Werkstoffe nur mit Wichte: rho = gamma / g (Masse und Gewicht wie RFEM)
+    for n, (_rho, gamma, rho_datei) in db.wichten.items():
+        if not rho_datei and gamma and gamma > 0.0 and n in m.materials:
+            m.materials[n].rho = float(gamma) / g
+    abw = []
+    for n, rho, gamma in paare:
+        if abs(rho * g - gamma) > 1e-3 * gamma:
+            abw.append(f"{n} (γ = {zahl_text(gamma / 1e3, stellen=4)} kN/m³, ρ·g = "
+                       f"{zahl_text(rho * g / 1e3, stellen=4)} kN/m³)")
+    db.g_text = (f"Eigengewicht aus der Wichte γ wie in RFEM: g = {zahl_text(g, stellen=4)} m/s² ({woher}), "
+                 "ρ·g = γ; die Masse für Eigenformen bleibt ρ")
+    if abw:
+        C.warn(log, "Bei " + ", ".join(abw) + " passen Wichte und Dichte nicht zur Erdbeschleunigung - "
+                    "das Eigengewicht folgt hier aus ρ·g, nicht aus γ. Werkstoff prüfen.")
+    m.meta[EIGENGEWICHT_MERKMAL] = "beim Import gesetzt (14.11.2026)"
+    return float(g)
+
+
+def eigengewicht_abweichung(model: Model) -> Optional[tuple]:
+    """Fuer ein Modell, das vor dem 14.11.2026 aus RFEM 6 uebernommen wurde
+    (Eigengewicht aus rho * 9,81): um wie viel das Eigengewicht gegen das aus der
+    Wichte gamma zu klein ist - (Anteil 0…1, Quelle, [Lastfaelle]) oder None (nicht
+    betroffen).
+
+    Betroffen sind die Lastfaelle, die in der RFEM-Datei Eigengewicht tragen (LF<Nr>
+    mit selfWeightActive), solange die Datei unter ``meta["quelle"]`` liegt; ein
+    Eigengewicht, das der Anwender erst in Statik3D angesetzt hat, kam nicht vom
+    Import (am Drehlager traegt kein Lastfall Eigengewicht). Gerechnet wird mit der
+    Erdbeschleunigung, die die Lastfaelle heute tragen (hat der Anwender sie auf die der
+    Datei gesetzt, ist nichts mehr zu klein), und mit gamma und rho der Datei. Liegt die
+    Datei nicht mehr dort, zaehlt jeder Lastfall mit Eigengewicht, mit der RFEM-Vorgabe
+    g = 10 m/s^2 (rho = gamma / 10) und dem Faktor 1. Das Gelesene haengt am Modell
+    (``_rfem_eigengewicht_abw``), die Datei wird einmal gelesen."""
+    meta = getattr(model, "meta", None) or {}
+    quelle = str(meta.get("quelle", "") or "")
+    if not quelle.lower().endswith(".rf6") or meta.get(EIGENGEWICHT_MERKMAL):
+        return None
+    mit_g = {}
+    for name, lc in model.load_cases.items():
+        g = None if lc.gravity is None else np.asarray(lc.gravity, float).ravel()
+        if g is not None and g.size >= 3 and abs(float(g[2])) > 0.0:
+            mit_g[str(name)] = abs(float(g[2]))
+    if not mit_g or not any(float(getattr(mt, "rho", 0.0) or 0.0) > 0.0 for mt in model.materials.values()):
+        return None
+    zwischen = getattr(model, "_rfem_eigengewicht_abw", None)
+    if not (isinstance(zwischen, tuple) and zwischen[0] == quelle):
+        verh, woher, faktoren = None, "", None
+        if os.path.isfile(quelle):
+            tmp = None
+            try:
+                db_path = extract_db(quelle)
+                tmp = os.path.dirname(db_path) if db_path != quelle else None
+                con = connect(db_path)
+                try:
+                    db = Db(con)
+                    g_d = _g_der_datei(db)
+                    werte = []
+                    for _h, impl in db.impls("Material"):
+                        pr = _material_props(db, impl)
+                        rho, gamma = pr.get("rho"), pr.get("gamma")
+                        if not (rho and rho > 0.0):
+                            continue
+                        # RFEM rechnet mit gamma; ohne gamma mit rho * g der Datei
+                        if gamma and gamma > 0.0:
+                            werte.append(gamma / rho)
+                        elif g_d:
+                            werte.append(g_d)
+                    if werte:
+                        verh, woher = min(werte), f"Wichte und Dichte aus {os.path.basename(quelle)}"
+                    # Lastfaelle mit Eigengewicht in der Datei: Name wie beim Import -> Faktor z
+                    faktoren = {}
+                    for h, impl in db.impls("LoadCase"):
+                        gz = impl.get("selfWeightFactors_z")
+                        if impl.get("selfWeightActive") and gz:
+                            faktoren[f"LF{h.get('userID') or h['id']}"] = abs(float(gz))
+                finally:
+                    con.close()
+            except Exception:                            # noqa: BLE001 - Datei unlesbar
+                verh, faktoren = None, None
+            finally:
+                if tmp:
+                    shutil.rmtree(tmp, ignore_errors=True)
+        if verh is None:
+            verh, faktoren = 10.0, None
+            woher = "RFEM-Vorgabe g = 10 m/s², die RFEM-Datei liegt nicht mehr unter " + quelle
+        model._rfem_eigengewicht_abw = (quelle, verh, woher, faktoren)
+    _q, verh, woher, faktoren = model._rfem_eigengewicht_abw
+    anteile = {}
+    for name, g in mit_g.items():
+        if faktoren is not None and name not in faktoren:
+            continue                    # Eigengewicht nicht aus der RFEM-Datei
+        soll = float(verh) * (faktoren[name] if faktoren is not None else 1.0)
+        if 1.0 - g / soll > 1e-3:
+            anteile[name] = 1.0 - g / soll
+    if not anteile:
+        return None
+    return (min(anteile.values()), woher, sorted(anteile))
+
+
 def _load_cases(db: Db, m: Model, log: list, surf_els: dict = None,
                 node_of: dict = None, member_name: dict = None,
                 surf_name: dict = None, line_name: dict = None,
@@ -2019,7 +2185,14 @@ def _load_cases(db: Db, m: Model, log: list, surf_els: dict = None,
         gz = impl.get("selfWeightFactors_z")
         eigengewicht = bool(impl.get("selfWeightActive") and gz)
         if eigengewicht:
-            lc.gravity = [0.0, 0.0, -9.81 * float(gz)]
+            # Eigengewicht aus der Wichte gamma wie in RFEM (14.11.2026, I3): g so,
+            # dass rho * g = gamma (_eigengewicht_aus_wichte, meist die
+            # Erdbeschleunigung der Datei, 10 m/s^2); bis dahin 9,81 - Stahl war
+            # mit rho = 7850 kg/m^3 77,0 statt 78,5 kN/m^3 schwer (-1,9 %)
+            lc.gravity = [0.0, 0.0, -float(db.g_last) * float(gz)]
+            if db.g_text:
+                C.say(log, db.g_text)
+                db.g_text = ""
         info[nm] = {"akid": akid, "id": h["id"], "name": name, "eigengewicht": eigengewicht}
         # Rechnet der Lastfall mit einer Strukturmodifikation, gilt er in deren
         # Situation - mit dem verkleinerten System, nicht mit dem vollen.

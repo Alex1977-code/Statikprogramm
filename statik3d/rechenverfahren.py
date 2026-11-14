@@ -1777,6 +1777,36 @@ def _import_lastkategorien(model) -> bool:
     return kat == {"Q"}
 
 
+def _import_eigengewicht(model) -> bool:
+    """Aus RFEM 6 vor dem 14.11.2026 uebernommen (meta „rfem_eigengewicht“ fehlt), mit
+    Eigengewicht, und rho * g der Lastfaelle ergibt weniger als die Wichte gamma der
+    RFEM-Datei (rfem6_db.eigengewicht_abweichung; Befund I3)."""
+    if not _rfem(model):
+        return False
+    from .importers.rfem6_db import eigengewicht_abweichung
+    return eigengewicht_abweichung(model) is not None
+
+
+def _import_eigengewicht_im_ergebnis(model, an) -> str:
+    """Betroffen sind gerechnete Lastfaelle mit Eigengewicht und Kombinationen mit ihnen;
+    der Text nennt, um wie viel das Eigengewicht zu klein ist."""
+    from .importers.rfem6_db import eigengewicht_abweichung
+    from .zahlen import zahl_text
+    abw = eigengewicht_abweichung(model)
+    if abw is None:
+        return ""
+    mit_g = set(abw[2])                 # die Lastfaelle mit Eigengewicht aus der RFEM-Datei
+    faelle = sorted(str(n) for n in (getattr(an, "cases", None) or {}) if str(n) in mit_g)
+    kombis = sorted(str(n) for n in (getattr(an, "combinations", None) or {})
+                    if any(str(f) in mit_g for f in (getattr((getattr(model, "combinations", None) or {})
+                                                             .get(n), "factors", None) or {})))
+    namen = faelle + kombis
+    if not namen:
+        return ""
+    return (f"Eigengewicht {zahl_text(abw[0] * 100.0, stellen=2)} % zu klein in "
+            + ", ".join(namen[:6]) + (" …" if len(namen) > 6 else ""))
+
+
 def _kombinationen_im_ergebnis(model, an) -> str:
     """Die Kategorie wirkt nur ueber Teilsicherheits- und Kombinationsbeiwerte: betroffen
     sind gerechnete Kombinationen (und was aus ihnen folgt)."""
@@ -2702,10 +2732,26 @@ MERKMALE: list = [
                          art=FEHLERKORREKTUR),),
         modellmerkmal="benutztes U-Profil mit I_w nach der alten Formel",
         betrifft=lambda model: bool(_u_profile_alt(model)), im_modell=_u_profile_im_modell),
+    # Befund I3 der Einheiten-Agenten (14.11.2026): der RFEM-6-Import bildete das
+    # Eigengewicht aus rho * 9,81 statt aus der Wichte gamma - RFEM verbindet beide
+    # mit g = 10 m/s^2 (ModelData), Stahl 77,0 statt 78,5 kN/m^3 (-1,9 %), auch am
+    # Drehlager. Der Import setzt jetzt g der Datei an (rfem6_db._eigengewicht_aus_wichte);
+    # ein frueher uebernommenes Modell meldet sich. Fehlerkorrektur
+    Merkmal(
+        name="import_eigengewicht", titel="Eigengewicht aus RFEM",
+        texte={"alt": "Eigengewicht aus ρ · 9,81 m/s² statt aus der Wichte γ",
+               "neu": "Eigengewicht aus der Wichte γ (Erdbeschleunigung der RFEM-Datei)"},
+        wechsel=(Wechsel(stand=46, datum="14.11.2026", commit="fix/k5-b-import", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="RFEM-6-Import ohne Merkmal rfem_eigengewicht, Lastfall mit Eigengewicht, "
+                      "ρ · g kleiner als die Wichte γ der RFEM-Datei",
+        betrifft=_import_eigengewicht, import_korrektur=True, im_ergebnis=_import_eigengewicht_im_ergebnis,
+        vorschlag="neu importieren (oder im Lastfall das Eigengewicht mit der Erdbeschleunigung der "
+                  "RFEM-Datei ansetzen, meist g = 10 m/s²)"),
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 45
+VERFAHRENSSTAND = 46
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

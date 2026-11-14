@@ -765,9 +765,18 @@ _UNITS = {
     "n/m^2": 1.0, "kn/m^2": 1e3, "mn/m^2": 1e6, "n/mm^2": 1e6, "kn/cm^2": 1e7,
     "kn/mm^2": 1e9, "mpa": 1e6, "gpa": 1e9, "kpa": 1e3, "pa": 1.0,
     "n/m^3": 1.0, "kn/m^3": 1e3,
+    # Wichte und Bettung (14.11.2026, Befund I4: bis dahin fielen sie still auf
+    # die Vorgabe der Spalte, eine Bettung in MN/m³ kam 1000fach zu weich an)
+    "mn/m^3": 1e6, "n/mm^3": 1e9, "n/cm^3": 1e6, "kn/cm^3": 1e9, "kn/mm^3": 1e12,
+    "kn/dm^3": 1e6,
+    # Linienfedern [Kraft/Laenge je Laenge]
+    "kn/m/m": 1e3, "mn/m/m": 1e6, "n/mm/mm": 1e6, "kn/cm/cm": 1e7,
     # Steifigkeiten
     "n/rad": 1.0, "nm/rad": 1.0, "knm/rad": 1e3, "mnm/rad": 1e6,
     "kn/rad": 1e3, "mn/rad": 1e6, "knm/°": 1e3 * 180 / math.pi,
+    "nmm/rad": 1e-3, "ncm/rad": 1e-2, "knmm/rad": 1.0, "kncm/rad": 10.0,
+    "knm/rad/m": 1e3, "mnm/rad/m": 1e6, "nm/rad/m": 1.0, "kncm/rad/cm": 1e3,
+    "nmm": 1e-3, "knmm": 1.0,
     # Dichte / Winkel / Temperatur
     "kg/m^3": 1.0, "t/m^3": 1e3, "g/cm^3": 1e3,
     "°": math.pi / 180.0, "deg": math.pi / 180.0, "grad": math.pi / 180.0, "rad": 1.0,
@@ -783,10 +792,68 @@ def normalize_unit(text: str) -> str:
     return s
 
 
-def unit_factor(header: str, default: float = 1.0) -> float:
+class Einheitensystem:
+    """Massstaebe Datei -> SI fuer eine FE-Eingabedatei (Nastran, Abaqus) in einem
+    konsistenten System Laenge-Kraft-Zeit mit Kraft in N und Zeit in s; ``s`` ist der
+    Laengenmassstab (unit_scale, 0,001 fuer mm). Daraus folgen Masse (N·s²/Laenge),
+    Spannung, Dichte usw. - bei mm das uebliche System mm, N, N/mm² = MPa, t, mm/s².
+
+    Bis zum 14.11.2026 rechneten beide Leser nur die Koordinaten und Querschnitte um
+    (Befund I6): ein Kragarm in mm-N-MPa kam mit E = 210 000 Pa an, w = -2,75e7 statt
+    27,5 mm. Mit s = 1 sind alle Faktoren 1."""
+
+    def __init__(self, s: float):
+        self.s = float(s)
+        self.laenge = self.s
+        self.spannung = 1.0 / self.s ** 2          # E, G, f_y, Druck
+        self.dichte = 1.0 / self.s ** 4            # (N s²/L) / L³
+        self.moment = self.s                       # N·L
+        self.streckenlast = 1.0 / self.s           # N/L, Wegfeder N/L
+        self.drehfeder = self.s                    # N·L/rad
+        self.masse = 1.0 / self.s                  # N s²/L
+        self.traegheit = self.s                    # Masse · L²
+        self.beschleunigung = self.s               # L/s²
+
+    @property
+    def umgerechnet(self) -> bool:
+        return abs(self.s - 1.0) > 1e-12
+
+    def feder(self, k: float, fhg: int) -> float:
+        """Federsteifigkeit des Freiheitsgrads ``fhg`` (0…2 Weg, 3…5 Drehung)."""
+        return float(k) * (self.streckenlast if fhg < 3 else self.drehfeder)
+
+    def melden(self, log: list, format_: str,
+               was: str = "E-Modul, f_y, Dichte, Momente, Drücke, Streckenlasten, Federn, Massen und "
+                          "Erdbeschleunigung") -> None:
+        if not self.umgerechnet:
+            return
+        name = {1e-3: "mm, N, N/mm² (MPa), t, mm/s²", 1e-2: "cm, N, N/cm², 100 kg, cm/s²"}.get(
+            round(self.s, 12), f"Länge ×{_zahl(self.s)} m, N, s")
+        say(log, f"{format_}: Längeneinheit ×{_zahl(self.s)} m - die Datei gilt als konsistentes "
+                 f"Einheitensystem ({name}); {was} werden mit umgerechnet")
+
+    def e_pruefen(self, log: list, name: str, E: float) -> None:
+        """Warnung, wenn der E-Modul nach der Umrechnung nicht nach einem Baustoff
+        aussieht (0,1 bis 10 000 GPa) - das Einheitensystem der Datei ist dann ein anderes."""
+        if E and not (1e8 <= abs(float(E)) <= 1e13):
+            warn(log, f"{name}: E-Modul {_zahl(float(E) / 1e6)} N/mm² nach der Umrechnung - unplausibel. "
+                      "Einheitensystem der Datei und die gewählte Längeneinheit prüfen.")
+
+
+def _zahl(x: float) -> str:
+    from ..zahlen import zahl_text
+    return zahl_text(x)
+
+
+def unit_factor(header: str, default: float = 1.0, log: list = None, wo: str = "") -> float:
     """Einheitenfaktor aus einer Spaltenueberschrift wie 'Kraft Fx [kN]'.
 
     Gesucht wird der letzte Klammerausdruck [..] bzw. (..) mit bekannter Einheit.
+
+    Steht eine Einheit in eckigen Klammern, die die Tabelle nicht kennt, gilt die
+    Vorgabe der Spalte - mit ``log`` und einer Warnung (14.11.2026, Befund I4:
+    bis dahin still; eine Bettung „uz [MN/m³]“ kam 1000fach zu weich an). Runde
+    Klammern tragen oft Zusaetze („Knoten Nr. (Anfang)“), sie warnen nicht.
     """
     if not header:
         return default
@@ -795,6 +862,11 @@ def unit_factor(header: str, default: float = 1.0) -> float:
         f = _UNITS.get(normalize_unit(u))
         if f is not None:
             return f
+    eckig = [u for u in re.findall(r"\[([^\[\]]+)\]", str(header)) if u.strip() not in ("-", "")]
+    if eckig and log is not None:
+        warn(log, f"Einheit „[{eckig[-1].strip()}]“ in der Spalte „{str(header).strip()}“"
+                  + (f" ({wo})" if wo else "") + " nicht erkannt - die Werte werden mit der Vorgabe "
+                  f"der Spalte gelesen (Faktor {_zahl(default)} auf SI). Bitte die Einheit prüfen.")
     return default
 
 

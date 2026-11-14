@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import os
 import re
+from typing import Optional
 
 from ..model import Model
 from . import _common as C
@@ -164,6 +165,28 @@ def _unit_scale(head: list[str], log: list = None) -> float:
             return f
     C.say(log, "Keine Einheit in Paket 00 - Millimeter angenommen")
     return 0.001
+
+
+def einheit_der_datei(path: str) -> Optional[tuple]:
+    """Die Laengeneinheit aus Paket 00 der SDNF-Datei: (Name, Faktor nach m) - oder
+    None, wenn Paket 00 keine nennt (dann nimmt der Import Millimeter an). Fuer die
+    Vorwahl im Importdialog (14.11.2026, Befund I1)."""
+    try:
+        with open(path, "r", encoding="latin-1", errors="ignore") as f:
+            text = f.read()
+    except OSError:
+        return None
+    if not is_sdnf(text):
+        return None
+    head = packets(text).get("00", [])
+    for line in head:
+        for kind, val in tokens(line):
+            if kind == "s" and str(val).strip().lower() in UNITS and                     str(val).strip().lower() not in ("1", "2"):
+                return (str(val).strip(), UNITS[str(val).strip().lower()])
+    for line in head:
+        if line.strip() in ("1", "2"):
+            return ("mm", 0.001) if line.strip() == "1" else ("inch", 0.0254)
+    return None
 
 
 def import_sdnf(path: str, model: Model = None, log: list = None,
