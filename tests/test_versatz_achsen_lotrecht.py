@@ -10,8 +10,9 @@ A1  Stab mit verschiedenem Versatz an Anfang und Ende: seine Achsen kamen aus
     Lotrechte Stütze 4 m, Iy = 1e-4, Iz = 4e-4 m⁴, Versatz oben 0,1 m,
     Fx = 10 kN: Kopfverdrehung 0,9639 statt 3,8119 mrad; lokale Streckenlast
     qz = 1 kN/m: Lager Rx +4,0 statt −4,0 kN. Seither die Achsen der
-    Knotenlinie durch die kleinste Drehung auf die Stabrichtung t:
-    y' = y_n − (y_n·t) t normiert, z' = t × y' (bm.stab_achsen_versetzt).
+    Knotenlinie, y senkrecht zur Stabrichtung t projiziert (nicht die
+    kleinste Drehung): y' = y_n − (y_n·t) t normiert, z' = t × y'
+    (bm.stab_achsen_versetzt).
 A2  Theorie III. Ordnung: die Stablast eines Stabs mit Versatz stand als
     feste Knotenlast mit unverdrehtem Arm in F_ref. Kragarm 4 m, Versatz
     0,5 m, qz −400 kN/m: Einspannmoment 3061,42 statt 3171,17 kNm

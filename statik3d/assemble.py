@@ -132,9 +132,9 @@ def stab_achsen(model: Model, e):
     0,1 m quer nur am Ende - Einspannmoment 5,0 statt 0 kNm, die Momente um
     die Einspannung nicht im Gleichgewicht (tests/test_versatz_starrer_arm.py).
 
-    Die Achsen des Stabs sind die der Knotenlinie, durch die kleinste Drehung
-    auf die Stabrichtung gebracht (bm.stab_achsen_versetzt, Verfahrensstand
-    41, 14.11.2026). Bis dahin kamen sie aus local_axes der versetzten Linie:
+    Die Achsen des Stabs sind die der Knotenlinie, die y-Achse senkrecht zur
+    Stabrichtung projiziert (bm.stab_achsen_versetzt, Verfahrensstand 41,
+    14.11.2026; eine Projektion, nicht die kleinste Drehung). Bis dahin kamen sie aus local_axes der versetzten Linie:
     an einer lotrechten Knotenlinie drehte der Querschnitt um 90 bzw. 180 Grad.
     """
     X = model.nodes[e.nodes]
