@@ -11525,6 +11525,25 @@ Ergebnisse von Modellen mit verschiedenem Versatz an den Stabenden tragen den
 Status „möglicherweise betroffen – neu rechnen“. Verfahrensstand 38; geprüft in
 `tests/test_versatz_starrer_arm.py`.
 
+**Versatz-Arm in der geometrischen Steifigkeit** (seit 14.11.2026). Der starre
+Arm eines Versatzes dreht seither auch nach Theorie II. Ordnung mit dem Knoten
+mit: Die Stabendkraft F greift am gedrehten Arm a an, und die geometrische
+Steifigkeit erhält dafür den Armanteil [F]× [a]× wie nach Theorie III.
+Ordnung. Bis dahin blieb das Moment a × F beim unverdrehten Arm. Ein Kragarm mit
+Versatz bis 0,11 m unter 200 kN Druck hatte nach Theorie II. Ordnung ein um
+2 bis 4 % falsches Einspannmoment, jetzt gleich Theorie III. Ordnung auf ein
+Zehntausendstel. Eine Gelenkstütze von 4 m mit Armen von 0,5 m in Stabrichtung
+an beiden Enden hatte α_cr = 129,5 (das Euler-α des Stabes allein) statt 83,96
+(geschlossene Lösung k·e·tan(kL/2) = 1: 83,9576; Kurzstabmodell 83,9575), lag
+also auf der unsicheren Seite. α_cr und das Knicken nehmen den symmetrischen
+Teil dieses Anteils, weil der Eigenwertlöser eine symmetrische Matrix braucht:
+Liegt die Stabkraft längs des Arms, ist der Wert genau, steht sie quer dazu,
+ist er eine untere Schranke (sichere Seite). Die Rechnung nach Theorie II.
+Ordnung nimmt den Anteil voll. Betroffen sind Stäbe mit Versatz, auch mit
+gleichem Versatz an beiden Enden, nach Theorie II. Ordnung, mit α_cr oder als
+Knicken; Theorie I. und III. Ordnung und Modelle ohne Versatz sind bitgleich.
+Verfahrensstand 40; geprüft in `tests/test_versatz_arm_kg.py`.
+
 **Wölbkrafttorsion und Längsgelenk nach Theorie II. Ordnung** (seit
 12.11.2026). Balken mit Wölbkrafttorsion rechnen ihre Stabendkräfte jetzt mit
 der geometrischen Steifigkeit, (k + k_G)·u, und führen den Anteil N·w im Feld
