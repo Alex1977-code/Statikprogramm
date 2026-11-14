@@ -240,10 +240,18 @@ def schalennetz_hinweis(model) -> list:
     8,07 statt 6,49 mm nach Navier). Das Netz steht in der Datei und rechnet
     unveraendert falsch weiter, bis neu vernetzt wird. Entscheidung des
     Anwenders vom 09.11.2026 („10 ja“): erkennen und zum Neuvernetzen
-    auffordern. Umgestellt wird nichts. Rueckgabe die Zeilen."""
+    auffordern. Umgestellt wird nichts. Rueckgabe die Zeilen.
+
+    Doppelte Randlinien (eigene Linie je Flaeche zwischen denselben Knoten)
+    zaehlen als eine gemeinsame Linie (mesher._unverbunden, Befund A10 vom
+    14.11.2026): an ihnen vernetzte das Programm bis zum 12.11.2026 getrennt
+    (Platte aus zwei Flaechen mit Doppellinie: 397,70 statt 149,59 mm)."""
     try:
-        from .mesher import unverbundene_schalenlinien
-        lose = unverbundene_schalenlinien(model)
+        from .mesher import _unverbunden
+        try:
+            lose = _unverbunden(model)
+        except Exception:                   # noqa: BLE001 - dann wenigstens die gemeinsamen Linien
+            lose = _unverbunden(model, doppellinien=False)
     except Exception:                       # noqa: BLE001 - ein Hinweis sperrt kein Oeffnen
         return []
     if not lose:
@@ -255,10 +263,16 @@ def schalennetz_hinweis(model) -> list:
     linien = sorted({x[0] for x in lose})
     paare = sorted({tuple(sorted((x[1], x[2]))) for x in lose})
     beispiel = ", ".join(f"{a}/{b}" for a, b in paare[:3]) + (" …" if len(paare) > 3 else "")
+    doppel = sorted({(x[0], tuple(x[4])) for x in lose if len(x) > 4 and x[4]})
+    dtext = ""
+    if doppel:
+        dbsp = ", ".join(f"{h} = {'/'.join(d)}" for h, d in doppel[:3]) + (" …" if len(doppel) > 3 else "")
+        dtext = (f", an doppelten Randlinien (eigene Linie je Fläche zwischen denselben Knoten, hier "
+                 f"{dbsp}) bis zum 12.11.2026")
     text = (f"Schalennetz nicht verbunden: {len(paare)} Flächenpaar(e) an {len(linien)} gemeinsamen "
             f"Linie(n) haben verschiedene Netzknoten (z. B. {beispiel}). So vernetzte das Programm bis "
-            "zum 09.11.2026 – die Flächen hängen nur an den Linienenden zusammen, das Ergebnis ist zu "
-            "weich. Bitte neu vernetzen.")
+            f"zum 09.11.2026{dtext} – die Flächen hängen nur an den Linienenden zusammen, das Ergebnis "
+            "ist zu weich. Bitte neu vernetzen.")
     vorschlag = "Netz › Vernetzen (alle Flächen)"
     hinweise = getattr(model, "importhinweise", None)
     if hinweise is None:

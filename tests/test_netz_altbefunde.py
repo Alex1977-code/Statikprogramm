@@ -460,12 +460,25 @@ def test_doppelter_bogen():
 
 def test_verfahrenstabelle_39():
     from statik3d import rechenverfahren as rv
+    from statik3d import netzdichte as nd
     mk = rv.merkmal("doppelte_randlinien")
-    check("Verfahrenstabelle: Merkmal „doppelte_randlinien“, Stand 37, Fehlerkorrektur; betrifft die "
-          "doppelte Linie, nicht die gemeinsame",
+    # Seit dem 14.11.2026 (Befund A10) eine Korrektur am Modell: betroffen ist das
+    # vorhandene Netz, wenn es an der doppelten Linie getrennt ist - nicht schon die
+    # Geometrie (bis dahin: betrifft die doppelte Linie ohne Netz). Netz eines
+    # Stands vor dem 12.11.2026: jede Flaeche fuer sich vernetzt
+    alt = platte_4m(True)
+    nd.anwenden(alt, alt.netz, list(alt.flaechen.values()), [], [])
+    for f in alt.flaechen.values():
+        still(mesher.mesh_flaeche, alt, f, [])
+    heute, rippe = platte_4m(True), rippe_am_rand(True)
+    still(mesher.modell_vernetzen, heute, [], workers=1)
+    still(mesher.modell_vernetzen, rippe, [], workers=1)
+    check("Verfahrenstabelle: Merkmal „doppelte_randlinien“, Stand 37, Fehlerkorrektur am Modell; betrifft "
+          "das an der doppelten Linie getrennte Netz, nicht das heutige, nicht ohne Netz",
           mk is not None and mk.wechsel[-1].stand == 37 and mk.wechsel[-1].art == rv.FEHLERKORREKTUR
-          and mk.betrifft(rippe_am_rand(True)) and not mk.betrifft(rippe_am_rand(False))
-          and mk.betrifft(platte_4m(True)) and not mk.betrifft(platte_4m(False)),
+          and mk.import_korrektur and mk.betrifft(alt) and not mk.betrifft(heute)
+          and not mk.betrifft(rippe) and not mk.betrifft(platte_4m(True))
+          and not mk.betrifft(platte_4m(False)),
           f"{mk.modellmerkmal if mk else 'fehlt'}")
 
 

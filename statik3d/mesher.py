@@ -801,7 +801,8 @@ def _teilplan(model: Model, schalen: list) -> dict:
     ``ersetzt`` (Linienliste -> Linienliste im Netz), ``zwang`` {Flaeche:
     [Linien]}, ``geteilt`` (Flaechen, die deshalb frei vernetzt werden),
     ``beteiligt`` (alle Flaechen an einer Stelle), ``doppelt`` [(Linie,
-    Doppellinie)], ``meldungen``, ``warnungen``."""
+    Doppellinie)], ``umgelegt`` {Doppellinie: Linie, als die das Netz sie
+    nimmt - aus beiden Wegen unten}, ``meldungen``, ``warnungen``."""
     from .model import Line, _randstuecke
     ersatz: dict = {}
     umlegen: dict = {}
@@ -812,7 +813,7 @@ def _teilplan(model: Model, schalen: list) -> dict:
             aus.extend(ersatz.get(x) or [umlegen.get(x, x)])
         return aus
     plan = {"teilstuecke": {}, "ersetzt": ersetzt, "zwang": {}, "geteilt": set(), "beteiligt": set(),
-            "meldungen": [], "warnungen": [], "aktiv": False, "doppelt": []}
+            "meldungen": [], "warnungen": [], "aktiv": False, "doppelt": [], "umgelegt": umlegen}
     lines = getattr(model, "lines", None) or {}
     if len(schalen) < 2 or not lines:
         return plan
@@ -1188,18 +1189,47 @@ def unverbundene_schalenlinien(model: Model) -> list:
     Knoten jeder anliegenden Flaeche geschnitten; verbunden ist die Linie, wenn
     jede Flaeche dieselben Linienknoten traegt. Entscheidung des Anwenders vom
     09.11.2026: alte, unverbundene Schalennetze beim Oeffnen erkennen und zum
-    Neuvernetzen auffordern."""
+    Neuvernetzen auffordern.
+
+    Doppelte Randlinien (eigene Linie je Flaeche zwischen denselben Knoten)
+    sind fuer den Vernetzer seit dem 12.11.2026 eine Linie (:func:`_teilplan`,
+    ``umgelegt``); hier zaehlen sie darum ebenfalls als **eine** gemeinsame
+    Linie, unter dem Namen, den das Netz benutzt (Befund A10 vom 14.11.2026:
+    ein Netz von vor dem 12.11.2026, an der Doppellinie getrennt, blieb beim
+    Oeffnen ungemeldet und nach „neu rechnen“ ohne Status)."""
+    return [x[:4] for x in _unverbunden(model)]
+
+
+def getrennte_doppellinien(model: Model) -> list:
+    """Doppelte Randlinien, an denen das vorhandene Netz getrennt ist:
+    [(Linie, [Doppellinien], Flaeche A, Flaeche B, Knoten nur auf einer Seite)]
+    (:func:`unverbundene_schalenlinien`, Verfahrensmerkmal
+    „doppelte_randlinien“). Leer, wenn das Netz dort verbunden ist oder fehlt."""
+    return [(x[0], x[4], x[1], x[2], x[3]) for x in _unverbunden(model) if x[4]]
+
+
+def _unverbunden(model: Model, doppellinien: bool = True) -> list:
+    """[(Linie, Flaeche A, Flaeche B, Knoten nur auf einer Seite, [Doppellinien])]
+    - siehe :func:`unverbundene_schalenlinien`; ohne ``doppellinien`` jede Linie
+    fuer sich (wie bis zum 14.11.2026)."""
     schalen = [f for f in (getattr(model, "flaechen", None) or {}).values()
                if _ist_schale(model, f) and f.elemente]
     if len(schalen) < 2 or not len(model.elements):
         return []
+    # Doppellinien wie im Netz auf eine Linie legen (_teilplan)
+    umgelegt = dict(_teilplan(model, schalen).get("umgelegt") or {}) if doppellinien else {}
     knoten_von = {}
     an_linie: dict = {}
+    doppel: dict = {}
     for f in schalen:
         knoten_von[f.name] = {int(k) for e in f.elemente if 0 <= int(e) < len(model.elements)
                               for k in model.elements[int(e)].nodes}
         for x in set(list(f.linien or []) + [y for loch in (f.oeffnungen or []) for y in loch]):
-            an_linie.setdefault(x, []).append(f.name)
+            h = umgelegt.get(x, x)
+            if f.name not in an_linie.setdefault(h, []):
+                an_linie[h].append(f.name)
+            if h != x:
+                doppel.setdefault(h, set()).add(x)
     out = []
     cache: dict = {}
     X = model.nodes
@@ -1231,7 +1261,7 @@ def unverbundene_schalenlinien(model: Model) -> list:
         a, ka = seiten[0]
         for b, kb in seiten[1:]:
             if ka != kb:
-                out.append((linie, a, b, len(ka ^ kb)))
+                out.append((linie, a, b, len(ka ^ kb), sorted(doppel.get(linie, ()))))
     return out
 
 
