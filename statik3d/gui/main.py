@@ -14267,7 +14267,18 @@ class MainWindow(QtWidgets.QMainWindow):
         log = list(vorab or [])
         # Schon vernetzte Nachbarflaechen gehen mit, sonst trennt das neue Netz
         # sie an der gemeinsamen Linie (Befund B9, mesher.mit_vernetzten_nachbarn)
-        flaechen = mesher.mit_vernetzten_nachbarn(self.model, flaechen, log)
+        # Laesst sich, was am Netz eines solchen Nachbarn haengt, nicht eindeutig
+        # uebertragen, bricht der Vernetzer vorher ab (Befund A'2) - hier nur der Text
+        try:
+            flaechen = mesher.mit_vernetzten_nachbarn(self.model, flaechen, log)
+        except mesher.NachbarElementbezug as ex:
+            for z in log:
+                self.log.appendPlainText(z)
+            self.log.appendPlainText(str(ex))
+            QtWidgets.QMessageBox.warning(self, "Vernetzen abgebrochen", str(ex))
+            self._vernetzt_text = "Vernetzen abgebrochen"
+            self.statusBar().showMessage("Vernetzen abgebrochen – siehe Protokoll", 8000)
+            return 0
         n = 0
         prozesse = 1
         zeiten: dict = {}          # Sekunden je Phase, fuer die Schlusszeile
@@ -14334,6 +14345,8 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             # Was aus Kontaktbedingungen entstanden ist, gehoert zum alten Netz.
             fugen.kontaktfugen_zuruecksetzen(self.model, log)
+            # Was an den alten Schalennetzen haengt, geht aufs neue Netz (Befund A'2)
+            bezug = mesher.elementbezug_sichern(self.model, flaechen)
             erledigt = 0.0
             # Kantenmitten quadratischer Elemente teilen sich die Nachbarn -
             # ein Woerterbuch fuer alle Flaechen dieses Laufs
@@ -14418,6 +14431,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._fortschritt(1000, "Netz fertig - Lasten auf das Netz verteilen …")
             QtWidgets.QApplication.processEvents()
             # Lasten, die an Flaechen und Koerpern haengen, koennen jetzt wirken
+            mesher.elementbezug_uebertragen(self.model, bezug, log)
             self.model.lasten_verteilen(log)
             zeiten["Lasten verteilen"] = time.time() - t_phase
             t_phase = time.time()
@@ -22829,13 +22843,14 @@ class MainWindow(QtWidgets.QMainWindow):
     def _flaechenlager_hinweis_offen(self, idx) -> bool:
         """Hat das Flaechenlager Nummer ``idx`` den offenen Hinweis „Flächenlager nach
         Neuvernetzen prüfen“ (model.flaechenlager_neuvernetzen_offen)?"""
-        from ..model import flaechenlager_neuvernetzen_offen
+        from ..model import flaechenlager_neuvernetzen_offen_lager
         lager = self.model.surface_supports
         try:
             ss = lager[int(idx)]
         except (IndexError, TypeError, ValueError):
             return False
-        return str(ss.name) in flaechenlager_neuvernetzen_offen(self.model)
+        # ueber die feste Kennung, nicht den Namen (Befund A'10 vom 14.11.2026)
+        return any(x is ss for x in flaechenlager_neuvernetzen_offen_lager(self.model))
 
     def flaechenlager_geprueft(self, idx: int) -> None:
         """Rechtsklick „Flächenlager geprüft“ (Vorschlag vom 14.11.2026): der Anwender
@@ -22846,7 +22861,7 @@ class MainWindow(QtWidgets.QMainWindow):
         from .. import rechenverfahren as _rv
         ss = self.model.surface_supports[int(idx)]
         self.merken(f"Flächenlager {ss.name} geprüft", beschriftung=True)
-        self.model.flaechenlager_geprueft(ss.name)
+        self.model.flaechenlager_geprueft(lager=ss)
         info = getattr(self.analysis, "info", None)
         if isinstance(info, dict) and isinstance(info.get("rechenverfahren"), dict):
             bew = _rv.bewerten(self.model, info["rechenverfahren"], self.analysis)

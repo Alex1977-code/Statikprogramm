@@ -743,6 +743,30 @@ def _schalennetz_getrennt_wo(model, _analyse) -> str:
     return _kurzliste(teile)
 
 
+def _schalennetz_rippe_polylinie(model) -> bool:
+    """Ein vorhandenes Schalennetz, das an einer Zwangslinie (Rippe auf einer
+    Platte) oder an einer Polylinie gegen eine Polylinie mit anderen
+    Zwischenknoten getrennte Knoten hat (Befund B'8 vom 14.11.2026). Ist die
+    Pruefung nicht moeglich (Ausnahme): möglicherweise betroffen."""
+    try:
+        from . import mesher
+        return bool(mesher.getrennte_rippen_polylinien(model))
+    except Exception:                       # noqa: BLE001 - nicht pruefbar: möglicherweise betroffen
+        return True
+
+
+def _schalennetz_rippe_polylinie_wo(model, _analyse) -> str:
+    """Wo das Schalennetz an Rippe oder Polylinie getrennt ist (Text des Status)."""
+    from . import mesher
+    teile = []
+    for linie, namen, a, b, n, art in mesher.getrennte_rippen_polylinien(model):
+        t = (("Rippe an " if art == "zwang" else "Polylinien ")
+             + mesher.schalenlinien_text((linie, a, b, n, [], namen)))
+        if t not in teile:
+            teile.append(t)
+    return _kurzliste(teile)
+
+
 def _elementbezogene_flaechenlager(model) -> bool:
     """Ein Flaechenlager mit Elementliste auf vernetzten Flaechen, das beim Oeffnen
     einer Ergebnisdatei von vor Stand 37 den Hinweis „Flächenlager nach Neuvernetzen
@@ -3106,10 +3130,34 @@ MERKMALE: list = [
         modellmerkmal="Zugstab mit Rundquerschnitt über 30 mm ohne Kerbfall und Ermüdungslasten",
         betrifft=lambda model: bool(_kerbfall_maske_geloescht(model)),
         im_ergebnis=_kerbfall_maske_wo),
+    # Befund B'8 der Befundliste vom 14.11.2026 (zweite Runde): ein Netz, das an
+    # einer Zwangslinie (Rippe auf der Platte, „Linie in Fläche“) getrennt ist -
+    # so entstand es bis Stand 49 beim Neuvernetzen nur der Rippe (14,591 statt
+    # 11,826 mm) -, und eine Polylinie gegen eine Polylinie mit anderen
+    # Zwischenknoten auf derselben Strecke (397,70 statt 149,59 mm; der
+    # Vernetzer warnte nur im Protokoll und teilte nicht) blieben ohne
+    # Eingabepruefung und ohne Status. Jetzt teilt der Vernetzer auch
+    # Polylinien an fremden Knoten, und ein getrenntes Netz an beiden Stellen
+    # wird erkannt. Das Netz steht in der Datei und rechnet weiter getrennt,
+    # bis neu vernetzt wird: Korrektur am Modell. Fehlerkorrektur
+    Merkmal(
+        name="schalennetz_rippe_polylinie", titel="Schalennetz an Rippen und Polylinien",
+        texte={"alt": "Rippe (Linie in Fläche) mit getrenntem Netz und Polylinie gegen Polylinie mit anderen "
+                      "Zwischenknoten nur an den Enden verbunden, ohne Meldung",
+               "neu": "Polylinien an fremden Knoten geteilt, gemeinsame Netzknoten; ein getrenntes Netz an "
+                      "Rippe oder Polylinie wird gemeldet; gilt nach dem Neuvernetzen"},
+        wechsel=(Wechsel(stand=52, datum="14.11.2026", commit="fix/k6-netz", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Schalenflächen an einer Zwangslinie (Rippe auf einer Platte) oder an einer Polylinie "
+                      "gegen eine Polylinie mit anderen Zwischenknoten, deren Netz dort getrennte Knoten hat",
+        betrifft=_schalennetz_rippe_polylinie, import_korrektur=True, im_ergebnis=_schalennetz_rippe_polylinie_wo,
+        modellgrund="Netz getrennt erzeugt (Rippe einzeln neu vernetzt, Polylinie gegen Polylinie oder älterer "
+                    "Programmstand)",
+        vorschlag="Netz › Vernetzen: das Netz neu erzeugen"),
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 51
+VERFAHRENSSTAND = 52
 
 
 def merkmal(name: str) -> Optional[Merkmal]:
