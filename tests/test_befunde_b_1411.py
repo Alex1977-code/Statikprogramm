@@ -412,14 +412,22 @@ def _iw_sektor(h, b, tw, tf, n=4000):
 
 def test_c6_u_profil():
     from statik3d.profiles import make_section, UPN, UPE
+    # Angepasst am 14.11.2026 (Befund B'2, zweite Runde): der UPN aus der Profiltabelle
+    # traegt jetzt I_w mit Flanschneigung (9 559,6 cm⁶, tests.test_ermuedung_k6_1411).
+    # Die Pruefung von C6 (Mittellinie b - t_w/2) gilt weiter fuer gleich dicke
+    # Flansche - hier an einem U mit den UPN-200-Massen und parallelen Flanschen
+    from statik3d.model import Section
     for name, tab in (("UPN 200", UPN[200]), ("UPE 200", UPE[200]), ("UPE 300", UPE[300])):
         h, b, tw, tf, _r = [x * 1e-3 for x in tab]
-        s = make_section(name)
+        s = (Section.channel("U parallel", h, b, tw, tf, _r) if name.startswith("UPN")
+             else make_section(name))
         soll = _iw_sektor(h, b, tw, tf)
         check(f"C6 {name}: I_w wie die numerisch integrierte Wölbordinate (unter 0,1 %)",
               abs(s.Iw / soll - 1) < 1e-3, f"{s.Iw * 1e12:.0f} gegen {soll * 1e12:.0f} cm⁶")
-    s = make_section("UPN 200")
-    close("C6 UPN 200: 10 499 cm⁶ (vorher 12 277)", round(s.Iw * 1e12), 10499.0, 1.0, " cm⁶")
+    h, b, tw, tf, _r = [x * 1e-3 for x in UPN[200]]
+    s = Section.channel("U parallel", h, b, tw, tf, _r)
+    close("C6 UPN-200-Maße, parallele Flansche: 10 499 cm⁶ (vorher 12 277)", round(s.Iw * 1e12), 10499.0, 1.0,
+          " cm⁶")
     from statik3d.ec3 import woelb as W
     sw = W.sektorwerte(s)
     close("C6 Wölbordinaten: I_w aus ∫ω² t ds trifft den Querschnitt", sw.Iw_probe, s.Iw, s.Iw * 1e-6,
@@ -437,7 +445,8 @@ def test_c6_u_profil():
     mk = rv.merkmal("u_profil_iw")
     text = rv.modell_betroffen(m)
     check("C6 Merkmal Stand 45: alter Wert im Modell -> Status „neu zuweisen“",
-          mk is not None and mk.wechsel[-1].stand == 45 and "Profiltabelle neu zuweisen" in text, text[:120])
+          # wechsel[0]: seit dem 14.11.2026 (Befund B'2) folgt ein zweiter Wechsel mit Stand 51
+          mk is not None and mk.wechsel[0].stand == 45 and "Profiltabelle neu zuweisen" in text, text[:120])
     m.sections[alt.name].Iw = make_section("UPN 200").Iw
     check("C6 … neu zugewiesen: kein Status mehr", "U-Profile" not in rv.modell_betroffen(m))
 

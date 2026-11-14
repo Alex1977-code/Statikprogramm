@@ -105,6 +105,29 @@ def fmt(value, digits: int = 2) -> str:
     return s
 
 
+def _kerbfall_mpa(pa) -> str:
+    """Kerbfall [Pa] als Text in MPa: ganzzahlig ohne Nachkommastellen („71“), sonst mit
+    zwei („46.53“, Vorschlag mit k_s fuer Zugstaebe ueber 30 mm). Bis zum 14.11.2026
+    stand hier immer die ganze Zahl (46,53 als 47, Befund A'1)."""
+    v = float(pa) / 1e6
+    return fmt(v, 0) if abs(v - round(v)) < 1e-6 else fmt(v, 2)
+
+
+def lesbar(value, stellen: int = 3) -> str:
+    """Zahl mit *stellen* geltenden Ziffern, nie wissenschaftlich, Punkt und
+    ohne Tausendertrenner wie :func:`fmt` (dann bleibt die Spalte rechtsbuendig).
+    Fuer Lastspielzahlen, N_R, α_T und Residuen; bis zum 14.11.2026 standen sie
+    mit :.3g/:.2e als „5e+05“, „1.05e+07“, „1.20e-05“ im Bericht (B'9)."""
+    from ..zahlen import zahl_text
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if not np.isfinite(v):
+        return fmt(v)
+    return zahl_text(float(f"{v:.{int(stellen)}g}"), tausender=False, punkt=True)
+
+
 class Util:
     """Ausnutzungsgrad als Tabellenzelle (im HTML gruen/rot hervorgehoben)."""
 
@@ -1132,7 +1155,7 @@ class Report:
                              {"top": "Obergurt", "bottom": "Untergurt"}.get(
                                  mem.load_position, "Schubmittelpunkt"),
                              "ja" if mem.lt_check else "nein",
-                             fmt(mem.detail_category / 1e6, 0) if mem.detail_category else "–"])
+                             _kerbfall_mpa(mem.detail_category) if mem.detail_category else "–"])
             rows, note = self._truncate(rows)
             b.append(("table", rows, "Stäbe für die Nachweise (Knicklängen, "
                                      "Biegedrillknicken, Kerbfall)", None, "compact"))
@@ -1167,7 +1190,7 @@ class Report:
                      "α_T [1/K]", "f_y [N/mm²]", "f_u [N/mm²]"]]
             for mat in m.materials.values():
                 rows.append([mat.name, mat.grade or "–", fmt(mat.E / 1e6, 0), fmt(mat.nu, 2),
-                             fmt(mat.G / 1e6, 0), fmt(mat.rho, 0), f"{mat.alpha:.2e}",
+                             fmt(mat.G / 1e6, 0), fmt(mat.rho, 0), lesbar(mat.alpha, 3),
                              fmt(mat.fy / 1e6, 0) if mat.fy else "–",
                              fmt(mat.fu / 1e6, 0) if mat.fu else "–"])
             b.append(("table", rows, "Materialkennwerte", None, ""))
@@ -2286,7 +2309,7 @@ class Report:
                  "u_max I [mm]", "u_max III [mm]", "Zuwachs", "größte Drehung", "Hinweis"]]
         for i in t3.kombinationen.values():
             rows.append([i.name, str(i.schritte), str(i.iterationen),
-                         f"{i.konvergenz:.1e}" if i.gerechnet else "–",
+                         lesbar(i.konvergenz, 2) if i.gerechnet else "–",
                          fmt(i.u_max_I * 1e3, 3), fmt(i.u_max_III * 1e3, 3) if i.gerechnet else "–",
                          f"{i.zuwachs * 100:+.1f} %" if i.gerechnet else "–",
                          f"{math.degrees(i.drehung_max):.2f}°" if i.gerechnet else "–",
@@ -2367,10 +2390,10 @@ class Report:
                     ["σ_dyn = V·σ_amp, Δσ = 2·σ_dyn", f"{d['sigma_dyn'] / 1e6:.1f} N/mm², {d['delta_sigma'] / 1e6:.1f} N/mm²"],
                     ["Verformungsamplitude", f"{d['u_dyn'] * 1e3:.2f} mm"]]
             if "N" in d:
-                rows += [["Lastspiele N = f_s·t", f"{d['N']:.3g}"],
+                rows += [["Lastspiele N = f_s·t", lesbar(d["N"], 3)],
                          ["Δσ_Ed = γ_Ff·Δσ, Kerbfall, γ_Mf", f"{d['delta_sigma_Ed'] / 1e6:.1f} N/mm², "
                                                             f"{d['kerbfall']:g}, {d['gamma_Mf']:g}"],
-                         ["N_R, D = N/N_R", ("∞" if not np.isfinite(d["N_R"]) else f"{d['N_R']:.3g}")
+                         ["N_R, D = N/N_R", ("∞" if not np.isfinite(d["N_R"]) else lesbar(d["N_R"], 3))
                           + f", {d['D']:.3f} " + ("≤ 1 erfüllt" if d["D"] <= 1 else "> 1 nicht erfüllt")]]
             b.append(("table", rows, "Antwort auf die Druckschwankung und Ermüdung", None, "compact"))
         for zeile in swm.erlaeuterung(erg):
@@ -2566,6 +2589,11 @@ class Report:
         if vk.get("uebersprungen"):
             b.append(("list", [f"{d['stab']}: {_pretty(d['grund'])}"
                                for d in vk["uebersprungen"][:20]]))
+        if vk.get("meldungen"):
+            # Staebe ohne f_y ueber 80 mm (14.11.2026): Kriterium 5.3.2(6) ohne f_y,
+            # Knicklinie wie fuer f_y unter 460 N/mm²
+            b.append(("list", [f"Vorkrümmung: {_pretty(t)} Das Kriterium 5.3.2(6) hängt nicht an f_y; die "
+                               "Knicklinie gilt wie für f_y unter 460 N/mm²." for t in vk["meldungen"][:20]]))
         alle_hinweise = []
         for i in t2.kombinationen.values():
             for h in i.hinweise:
@@ -4081,8 +4109,12 @@ class Report:
                                              if zyl.get("bereich_umfang") else "") + ")"),
                     ("Herstelltoleranz", zyl["qualitaet"]),
                     ("Beiwerte", f"C_x = {fmt(zyl.get('C_x') or 0, 3)}, "
-                                 f"C_θ = {fmt(zyl.get('C_theta') or 0, 3)}, "
-                                 f"C_τ = {fmt(zyl.get('C_tau') or 0, 3)}"),
+                                 # kurzer Zylinder: der verwendete C_θ,s (Tab. D.4), nicht C_θ
+                                 # (Befund A'11 der zweiten Runde, 14.11.2026)
+                                 + (f"C_θ,s = {fmt(zyl['C_theta_s'], 3)} (Tab. D.4), "
+                                    if zyl.get("C_theta_s") is not None else
+                                    f"C_θ = {fmt(zyl.get('C_theta') or 0, 3)}, ")
+                                 + f"C_τ = {fmt(zyl.get('C_tau') or 0, 3)}"),
                     ("Imperfektionsbeiwerte",
                      f"α_x = {zyl['alpha_x']['alpha']:.3f} "
                      f"(Δw_k/t = {zyl['alpha_x'].get('Delta_wk_t', 0):.3f}), "
@@ -4316,11 +4348,11 @@ class Report:
         for fm in f.members.values():
             if getattr(fm, "fehler", ""):
                 # nicht gefuehrt: keine Nullen, die wie ein Ergebnis aussehen
-                rows.append([fm.member, fmt(fm.category / 1e6, 0), fmt(fm.gamma_Mf, 2),
+                rows.append([fm.member, _kerbfall_mpa(fm.category), fmt(fm.gamma_Mf, 2),
                              "–", "–", "–", "–", "nicht geführt"]
                             + (["–"] if jahre else []) + [_pretty(fm.fehler)])
                 continue
-            zeile = [fm.member, fmt(fm.category / 1e6, 0), fmt(fm.gamma_Mf, 2),
+            zeile = [fm.member, _kerbfall_mpa(fm.category), fmt(fm.gamma_Mf, 2),
                      fmt(fm.dsig_max / 1e6, 1), fmt(fm.dsig_E2 / 1e6, 1), fmt(fm.D, 3),
                      fmt(fm.D_shear, 3), Util(fm.util)]
             if jahre:
@@ -4335,9 +4367,12 @@ class Report:
         for fm in f.members.values():
             mem = m.members.get(fm.member)
             b.append(self._h(3, f"Stab {fm.member}"))
-            cat_mpa = int(round(fm.category / 1e6))
-            kv = [("Kerbfall Normalspannung Δσ_C",
-                   f"{cat_mpa} MPa – {DETAIL_EXAMPLES.get(cat_mpa, 'Kerbfall nach Tabellen 8.1–8.10')}"),
+            cat_mpa = fm.category / 1e6
+            if abs(cat_mpa - round(cat_mpa)) < 1e-6:
+                cat_bez = DETAIL_EXAMPLES.get(int(round(cat_mpa)), "Kerbfall nach Tabellen 8.1–8.10")
+            else:
+                cat_bez = "Kerbfall nach Tabellen 8.1–8.10, abgemindert (z. B. Größeneinfluss k_s)"
+            kv = [("Kerbfall Normalspannung Δσ_C", f"{_kerbfall_mpa(fm.category)} MPa – {cat_bez}"),
                   ("Kerbfall Schub Δτ_C", f"{fm.category_shear / 1e6:.0f} MPa")]
             if mem is not None:
                 kv.append(("Bemessungskonzept / Schadensfolgen",
@@ -4371,8 +4406,8 @@ class Report:
             if getattr(fm, "kollektiv", None):
                 rows = [["Stufe", "Δσ [MPa]", "n", "N_R", "D_i = n / N_R", "Σ D"]]
                 for i, (dsg, nz, NR, di, kum) in enumerate(fm.tabelle(), 1):
-                    rows.append([str(i), fmt(dsg / 1e6, 1), f"{nz:.4g}",
-                                 f"{NR:.3g}" if np.isfinite(NR) else "∞",
+                    rows.append([str(i), fmt(dsg / 1e6, 1), lesbar(nz, 4),
+                                 lesbar(NR, 3) if np.isfinite(NR) else "∞",
                                  fmt(di, 5), fmt(kum, 4)])
                 b.append(("table", rows,
                           "Schadensakkumulation am maßgebenden Ort "
@@ -4381,15 +4416,15 @@ class Report:
             if getattr(fm, "kollektiv_shear", None) and fm.D_shear > 0:
                 rows = [["Stufe", "Δτ [MPa]", "n", "N_R", "D_i = n / N_R", "Σ D"]]
                 for i, (dtu, nz, NR, di, kum) in enumerate(fm.tabelle_shear(), 1):
-                    rows.append([str(i), fmt(dtu / 1e6, 1), f"{nz:.4g}",
-                                 f"{NR:.3g}" if np.isfinite(NR) else "∞",
+                    rows.append([str(i), fmt(dtu / 1e6, 1), lesbar(nz, 4),
+                                 lesbar(NR, 3) if np.isfinite(NR) else "∞",
                                  fmt(di, 5), fmt(kum, 4)])
                 b.append(("table", rows, "Schadensakkumulation Schub", None, ""))
             rows = [["Ermüdungslast", "Δσ [MPa]", "n", "N_R", "n / N_R", "x [m]"]]
             for r in fm.ranges:
                 NR = sn_life(r[0], fm.category, fm.gamma_Mf)
-                rows.append([r[2], fmt(r[0] / 1e6, 1), f"{r[1]:.3g}",
-                             f"{NR:.3g}" if np.isfinite(NR) else "∞",
+                rows.append([r[2], fmt(r[0] / 1e6, 1), lesbar(r[1], 3),
+                             lesbar(NR, 3) if np.isfinite(NR) else "∞",
                              fmt(r[1] / NR, 4) if np.isfinite(NR) and NR > 0 else "0",
                              fmt(r[3], 2)])
             b.append(("table", rows, "Größte Schwingbreite je Ermüdungslast – zur Übersicht. "
@@ -4399,8 +4434,8 @@ class Report:
                 rows = [["Ermüdungslast", "Δτ [MPa]", "n", "N_R", "n / N_R", "x [m]"]]
                 for r in fm.ranges_shear:
                     NR = sn_life(r[0], fm.category_shear, fm.gamma_Mf, shear=True)
-                    rows.append([r[2], fmt(r[0] / 1e6, 1), f"{r[1]:.3g}",
-                                 f"{NR:.3g}" if np.isfinite(NR) else "∞",
+                    rows.append([r[2], fmt(r[0] / 1e6, 1), lesbar(r[1], 3),
+                                 lesbar(NR, 3) if np.isfinite(NR) else "∞",
                                  fmt(r[1] / NR, 4) if np.isfinite(NR) and NR > 0 else "0",
                                  fmt(r[3], 2)])
                 b.append(("table", rows, "Schubspannungsschwingbreiten", None, ""))
@@ -4569,16 +4604,16 @@ class Report:
             if fv.kollektiv:
                 rows = [["Stufe", "Δσ [MPa]", "n", "N_R", "D_i = n / N_R", "Σ D"]]
                 for i, (dsg, nz, NR, di, kum) in enumerate(fv.tabelle(), 1):
-                    rows.append([str(i), fmt(dsg / 1e6, 1), f"{nz:.4g}",
-                                 f"{NR:.3g}" if np.isfinite(NR) else "∞", fmt(di, 5), fmt(kum, 4)])
+                    rows.append([str(i), fmt(dsg / 1e6, 1), lesbar(nz, 4),
+                                 lesbar(NR, 3) if np.isfinite(NR) else "∞", fmt(di, 5), fmt(kum, 4)])
                 b.append(("table", rows,
                           f"Schadensakkumulation an der maßgebenden Stelle ({stelle(fv)}) – Stufe "
                           "für Stufe nach Palmgren-Miner", None, ""))
             rows = [["Ermüdungslast", "Δσ [MPa]", "n", "N_R", "n / N_R", "Stelle"]]
             for r in fv.ranges:
                 NR = sn_life(r[0], fv.category, fv.gamma_Mf)
-                rows.append([r[2], fmt(r[0] / 1e6, 1), f"{r[1]:.3g}",
-                             f"{NR:.3g}" if np.isfinite(NR) else "∞",
+                rows.append([r[2], fmt(r[0] / 1e6, 1), lesbar(r[1], 3),
+                             lesbar(NR, 3) if np.isfinite(NR) else "∞",
                              fmt(r[1] / NR, 4) if np.isfinite(NR) and NR > 0 else "0",
                              f"Knoten {r[4] + 1}" if len(r) > 4 else f"Element {r[3] + 1}"])
             b.append(("table", rows, "Größte Schwingbreite je Ermüdungslast – zur Übersicht; sie "
@@ -4781,8 +4816,8 @@ class Report:
                 for e2 in c.ermuedung:
                     for (ds, n), NR in zip(e2["stufen"], e2["N_R"]):
                         rows.append([f"{e2['kerbfall']:.0f}", f"{e2['steigung']}",
-                                     fmt(e2["gamma_Mf"], 2), fmt(ds / 1e6, 1), f"{n:.3g}",
-                                     f"{NR:.3g}" if np.isfinite(NR) else "∞",
+                                     fmt(e2["gamma_Mf"], 2), fmt(ds / 1e6, 1), lesbar(n, 3),
+                                     lesbar(NR, 3) if np.isfinite(NR) else "∞",
                                      fmt(n / NR, 4) if np.isfinite(NR) and NR > 0 else "0",
                                      ", ".join(e2["lasten"]), _pretty(e2["beschreibung"])])
                     rows.append([f"Summe D (Kerbfall {e2['kerbfall']:.0f})", "", "", "",

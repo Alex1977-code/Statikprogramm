@@ -549,8 +549,9 @@ class Stellung:
                 if any(f > 0 for f in a.values()):
                     a.setdefault(name, 1.0)
         if log is not None:
+            # Knoten ab 0 wie Tabelle, Modellbaum und Knotenlast (A'11, 14.11.2026; bis dahin + 1)
             log.append(f"  {self.name}: Antriebsmoment |M| = "
-                       f"{np.linalg.norm(moment) / 1e3:.1f} kNm an Knoten {knoten + 1}")
+                       f"{np.linalg.norm(moment) / 1e3:.1f} kNm an Knoten {int(knoten)}")
 
 
 @dataclass

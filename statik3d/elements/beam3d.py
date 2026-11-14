@@ -38,13 +38,16 @@ def local_axes(p1, p2, roll: float = 0.0):
 
 def stab_achsen_versetzt(p1, p2, roll, P1, P2):
     """(T3, L) eines Stabs zwischen seinen versetzten Enden P1, P2, dessen
-    Knotenlinie p1 -> p2 mit Drehwinkel ``roll`` ist: die Achsen der
-    Knotenlinie, durch die kleinste Drehung von ihrer Richtung auf die
-    Stabrichtung t gebracht,
+    Knotenlinie p1 -> p2 mit Drehwinkel ``roll`` ist: die y-Achse der
+    Knotenlinie senkrecht zur Stabrichtung t projiziert,
 
         y' = y_n - (y_n . t) t  (normiert),   z' = t x y',
 
     so wie Theorie III. Ordnung die Achsen mitfuehrt (theorie3._Stab.zustand).
+    Das ist eine Projektion, nicht die kleinste Drehung von e_n auf t: beide
+    liegen fuer kleine Neigungen nahe beieinander, um t gedreht unterscheiden
+    sie sich um 0,05° bei 3,6° Neigung, 0,44° bei 10° und 5,8° bei 35°
+    (Befund A'11 vom 14.11.2026). Die Rechnung bleibt die Projektion.
     Verfahrensstand 41 (14.11.2026): bis dahin kamen die Achsen aus
     :func:`local_axes` fuer die Linie P1 -> P2 neu. Fuer eine lotrechte
     Knotenlinie springt dort die Bezugsrichtung (|e_x,z| > 0,9999 nimmt global

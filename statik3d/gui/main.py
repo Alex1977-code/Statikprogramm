@@ -12123,13 +12123,18 @@ class MainWindow(QtWidgets.QMainWindow):
                 import copy
                 mt = copy.deepcopy(alt_mt)
                 mt.name = neuname
+                # eine andere Sorte leert die Werte ueber 80 mm wie der Dialog (Befund A'6)
+                sorte_zeilen = []
+                if "grade" in w and (geaendert is None or "grade" in geaendert) \
+                        and not werte_gleich(mt.grade, sorte):
+                    sorte_zeilen = mt.sorte_wechseln(sorte)
                 for k, v in werte_.items():
                     if k in w and (geaendert is None or k in geaendert) \
                             and not werte_gleich(getattr(mt, k, None), v):
                         setattr(mt, k, v)
                 # f_y oder f_u von Hand geaendert: die Tabelle bleibt, ihre duennste
                 # Stufe folgt (Material.dickentabellen_nachfuehren), das Protokoll sagt es
-                dicken_zeilen = mt.dickentabellen_nachfuehren(alt_mt.fy, alt_mt.fu)
+                dicken_zeilen = sorte_zeilen + mt.dickentabellen_nachfuehren(alt_mt.fy, alt_mt.fu)
                 # vom Volumennachweis ausnehmen (13.10.2026, Maskenfeld „ausnehmen“):
                 # wie die anderen Felder nur geschrieben, wenn die Maske es geaendert hat
                 if "ausnehmen" in w and (geaendert is None or "ausnehmen" in geaendert):
@@ -14267,7 +14272,18 @@ class MainWindow(QtWidgets.QMainWindow):
         log = list(vorab or [])
         # Schon vernetzte Nachbarflaechen gehen mit, sonst trennt das neue Netz
         # sie an der gemeinsamen Linie (Befund B9, mesher.mit_vernetzten_nachbarn)
-        flaechen = mesher.mit_vernetzten_nachbarn(self.model, flaechen, log)
+        # Laesst sich, was am Netz eines solchen Nachbarn haengt, nicht eindeutig
+        # uebertragen, bricht der Vernetzer vorher ab (Befund A'2) - hier nur der Text
+        try:
+            flaechen = mesher.mit_vernetzten_nachbarn(self.model, flaechen, log)
+        except mesher.NachbarElementbezug as ex:
+            for z in log:
+                self.log.appendPlainText(z)
+            self.log.appendPlainText(str(ex))
+            QtWidgets.QMessageBox.warning(self, "Vernetzen abgebrochen", str(ex))
+            self._vernetzt_text = "Vernetzen abgebrochen"
+            self.statusBar().showMessage("Vernetzen abgebrochen – siehe Protokoll", 8000)
+            return 0
         n = 0
         prozesse = 1
         zeiten: dict = {}          # Sekunden je Phase, fuer die Schlusszeile
@@ -14334,6 +14350,8 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             # Was aus Kontaktbedingungen entstanden ist, gehoert zum alten Netz.
             fugen.kontaktfugen_zuruecksetzen(self.model, log)
+            # Was an den alten Schalennetzen haengt, geht aufs neue Netz (Befund A'2)
+            bezug = mesher.elementbezug_sichern(self.model, flaechen)
             erledigt = 0.0
             # Kantenmitten quadratischer Elemente teilen sich die Nachbarn -
             # ein Woerterbuch fuer alle Flaechen dieses Laufs
@@ -14418,6 +14436,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._fortschritt(1000, "Netz fertig - Lasten auf das Netz verteilen …")
             QtWidgets.QApplication.processEvents()
             # Lasten, die an Flaechen und Koerpern haengen, koennen jetzt wirken
+            mesher.elementbezug_uebertragen(self.model, bezug, log)
             self.model.lasten_verteilen(log)
             zeiten["Lasten verteilen"] = time.time() - t_phase
             t_phase = time.time()
@@ -16567,8 +16586,11 @@ class MainWindow(QtWidgets.QMainWindow):
             # jedem Text Grossbuchstaben, aber „S 235“ blieb mit Leerzeichen
             sorte, sorte_art, sorte_text = _stahlsorte_lesen(wert, bool(v.fy))
             self.merken(f"Werkstoff {name}")
-            v.grade = sorte
+            # eine andere Sorte leert die Werte ueber 80 mm wie der Dialog (Befund A'6)
+            zeilen = v.sorte_wechseln(sorte)
             self._zelle_uebernommen(f"Werkstoff {name}: Sorte = {v.grade}")
+            for zeile in zeilen:
+                self.info(zeile)
             if sorte_art == "info":
                 self.info(sorte_text)
             return True
@@ -20391,7 +20413,9 @@ class MainWindow(QtWidgets.QMainWindow):
                          f"{m.member_length(mem):.2f}", e0.sec if e0 else "",
                          f"{zl.zahl_text(mem.beta_y, tausender=False, punkt=True)} / {zl.zahl_text(mem.beta_z, tausender=False, punkt=True)}",
                          zl.zahl_text(mem.L_LT, tausender=False, punkt=True) if mem.L_LT else "L",
-                         (f"{mem.detail_category/1e6:.0f}"
+                         # zwei Nachkommastellen (Vorschlag mit k_s: 46.53), ganze Werte ohne;
+                         # bis zum 14.11.2026 auf die ganze Zahl gerundet (Befund A'1)
+                         (zl.zahl_text(round(mem.detail_category / 1e6, 2), tausender=False, punkt=True)
                           + (" (Vorschlag)" if getattr(mem, "kerbfall_vorschlag", False) else ""))
                          if mem.detail_category else "-"])
         self._fill(self.tbl_mem, rows)
@@ -22827,13 +22851,14 @@ class MainWindow(QtWidgets.QMainWindow):
     def _flaechenlager_hinweis_offen(self, idx) -> bool:
         """Hat das Flaechenlager Nummer ``idx`` den offenen Hinweis „Flächenlager nach
         Neuvernetzen prüfen“ (model.flaechenlager_neuvernetzen_offen)?"""
-        from ..model import flaechenlager_neuvernetzen_offen
+        from ..model import flaechenlager_neuvernetzen_offen_lager
         lager = self.model.surface_supports
         try:
             ss = lager[int(idx)]
         except (IndexError, TypeError, ValueError):
             return False
-        return str(ss.name) in flaechenlager_neuvernetzen_offen(self.model)
+        # ueber die feste Kennung, nicht den Namen (Befund A'10 vom 14.11.2026)
+        return any(x is ss for x in flaechenlager_neuvernetzen_offen_lager(self.model))
 
     def flaechenlager_geprueft(self, idx: int) -> None:
         """Rechtsklick „Flächenlager geprüft“ (Vorschlag vom 14.11.2026): der Anwender
@@ -22844,7 +22869,7 @@ class MainWindow(QtWidgets.QMainWindow):
         from .. import rechenverfahren as _rv
         ss = self.model.surface_supports[int(idx)]
         self.merken(f"Flächenlager {ss.name} geprüft", beschriftung=True)
-        self.model.flaechenlager_geprueft(ss.name)
+        self.model.flaechenlager_geprueft(lager=ss)
         info = getattr(self.analysis, "info", None)
         if isinstance(info, dict) and isinstance(info.get("rechenverfahren"), dict):
             bew = _rv.bewerten(self.model, info["rechenverfahren"], self.analysis)
@@ -22866,14 +22891,20 @@ class MainWindow(QtWidgets.QMainWindow):
         Rueckgaengig-Schritt, Model.u_profile_iw_berichtigen (eigene Werte bleiben),
         Protokollzeile; geladene Ergebnisse gehoeren zum alten I_w und werden verworfen
         (Modell geaendert). Nein: alles bleibt, der Status bleibt. Rueckgabe: berichtigt?"""
-        namen = self.model.u_profile_iw_alt()
+        # gefragt wird nur, wenn ein benutztes Profil betroffen ist; unbenutzte werden dann
+        # mit berichtigt und eigens genannt (Befund A'10 vom 14.11.2026: ein unbenutztes
+        # U-Profil loeste Frage und Verwerfen aus, ohne Status)
+        namen = self.model.u_profile_iw_alt(nur_benutzt=True)
         if not namen:
             return False
+        unbenutzt = [n for n in self.model.u_profile_iw_alt() if n not in namen]
         ergebnisse = self.analysis is not None or self.results is not None
-        text = ("Die Datei enthält U-Profile, deren Wölbwiderstand I_w nach der Formel bis zum 14.11.2026 "
-                "berechnet ist (volle Flanschbreite, zu groß): " + ", ".join(namen[:6])
-                + (" …" if len(namen) > 6 else "") + ".\n\n"
-                "I_w der U-Profile nach der berichtigten Formel neu berechnen?\n\n"
+        text = ("Die Datei enthält U-Profile, deren Wölbwiderstand I_w nach einer früheren Formel "
+                "berechnet ist (volle Flanschbreite bzw. UPN ohne Flanschneigung, zu groß): " + ", ".join(namen[:6])
+                + (" …" if len(namen) > 6 else "") + ".\n"
+                + (("Unbenutzt, wird mit berichtigt: " + ", ".join(unbenutzt[:6])
+                    + (" …" if len(unbenutzt) > 6 else "") + ".\n") if unbenutzt else "")
+                + "\nI_w der U-Profile nach der berichtigten Formel neu berechnen?\n\n"
                 "Eigene I_w-Werte bleiben unverändert. Ein Rückgängig-Schritt."
                 + (" Die geladenen Ergebnisse gehören zum alten I_w und werden verworfen (neu rechnen); "
                    "Rückgängig holt sie nicht zurück." if ergebnisse else ""))
@@ -27520,12 +27551,16 @@ class MainWindow(QtWidgets.QMainWindow):
         """Spalten der Tabelle „Umhüllende“; die Zellen „Kombination“ schalten
         das gezeigte Ergebnis (10c). Kraefte und Momente stehen gemischt in
         min/max - die Einheit der Zeile steht darum in einer eigenen Spalte
-        (E6, 14.11.2026; bis dahin ohne Einheit, fest kN und kNm)."""
+        (E6, 14.11.2026; bis dahin ohne Einheit, fest kN und kNm). Die Nachkommastellen
+        kommen aus der Einstellung „Kraft“ (gilt auch fuer Momente; A'11, 14.11.2026:
+        bis dahin fest zwei - in MN stand -1,5 kN als „0,00“)."""
         hin = "maßgebende Kombination – ein Klick zeigt dieses Ergebnis"
         return [Spalte("Element", "", "ganz"), Spalte("Größe"),
                 Spalte("Einheit", hinweis="eingestellte Einheit (Ansicht → Einheiten)"),
-                Spalte("min", "", "zahl", 2), Spalte("Kombination", hinweis=hin, ergebnis=True),
-                Spalte("max", "", "zahl", 2), Spalte("Kombination ", hinweis=hin, ergebnis=True)]
+                Spalte("min", "", "zahl", 2, nk_groesse="kraft"),
+                Spalte("Kombination", hinweis=hin, ergebnis=True),
+                Spalte("max", "", "zahl", 2, nk_groesse="kraft"),
+                Spalte("Kombination ", hinweis=hin, ergebnis=True)]
 
     def _huelle_zeilen(self, r) -> list:
         """Zeilen der Tabelle „Umhüllende“ in der eingestellten Einheit (E6)."""

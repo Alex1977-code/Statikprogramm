@@ -235,12 +235,17 @@ def modellierung(joint: Joint, gelenk=None) -> tuple:
 DOF_MY = {0: 4, 1: 10}
 
 
-def federn_setzen(model: Model, log: list = None) -> dict:
+def federn_setzen(model: Model, log: list = None, uebersprungen: dict = None) -> dict:
     """Die Anschluesse als Drehfeder oder Gelenk an die Stabenden legen.
 
     Wird vor jeder Berechnung aufgerufen und ist wiederholbar: die Wirkung
     haengt nur an den Anschluessen des Modells, frueher gesetzte Werte
     derselben Stabenden werden ersetzt.
+
+    ``uebersprungen`` nimmt {Name: Meldung} der Anschluesse auf, deren
+    Steifigkeit sich nicht bestimmen liess - ihr Stabende bleibt, wie es im
+    Modell steht. Bis zum 14.11.2026 stand das nur in ``log``, das die Rechnung
+    nicht uebergab: der Stab rechnete still starr (Befund A'3 der zweiten Runde).
     """
     gesetzt = {}
     for name, j in model.joints.items():
@@ -255,6 +260,10 @@ def federn_setzen(model: Model, log: list = None) -> dict:
         except Exception as ex:              # noqa: BLE001
             if log is not None:
                 log.append(f"Anschluss {name}: Steifigkeit unbekannt ({ex})")
+            if uebersprungen is not None:
+                uebersprungen[name] = (f"Anschluss {name} ({j.ort()}): Steifigkeit unbekannt ({ex}) – "
+                                       "er sitzt nicht als Drehfeder in der Rechnung, das Stabende rechnet "
+                                       "starr, sofern dort kein Gelenk gesetzt ist")
             continue
         art, S, text = modellierung(j, g)
         d = DOF_MY[int(j.end)]

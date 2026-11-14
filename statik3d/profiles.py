@@ -104,6 +104,26 @@ UPE = {
     270: (270, 95, 7.5, 13.5, 15), 300: (300, 100, 9.5, 15, 15), 330: (330, 105, 11, 16, 18),
     360: (360, 110, 12, 17, 18), 400: (400, 115, 13.5, 18, 18),
 }
+def u_neigung_tabelle(sec) -> float:
+    """Neigung der Flanschinnenseite eines U-Querschnitts, dessen Masse h, b, t_w, t_f, r
+    genau eine Zeile der UPN-Tabelle (0,08) oder der AISC-C-Tabelle (1/6) sind - sonst 0
+    (UPE, PFC, geschweisste U). Erkennt gespeicherte UPN, deren I_w noch ohne Neigung
+    gebildet ist (model.iw_u_stand, Befund B'2 vom 14.11.2026)."""
+    if getattr(sec, "typ", "") != "U":
+        return 0.0
+    ist = (sec.h, sec.b, sec.tw, sec.tf, sec.r)
+
+    def gleich(werte):
+        return all(abs(a - b) <= 1e-9 for a, b in zip(ist, werte))
+    for H, B, tw, tf, r in UPN.values():
+        if gleich((H * 1e-3, B * 1e-3, tw * 1e-3, tf * 1e-3, r * 1e-3)):
+            return 0.08
+    for d, bf, tw, tf in C_US.values():
+        if gleich((d * INCH, bf * INCH, tw * INCH, tf * INCH, 0.7 * tf * INCH)):
+            return 1.0 / 6.0
+    return 0.0
+
+
 # Winkel EN 10056-1: gleichschenklig (a, t, r), ungleichschenklig (h, b, t, r) in mm
 L_EQ = [(20, 3, 3.5), (25, 3, 3.5), (25, 4, 3.5), (30, 3, 5), (30, 4, 5), (35, 4, 5),
         (40, 4, 6), (40, 5, 6), (45, 5, 7), (50, 5, 7), (50, 6, 7), (60, 6, 8), (60, 8, 8),

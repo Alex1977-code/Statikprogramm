@@ -255,14 +255,16 @@ def test_u_profil_modell():
           m.u_profile_iw_alt() == ["UPN 200 alt"], m.u_profile_iw_alt())
     zeilen = m.u_profile_iw_berichtigen()
     s = m.sections["UPN 200 alt"]
-    close("(2) berichtigt: UPN 200 I_w 10 499 cm⁶ (vorher 12 277)", round(s.Iw * 1e12), 10499.0, 1.0, " cm⁶")
-    from tests.test_befunde_b_1411 import _iw_sektor
-    soll = _iw_sektor(s.h, s.b, s.tw, s.tf)
+    # angepasst am 14.11.2026 (Befund B'2): UPN mit Flanschneigung, 9 559,6 statt 10 499,5;
+    # zweiter Weg die numerische Woelbordinate mit Flanschdicke t(x) (8 %, t_f bei b/2)
+    close("(2) berichtigt: UPN 200 I_w 9 560 cm⁶ (vorher 12 277)", round(s.Iw * 1e12), 9560.0, 1.0, " cm⁶")
+    from tests.test_ermuedung_k6_1411 import _mittellinie
+    soll = _mittellinie(s.h, s.b, s.tw, s.tf, 0.08)["Iw"]
     close("(2) … zweiter Weg: numerisch integrierte Wölbordinate ∫ω² t ds (0,1 %)", s.Iw / soll, 1.0, 1e-3)
     close("(2) … dritter Weg: Wölbordinaten ec3.woelb.sektorwerte", W.sektorwerte(s).Iw_probe / s.Iw, 1.0, 1e-6)
     check("(2) eigener Wert 9 000 cm⁶ bleibt", abs(m.sections["UPN 200 eigen"].Iw - 9000e-12) < 1e-18)
     check("(2) Protokollzeile: Profil, alt und neu", len(zeilen) == 1 and "UPN 200 alt" in zeilen[0]
-          and "12 277" in zeilen[0] and "10 499" in zeilen[0], zeilen)
+          and "12 277" in zeilen[0] and "9 559,6" in zeilen[0], zeilen)
     check("(2) Status verschwunden", "U-Profile" not in rv.modell_betroffen(m) and not m.u_profile_iw_alt())
     check("(2) zweiter Aufruf: nichts mehr zu tun", m.u_profile_iw_berichtigen() == [])
 

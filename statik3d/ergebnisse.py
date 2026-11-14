@@ -163,7 +163,9 @@ TEXTFELDER = frozenset(("kommentar", "comment", "beschreibung", "description", "
 #: Schluessel), die Groesse des Lagersymbols
 ANZEIGEFELDER = {"load_cases": ("nummer",), "combinations": ("nummer",), "supports": ("groesse",),
                 # Bolzen (06.11.2026): wird nur nachgewiesen, nicht gerechnet
-                "koerper": ("bolzen",)}
+                "koerper": ("bolzen",),
+                # feste Kennung fuer Hinweise am Modell (Befund A'10, 14.11.2026)
+                "surface_supports": ("kennung",)}
 #: Neue Felder mit ihrer Vorgabe zaehlen nicht: model.NEUE_FELDER (ein Mechanismus
 #: fuer alle Pakete seit der Zusammenfuehrung am 14.10.2026; bis dahin standen hier
 #: NEUE_VORGABEN, NEU_AUF_VORGABE und SPAETERE_FELDER).

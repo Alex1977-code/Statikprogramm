@@ -610,9 +610,21 @@ class MemberDialog(QtWidgets.QDialog):
         self.cat.addItem("kein Ermüdungsnachweis", None)
         for c in DETAIL_CATEGORIES:
             self.cat.addItem(f"{c}: {DETAIL_EXAMPLES.get(c, '')}", c)
+        # Ein Wert ausserhalb der Liste - der Kerbfall-Vorschlag mit k_s fuer Zugstaebe
+        # ueber 30 mm (Rund 40: 46,53) oder ein in der Tabelle eingegebener - steht als
+        # eigener Eintrag da und bleibt bei OK unveraendert. Bis zum 14.11.2026 fand die
+        # Maske ihn nicht und schrieb bei OK None: der Ermuedungsnachweis fiel still weg
+        # (Befund A'1, 16 Zugstaebe am Drehlager)
+        self._cat_eigen = None
         if m.detail_category:
-            idx = self.cat.findData(int(round(m.detail_category / 1e6)))
-            self.cat.setCurrentIndex(max(idx, 0))
+            wert = float(m.detail_category) / 1e6
+            idx = self.cat.findData(int(round(wert))) if abs(wert - round(wert)) < 1e-6 else -1
+            if idx < 0:
+                art = "Vorschlag mit k_s" if getattr(m, "kerbfall_vorschlag", False) else "eingegebener Wert"
+                self.cat.insertItem(1, f"{zl.zahl_text(round(wert, 2), tausender=False)} N/mm² – {art}", "eigen")
+                self._cat_eigen = float(m.detail_category)
+                idx = 1
+            self.cat.setCurrentIndex(idx)
         self.cat_s = QtWidgets.QComboBox()
         self.cat_s.addItems(["100", "80"])
         if m.detail_category_shear:
@@ -656,7 +668,10 @@ class MemberDialog(QtWidgets.QDialog):
         m.woelb_start = self.w_start.currentText()
         m.woelb_ende = self.w_ende.currentText()
         c = self.cat.currentData()
-        m.detail_category = float(c) * 1e6 if c else None
+        if c == "eigen":
+            m.detail_category = self._cat_eigen          # unveraendert zurueck
+        else:
+            m.detail_category = float(c) * 1e6 if c else None
         m.kerbfall_vorschlag = False                 # im Dialog bestaetigt
         m.detail_category_shear = float(self.cat_s.currentText()) * 1e6
         m.consequence = self.consequence.currentText()
@@ -1718,7 +1733,9 @@ class JointDialog(QtWidgets.QDialog):
              + (f", Rechenwert S_j = {g.S_j / 1e6:.1f} MNm/rad (eta = {zl.zahl_text(g.eta, punkt=True)})"
                 if math.isfinite(g.S_j) and g.S_j > 0 else ""),
              f"Klasse:  {g.beschreibung()}",
-             f"M_j,Rd = {g.M_j_Rd / 1e3:.1f} kNm ({g.tragklasse or '-'})",
+             # ohne f_y der Kopfplatte (ueber 80 mm, 14.11.2026) nicht bestimmt: „–“, nicht 0,0 kNm
+             f"M_j,Rd = {g.M_j_Rd / 1e3:.1f} kNm ({g.tragklasse or '-'})" if g.M_j_Rd
+             else "M_j,Rd = – (nicht bestimmt, siehe Hinweis)",
              f"Rotationsvermögen: {'ausreichend' if g.rotation_ok else 'nicht nachgewiesen'}"
              f" - {g.rotation_grund}"]
         for h in g.hinweise:
@@ -2142,15 +2159,16 @@ class VerformungsgrenzeDialog(QtWidgets.QDialog):
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
         lay.addWidget(knopfkasten(self, bb))
-        for w in (self.cb_art, self.cb_grenzart):
+        for w in (self.cb_art, self.cb_grenzart, self.cb_groesse):
             w.currentIndexChanged.connect(self._umschalten)
         self._umschalten()
 
-    def _groessen_fuellen(self, art) -> bool:
-        """Die Groessen zur Art: fuer „Stab“ keine Verdrehung (E2, 14.11.2026 -
-        bis dahin verglich der Stabnachweis dafuer eine Durchbiegung). Rueckgabe
-        True, wenn eine gewaehlte Verdrehung dabei herausfiel."""
-        from ..model import verformungsgroessen, VERDREHUNGEN
+    def _groessen_fuellen(self, art) -> str:
+        """Die Groessen zur Art: fuer „Stab“ nur uy, uz und u (E2 und B'3,
+        14.11.2026 - bis dahin verglich der Stabnachweis fuer φ und ux eine
+        Durchbiegung). Rueckgabe: die gewaehlte Groesse, die dabei herausfiel,
+        sonst ""."""
+        from ..model import verformungsgroessen
         alt = self.cb_groesse.currentData()
         self.cb_groesse.blockSignals(True)
         self.cb_groesse.clear()
@@ -2159,16 +2177,39 @@ class VerformungsgrenzeDialog(QtWidgets.QDialog):
         i = self.cb_groesse.findData(alt)
         self.cb_groesse.setCurrentIndex(i if i >= 0 else max(0, self.cb_groesse.findData("uz")))
         self.cb_groesse.blockSignals(False)
-        return i < 0 and alt in VERDREHUNGEN
+        return str(alt) if (i < 0 and alt) else ""
+
+    def _grenzart_sperren(self, verdrehung: bool) -> bool:
+        """Eine Verdrehung nur gegen einen absoluten Grenzwert (B'4, 14.11.2026:
+        bis dahin verglich ein Punktpaar Radiant mit L/x in Metern). L/x wird
+        dann gesperrt und auf „absoluter Wert“ gestellt. Rueckgabe True, wenn
+        dabei umgestellt wurde - der Wert im Feld ist dann zu pruefen."""
+        i_lx = self.cb_grenzart.findData("L/x")
+        eintrag = self.cb_grenzart.model().item(i_lx) if i_lx >= 0 else None
+        if eintrag is not None:
+            eintrag.setEnabled(not verdrehung)
+        if verdrehung and self.cb_grenzart.currentData() == "L/x":
+            self.cb_grenzart.blockSignals(True)
+            self.cb_grenzart.setCurrentIndex(self.cb_grenzart.findData("absolut"))
+            self.cb_grenzart.blockSignals(False)
+            return True
+        return False
 
     def _umschalten(self):
+        from ..model import VERDREHUNGEN
         art = self.cb_art.currentData()
-        verdrehung_weg = self._groessen_fuellen(art)
+        weg = self._groessen_fuellen(art)
+        verdrehung = self.cb_groesse.currentData() in VERDREHUNGEN
+        umgestellt = self._grenzart_sperren(verdrehung)
         self.cb_stab.setEnabled(art == "stab")
         self.ed_knoten.setEnabled(art != "stab")
         lx = self.cb_grenzart.currentData() == "L/x"
         self.lbl_wert.setText("Nenner x" if lx else "Grenzwert [mm bzw. mrad]")
-        if lx and art == "knoten":
+        if umgestellt:
+            self.hinweis.setText("Eine Verdrehung wird gegen einen absoluten Grenzwert in mrad "
+                                 "nachgewiesen – L/x ergibt eine Länge. Die Grenze steht jetzt auf "
+                                 "„absoluter Wert“; bitte den Grenzwert in mrad prüfen.")
+        elif lx and art == "knoten":
             self.hinweis.setText("L/x braucht eine Bezugslänge – für einen einzelnen "
                                  "Knoten einen absoluten Grenzwert wählen.")
         elif art == "punktpaar":
@@ -2179,7 +2220,10 @@ class VerformungsgrenzeDialog(QtWidgets.QDialog):
             self.hinweis.setText("Die Durchbiegung wird auf die Sehne zwischen den "
                                  "Stabenden bezogen und aus der Momentenlinie gewonnen."
                                  + (" Eine Verdrehung lässt sich am Stab nicht nachweisen – "
-                                    "dafür die Art „Knoten“ wählen." if verdrehung_weg else ""))
+                                    "dafür die Art „Knoten“ wählen." if weg in VERDREHUNGEN else
+                                    " Die Verschiebung ux (in Stabrichtung) lässt sich am Stab nicht "
+                                    "nachweisen – dafür die Art „Knoten“ oder „Punktpaar“ wählen."
+                                    if weg == "ux" else ""))
         else:
             self.hinweis.setText("Verschiebung des Knotens gegenüber der Ausgangslage.")
 
@@ -2259,9 +2303,11 @@ class StellungDialog(QtWidgets.QDialog):
         # Ganzes Zahlenfeld (25.09.2026): bis dahin Text mit
         # int(float(t.replace(",", "."))) - „1.000“ wurde still Knoten 1,
         # „abc“ liess den Antrieb still weg. Jetzt sperrt beides OK.
-        self.ed_knoten = zf.Zahlenfeld(None if kn is None else int(kn) + 1, 80, ganz=True)
+        # Knoten ab 0 wie Tabelle, Modellbaum und Browser (A'11, 14.11.2026; bis
+        # dahin ab 1 - dieselbe „8“ war hier Knoten 7, im Browser Knoten 8)
+        self.ed_knoten = zf.Zahlenfeld(None if kn is None else int(kn), 80, ganz=True)
         self.ed_moment = [NumEdit(v / 1e3, 80) for v in mv]
-        gl.addWidget(row("Knoten (Nummer, leer = kein Antrieb)", self.ed_knoten))
+        gl.addWidget(row("Knoten (Nummer ab 0, leer = kein Antrieb)", self.ed_knoten))
         gl.addWidget(row("Mx [kNm]", self.ed_moment[0], "My", self.ed_moment[1],
                          "Mz", self.ed_moment[2]))
         lay.addWidget(g)
@@ -2276,7 +2322,9 @@ class StellungDialog(QtWidgets.QDialog):
         antrieb = None
         nr = self.ed_knoten.wert(None)
         if nr is not None:
-            antrieb = (int(nr) - 1, [e.value() * 1e3 for e in self.ed_moment])
+            if nr < 0:
+                raise zf.Eingabefehler(f"Knoten des Antriebs: {int(nr)} – Knotennummern zählen ab 0")
+            antrieb = (int(nr), [e.value() * 1e3 for e in self.ed_moment])
         return Stellung(
             name=self.ed_name.text().strip() or "Stellung",
             winkel=self.ed_winkel.value(),

@@ -198,7 +198,8 @@ def fatigue_check(detail: str, ranges: list, gamma_Mf: float = 1.15,
         # M36 mit Kerbfall 50 statt 47,8 (D 0,025 statt 0,031, Befund C5)
         ks = k_s_schraube(d)
         dc = dc * ks
-        text = f"{text}; Größeneinfluss k_s = (30/{d * 1e3:.0f})^0,25 = {ks:.3f}"
+        from ..zahlen import zahl_text
+        text = f"{text}; Größeneinfluss k_s = (30/{d * 1e3:.0f})^0,25 = {zahl_text(round(ks, 3))}"
     stufen = []
     for val, n in ranges:
         ds = (abs(val) / area) if area > 0 else abs(val)

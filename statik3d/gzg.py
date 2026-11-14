@@ -253,15 +253,26 @@ def check_grenze(model: Model, g: Verformungsgrenze, ergebnisse: dict) -> Grenze
         c.fehler = ("keine Ergebnisse der Bemessungssituation "
                     f"{SITUATIONEN.get(g.situation, g.situation or 'GZG')}")
         return c
+    # -- was sich nicht nachweisen laesst ------------------------------
+    # aus einer aelteren Datei „nicht geführt“ statt eines falschen Vergleichs
+    from .model import VERDREHUNGEN, STAB_GROESSEN
+    if g.art == "stab" and g.groesse in VERDREHUNGEN:
+        # eine Verdrehung hat der Stabnachweis nicht (E2, 14.11.2026)
+        c.fehler = ("Verdrehung am Stab nicht nachweisbar – als Knotennachweis "
+                    "(Art „Knoten“) anlegen")
+        return c
+    if g.art == "stab" and g.groesse not in STAB_GROESSEN:
+        # ux: bis zum 14.11.2026 die Durchbiegung w_z (B'3)
+        c.fehler = ("Verschiebung ux (in Stabrichtung) am Stab nicht nachweisbar – als "
+                    "Knotennachweis oder Punktpaar anlegen")
+        return c
+    if g.groesse in VERDREHUNGEN and g.grenzart == "L/x":
+        # bis zum 14.11.2026 Radiant gegen L/x in Metern (B'4)
+        c.fehler = ("Verdrehung nur gegen einen absoluten Grenzwert (mrad) nachweisbar – "
+                    "L/x ergibt eine Länge")
+        return c
     # -- Bezugslaenge -------------------------------------------------
     if g.art == "stab":
-        # eine Verdrehung hat der Stabnachweis nicht (E2, 14.11.2026): aus
-        # einer aelteren Datei „nicht geführt“ statt einer Durchbiegung als mrad
-        from .model import VERDREHUNGEN
-        if g.groesse in VERDREHUNGEN:
-            c.fehler = ("Verdrehung am Stab nicht nachweisbar – als Knotennachweis "
-                        "(Art „Knoten“) anlegen")
-            return c
         mem = model.members.get(g.stab)
         if mem is None:
             c.fehler = f"Stab „{g.stab}“ gibt es nicht"
@@ -331,16 +342,20 @@ def _wert(model: Model, g: Verformungsgrenze, res, c: GrenzeCheck) -> tuple:
             u = getattr(res, "u")
             return float(np.linalg.norm(u[b, :3] - u[a, :3])), f"{a} gegen {b}"
         return vb - va, f"{a} gegen {b}"
+    # nur die Durchbiegungen quer zur Stabachse; bis zum 14.11.2026 fiel jede
+    # andere Groesse (ux, phix, phiz) auf w_z, phiy auf w_y (E2, B'3)
+    if g.groesse not in ("uy", "uz", "u"):
+        raise ValueError(f"„{g.groesse}“ ist am Stab nicht nachweisbar (nur uy, uz oder u)")
     mem = model.members[g.stab]
     if not hasattr(res, "beam_end") or not res.beam_end:
         return None, ""
     d = durchbiegung(model, res, mem)
-    if g.groesse in ("uy", "phiy"):
+    if g.groesse == "uy":
         w = d["w_y"]
+    elif g.groesse == "uz":
+        w = d["w_z"]
     elif g.groesse == "u":
         w = np.hypot(d["w_y"], d["w_z"])
-    else:
-        w = d["w_z"]
     if not w.size:
         return None, ""
     j = int(np.argmax(np.abs(w)))

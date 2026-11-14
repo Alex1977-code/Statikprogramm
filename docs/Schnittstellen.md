@@ -1678,7 +1678,7 @@ Browser unter **Mehr → Export** (Format wählen, „Herunterladen“).
 | `.nc1` / `.zip` | DSTV-NC | je Stab eine Datei: Kopfblock, Profil, Länge, Werkstoff, Kontur |
 | `.ifc` | IFC 4 (Structural Analysis View) | Knoten, Stäbe, Flächen, Lagerbedingungen, Lastfälle mit Knotenlasten |
 | `.xlsx` | SAF | Knoten, Stäbe (mit allen Zwischenknoten), Flächen, Querschnitte, Materialien, Lager, Lastfälle (Eigengewicht als „Self weight“), Kombinationen (auch Ergebniskombinationen), Lasten (Knotenkräfte und -momente; Stablasten gleichmäßig, trapezförmig, abschnittsweise; Flächenlasten auf Schalen; Temperatur auf Stäben und Schalen) |
-| `.csv` | Tabellen im RFEM-Aufbau | zehn Blätter in einem Ordner, vom eigenen Tabellenimport wieder lesbar |
+| `.csv` | Tabellen im RFEM-Aufbau | elf Blätter in einem Ordner (seit 14.11.2026 mit 2.5 Lastkombinationen), vom eigenen Tabellenimport wieder lesbar |
 | `.dxf` | AutoCAD DXF | Stäbe als LINE, Schalen und die Außenflächen von tet4-, tet10- und hex8-Volumen als 3DFACE; andere Volumenarten fehlen und stehen im Hinweis; Lager und Beschriftung auf eigenen Layern |
 | `.inp` | Abaqus / CalculiX | Knoten, Elemente, Materialien, Querschnitte, Randbedingungen, ein Step je Lastfall |
 | `.bdf` | Nastran Bulk Data | GRID, CBAR/CTRIA3/CQUAD4/CTETRA/CHEXA, PBAR/PSHELL/PSOLID, MAT1, SPC1, FORCE/MOMENT/GRAV |

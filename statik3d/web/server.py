@@ -393,6 +393,11 @@ def _stellungen_summary(st: State) -> dict:
                    "faelle": list(s.faelle), "dreh_winkel": float(s.dreh_winkel),
                    "gruppen": list(s.dreh_gruppen),
                    "antrieb": bool(s.antrieb),
+                   # Knoten (ab 0) und Momente [kNm] - das Formular „Stellung ändern“
+                   # belegt sie vor; bis zum 14.11.2026 kam nur bool an, und Ändern
+                   # löschte das Antriebsmoment (B'5)
+                   "antrieb_knoten": int(s.antrieb[0]) if s.antrieb else None,
+                   "antrieb_moment": ([float(v) / 1e3 for v in s.antrieb[1]] if s.antrieb else None),
                    "ergebnis": erg.get(s.name)} for s in liste],
         "gerechnet": umh is not None,
         # die Namen der Lager je Art, so wie Modellbaum, Maske und Stellung sie
@@ -1527,6 +1532,41 @@ def _namensliste(d: dict, key: str) -> list:
     return [x.strip() for x in str(wert).split(",") if x.strip()]
 
 
+def _antrieb_lesen(m, d: dict, bisher=None):
+    """Der Antrieb einer Stellung aus dem Formular: (Knoten, [Mx, My, Mz] in Nm) oder None.
+
+    Das Formular schickt Nm (data-scale 1e3 an den kNm-Feldern) und den Knoten
+    aus der Auswahl, gezaehlt ab 0 wie Tabelle und Knotenlast (E1). Fehlt das
+    Feld „antrieb_knoten“ (oder ist es None), bleibt der Antrieb *bisher*
+    stehen - bis zum 14.11.2026 loeschte „Stellung ändern“ ihn (B'5). Ein
+    leerer Text heisst „kein Antrieb“. Sonst genau eine ganze Zahl ab 0; bis
+    dahin nahm die erste Ziffernfolge: aus „-1“ den Knoten 1, aus „1,2“ den
+    Knoten 1, und die Zahl 0 wurde „kein Antrieb“. Fehlende Momentfelder
+    behalten die bisherigen Momente."""
+    roh = d.get("antrieb_knoten")
+    if roh is None:
+        return bisher
+    if isinstance(roh, bool):
+        raise ApiError(f"Knoten des Antriebs: „{roh}“ ist keine Knotennummer")
+    if isinstance(roh, (int, float)):
+        if isinstance(roh, float) and not roh.is_integer():
+            raise ApiError(f"Knoten des Antriebs: {roh} ist keine ganze Zahl")
+        knoten = int(roh)
+    else:
+        text = str(roh).strip()
+        if not text:
+            return None
+        if not re.fullmatch(r"[+-]?\d+", text):
+            raise ApiError(f"Knoten des Antriebs: „{text}“ ist nicht genau eine ganze Zahl")
+        knoten = int(text)
+    if knoten < 0:
+        raise ApiError(f"Knoten des Antriebs: {knoten} – Knotennummern zählen ab 0")
+    _check_nodes(m, [knoten])
+    alt = list(bisher[1]) if bisher else [0.0, 0.0, 0.0]
+    mv = [_f(d, f"antrieb_{k}", float(alt[i])) for i, k in enumerate(("mx", "my", "mz"))]
+    return (knoten, mv)
+
+
 @op("stellung")
 def _op_stellung(st, m, d):
     """Stellung anlegen oder aendern."""
@@ -1536,16 +1576,7 @@ def _op_stellung(st, m, d):
         raise ApiError("Name der Stellung fehlt")
     liste = _stellungen(st)
     vorhanden = next((s for s in liste if s.name == name), None)
-    antrieb = None
-    kn = str(d.get("antrieb_knoten") or "").strip()
-    treffer = re.findall(r"\d+", kn)
-    if treffer:
-        # das Formular schickt Nm (data-scale 1e3 an den kNm-Feldern) und den
-        # Knoten aus der Auswahl, gezaehlt ab 0 wie Tabelle und Knotenlast;
-        # bis zum 14.11.2026 kamen 40 kNm als 40 Nm an Knoten 7 statt 8 an (E1)
-        mv = [_f(d, "antrieb_mx", 0.0), _f(d, "antrieb_my", 0.0), _f(d, "antrieb_mz", 0.0)]
-        _check_nodes(m, [int(treffer[0])])
-        antrieb = (int(treffer[0]), mv)
+    antrieb = _antrieb_lesen(m, d, vorhanden.antrieb if vorhanden is not None else None)
     neu = Stellung(
         name=name,
         winkel=_f(d, "winkel", 0.0),

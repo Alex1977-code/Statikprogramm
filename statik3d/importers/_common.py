@@ -834,10 +834,24 @@ class Einheitensystem:
 
     def e_pruefen(self, log: list, name: str, E: float) -> None:
         """Warnung, wenn der E-Modul nach der Umrechnung nicht nach einem Baustoff
-        aussieht (0,1 bis 10 000 GPa) - das Einheitensystem der Datei ist dann ein anderes."""
-        if E and not (1e8 <= abs(float(E)) <= 1e13):
-            warn(log, f"{name}: E-Modul {_zahl(float(E) / 1e6)} N/mm² nach der Umrechnung - unplausibel. "
-                      "Einheitensystem der Datei und die gewählte Längeneinheit prüfen.")
+        aussieht (0,1 bis 10 000 GPa) - das Einheitensystem der Datei ist dann ein anderes.
+
+        Ohne Umrechnung (Datei als SI gelesen) erst unter 1 N/mm²: so klein wird ein
+        E-Modul nur, wenn eine Datei in mm, N, N/mm² als SI gelesen wurde (Stahl
+        210 000 -> 0,21 N/mm²); ein Lagerelastomer mit 5 N/mm² ist richtig gelesen.
+        Bis zum 14.11.2026 hiess es auch ohne Umrechnung „nach der Umrechnung“, und
+        das Elastomer wurde als unplausibel gemeldet (Befund A'11)."""
+        if not E:
+            return
+        e = abs(float(E))
+        if self.umgerechnet:
+            if not (1e8 <= e <= 1e13):
+                warn(log, f"{name}: E-Modul {_zahl(float(E) / 1e6)} N/mm² nach der Umrechnung - unplausibel. "
+                          "Einheitensystem der Datei und die gewählte Längeneinheit prüfen.")
+        elif not (1e6 <= e <= 1e13):
+            warn(log, f"{name}: E-Modul {_zahl(float(E) / 1e6)} N/mm² - unplausibel; die Datei wurde ohne "
+                      "Umrechnung als SI gelesen (m, N, N/m²). Ist sie in mm, N, N/mm² geschrieben, beim "
+                      "Import die Längeneinheit mm wählen.")
 
 
 def _zahl(x: float) -> str:

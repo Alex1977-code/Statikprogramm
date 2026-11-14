@@ -811,6 +811,7 @@ def import_rfem_tables(path: str, model: Model = None, log: list = None,
     if t is not None:
         f_beta = t.unit("beta", math.pi / 180.0)
         k = 0
+        n_seil = 0
         for row, _ in t.data():
             if row is None:
                 continue
@@ -833,7 +834,11 @@ def import_rfem_tables(path: str, model: Model = None, log: list = None,
                     raise ValueError("weder Linie noch Knoten angegeben")
                 typ_txt = t.text(row, "type").lower()
                 typ = "beam"
-                if re.search(r"fachwerk|truss|zugstab|tension|druckstab|compression|seil|cable", typ_txt):
+                if re.search(r"seil|cable", typ_txt):
+                    # Seil traegt nur Zug wie in RFEM (14.11.2026, Befund B'7: bis dahin
+                    # ein Fachwerkstab, der Druck trug - im Rundlauf 9,84 kN Druck im Seil)
+                    typ = "seil"
+                elif re.search(r"fachwerk|truss|zugstab|tension|druckstab|compression", typ_txt):
                     typ = "truss"
                 elif re.search(r"null|dummy", typ_txt):
                     C.say(log, f"Stab {no}: Nullstab uebersprungen")
@@ -850,9 +855,14 @@ def import_rfem_tables(path: str, model: Model = None, log: list = None,
                          for a, b in zip(chain[:-1], chain[1:])]
                 member_elems[no] = elems
                 model.add_member(C.unique_name(model.members, f"Stab {no}"), elems)
+                n_seil += int(typ == "seil")
             except Exception as ex:
                 C.warn(log, f"Stab {no} uebersprungen: {ex}")
         C.say(log, f"{len(member_elems)} Staebe")
+        if n_seil:
+            from ..begriffe import anzahl
+            C.say(log, f"{anzahl(n_seil, 'Stab', 'Stäbe')} als Seil: trägt nur Zug "
+                       "(fällt wie in RFEM bei Druck aus)")
 
     # ---- Flaechen ---------------------------------------------------------------------
     surface_elems: dict[int, list[int]] = {}
@@ -1183,7 +1193,9 @@ def import_rfem_tables(path: str, model: Model = None, log: list = None,
                     C.get_or_add_case(model, key, "Q", "")
             sit = t.text(row, "situation").upper()
             typ = "ULS"
-            if re.search(r"GZG|SLS|GEBRAUCH|SERVICE", sit):
+            if re.search(r"ERMÜDUNG|ERMUEDUNG|FATIGUE|\(FAT\)", sit):
+                typ = "FAT"         # Ermuedung (14.11.2026, Befund B'7: Rundlauf)
+            elif re.search(r"GZG|SLS|GEBRAUCH|SERVICE", sit):
                 typ = "SLS_QP" if re.search(r"QUASI", sit) else ("SLS_FR" if re.search(r"HAEUFIG|HÄUFIG|FREQ", sit) else "SLS_CH")
             elif re.search(r"AUSSERGEW|AUßERGEW|ACC|ERDBEBEN|SEISM", sit):
                 typ = "ACC"

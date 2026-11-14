@@ -100,6 +100,8 @@ BERICHT_AENDERUNGEN = {
     ("SLS_FR", "GZG häufig"): 1,
     ("SLS_QP", "GZG quasi-ständig"): 1,
     ("USER", "benutzerdefiniert"): 1,
+    # α_T ausgeschrieben statt wissenschaftlich (B'9 der zweiten Runde, 14.11.2026)
+    ("1.20e-05", "0.000012"): 1,
 }
 
 SCHLUESSEL = ("ULS", "EQU", "ACC", "SLS_CH", "SLS_FR", "SLS_QP", "FAT", "USER", "CASES")

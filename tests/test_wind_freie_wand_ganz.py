@@ -303,6 +303,8 @@ def test_merkmal(mv):
         geo = dict(gl.verlauf["geometrie"])
         kn = wm._flaechenknoten(alt8, str(gl.ziel))
         geo["h"] = float(alt8.nodes[sorted(kn)][:, 2].max()) - float(geo["z_boden"])
+        # eine Last vor Stand 56 traegt keine Hoehe der Wand (h_wand): Tab. 7.9 nahm h
+        geo.pop("h_wand", None)
         gl.verlauf["geometrie"] = geo
     alt8.lasten_verteilen()
     F8a = summe(alt8, w8.lastfall)
