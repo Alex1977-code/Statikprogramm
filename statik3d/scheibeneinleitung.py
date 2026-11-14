@@ -207,6 +207,17 @@ def fy_koerper(model, kname: str, dicke=None):
     return float(fy) if fy else None
 
 
+def fy_meldung_koerper(model, kname: str, dicke=None) -> str:
+    """Die Meldung, wenn der Werkstoff des Koerpers ``kname`` bei der
+    Erzeugnisdicke ``dicke`` [m] kein f_y hat (ueber 80 mm ohne Dickentabelle,
+    Material.dicke_ohne_wert, Befund C4) - sonst ""."""
+    k = (getattr(model, "koerper", None) or {}).get(kname)
+    mat = (getattr(model, "materials", None) or {}).get(getattr(k, "material", "") if k is not None else "")
+    if mat is None or not dicke or not hasattr(mat, "dicke_ohne_wert"):
+        return ""
+    return mat.dicke_ohne_wert(float(dicke), "fy") or ""
+
+
 def _koerper_der_knoten(model, gesucht: set) -> dict:
     """{Knoten: Koerper} fuer die Knoten ``gesucht`` - ein Durchgang ueber die
     Elemente der Koerper (nur fuer die Anzeige; am Drehlager einige Sekunden)."""
@@ -262,7 +273,8 @@ def scheiben(model, mit_koerper: bool = True) -> list:
                         mitte=c, normale=geo["normale"], einleitung=e["art"], d_innen=di,
                         d_aussen=e["d_aussen"], annahme=e["annahme"], quelle=e["quelle"],
                         vorschlag=vorschlag, vorschlag_quelle=vq, F=_vorspannkraft(model, stab),
-                        A_ring=0.0, pressung=None, koerper="", dicke=None, fy=None, verhaeltnis=None, hinweis=""))
+                        A_ring=0.0, pressung=None, koerper="", dicke=None, fy=None, fy_meldung="",
+                        verhaeltnis=None, hinweis=""))
     if mit_koerper and aus:
         # der Koerper unter der Scheibe: der eines gekoppelten Knotens (Ring
         # oder Lochrand) - ein Durchgang fuer alle Scheiben
@@ -283,6 +295,7 @@ def scheiben(model, mit_koerper: bool = True) -> list:
                 z["koerper"] = k
                 z["dicke"] = dicke_koerper(model, k, dicken)
                 z["fy"] = fy_koerper(model, k, z["dicke"])
+                z["fy_meldung"] = fy_meldung_koerper(model, k, z["dicke"])
     for z in aus:
         pressung_setzen(z)
     return aus
@@ -304,6 +317,11 @@ def pressung_setzen(z: dict) -> dict:
     z["pressung"] = z["F"] / A if A > 0 and z.get("F") else None
     z["verhaeltnis"] = z["pressung"] / z["fy"] if z["pressung"] is not None and z.get("fy") else None
     z["hinweis"] = AUFLAGE_PRUEFEN if (z["verhaeltnis"] or 0.0) > GRENZE_PRESSUNG_FY else ""
+    if z["pressung"] is not None and z["verhaeltnis"] is None and z.get("fy_meldung"):
+        # ueber 80 mm ohne Dickentabelle kein f_y (Befund C4): nicht beurteilt, mit der
+        # Meldung - bis zum 14.11.2026 stand die Spalte dann still leer (Befund A'11
+        # der zweiten Runde)
+        z["hinweis"] = f"Auflage nicht beurteilt: {z['fy_meldung']}"
     return z
 
 
@@ -314,6 +332,9 @@ def pressung_text(z: dict) -> str:
     if z.get("pressung") is None:
         return "–"
     t = f"{_zahl(z['pressung'] / 1e6)} N/mm²"
+    if z.get("verhaeltnis") is None and z.get("fy_meldung"):
+        t += (f" (kein f_y bei t = {_zahl(z['dicke'] * 1e3, 0)} mm über 80 mm – f_y nach Erzeugnisnorm "
+              "eintragen)" if z.get("dicke") else " (kein f_y über 80 mm – f_y nach Erzeugnisnorm eintragen)")
     if z.get("verhaeltnis") is not None:
         t += f" = {_zahl(z['verhaeltnis'], 2)} f_y"
         fy = _zahl(z["fy"] / 1e6, 0)

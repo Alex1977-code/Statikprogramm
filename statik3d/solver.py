@@ -10860,6 +10860,8 @@ class Analysis:
             s.append(f"WARNUNG: {self.info['verfahren_betroffen']}")
         # vor der Rechnung umgedrehte Schalenelemente (statik3d.schalenlage, 12.11.2026)
         s += [f"Hinweis: {z}" for z in (self.info.get("schalenlage") or [])]
+        # Anschluesse ohne Drehfeder in der Rechnung (Befund A'3 der zweiten Runde, 14.11.2026)
+        s += [f"WARNUNG: {z}" for z in (self.info.get("anschluesse_uebersprungen") or {}).values()]
         # die Iteration „gemeinsam“ ist ein Versuch (Fehlerliste F12, 06.10.2026)
         s += [f"WARNUNG: {z}" for z in gemeinsam_gebuendelt(self.all_results().items())]
         # verteilend eingeleitete Stabenden: eine Zeile ueber alle Ergebnisse (13.10.2026)
@@ -11192,7 +11194,14 @@ def _solve_all_rumpf(model: Model, an: Analysis, systeme: dict, workers, progres
         # Rechnung, nicht erst in den Nachweis: nachgiebige Anschluesse sitzen
         # als Drehfeder am Stabende (EN 1993-1-8, 5.1.2).
         from .joints.anschluss import federn_setzen
-        an.info["anschlussfedern"] = federn_setzen(model)
+        # Anschluesse ohne bestimmbare Steifigkeit: Protokoll, an.info und
+        # Zusammenfassung (bis zum 14.11.2026 still starr, Befund A'3 der zweiten Runde)
+        ueber: dict = {}
+        an.info["anschlussfedern"] = federn_setzen(model, uebersprungen=ueber)
+        if ueber:
+            an.info["anschluesse_uebersprungen"] = dict(ueber)
+            for text in ueber.values():
+                _melde(progress, "WARNUNG: " + text)
     # Je Situation ein System: die Grundstellung (unbewegt, alles aktiv) und
     # jede Situation, in der ein Lastfall steht
     referenzen = ermuedungsreferenzen(model)

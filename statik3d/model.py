@@ -827,6 +827,33 @@ class Material:
                               f"{self.grade} bleibt.")
         return zeilen
 
+    def sorte_wechseln(self, sorte) -> list:
+        """Die Stahlsorte setzen (Werkstofftabelle, Werkstoffmaske) und die Zeilen
+        fuers Protokoll zurueckgeben.
+
+        Die im Werkstoffdialog eingetragenen Werte ueber 80 mm (Erzeugnisnorm,
+        :meth:`erzeugnisnorm_setzen`) gehoeren zur Sorte, fuer die sie eingetragen
+        wurden: bei einer anderen Sorte werden sie geleert, wie es der Dialog tut
+        (dort leert der Sortenwechsel die Zeile „f_y/f_u über 80 mm“). Bis zum
+        14.11.2026 behielten Tabellenzelle und Maske sie: S235 bei 100 mm mit dem
+        f_y 285 N/mm² einer S355 (Befund A'6 der zweiten Runde). Dieselbe Sorte in
+        anderer Schreibweise („s 355“) aendert nichts; eine Dickentabelle aus der
+        Quelldatei (RFEM) bleibt hier unberuehrt."""
+        alt_name, alt = self.grade, self._sorte()
+        self.grade = sorte
+        if stahlsorte_schluessel(sorte) == alt or self.dickentabelle_aus_quelle():
+            return []
+        werte = [(k, w) for k, w in ((self.fliess_name(), self.erzeugnisnorm_wert("fy")),
+                                     (self.grenze_name(), self.erzeugnisnorm_wert("fu"))) if w is not None]
+        if not werte:
+            return []
+        self.erzeugnisnorm_setzen(None, None)
+        return [f"Werkstoff {self.name}: Stahlsorte {alt_name or 'leer'} → {self.grade or 'leer'}; die Werte "
+                f"über 80 mm Erzeugnisdicke (Erzeugnisnorm, "
+                + ", ".join(f"{k} {_mpa_text(w)} N/mm²" for k, w in werte)
+                + f") gehörten zur Sorte {alt_name} und sind geleert – über 80 mm kein Wert und kein "
+                  "Nachweis, bis sie im Werkstoffdialog für die neue Sorte eingetragen sind."]
+
     @staticmethod
     def steel(grade: str = "S355", name: str = None) -> "Material":
         """Baustahl nach der Sortentabelle, Werte fuer t <= 40 mm (EN 10025-2 bis -5)."""
@@ -3046,7 +3073,8 @@ class Joint:
     S_j: float = 0.0
 
     def ort(self) -> str:
-        return f"Element {self.elem + 1}, Ende {'A' if self.end == 0 else 'E'}"
+        # Elemente ab 0 wie Tabelle und Modellbaum (bis 14.11.2026 ab 1, Befund A'11 der zweiten Runde)
+        return f"Element {self.elem}, Ende {'A' if self.end == 0 else 'E'}"
 
 
 @dataclass

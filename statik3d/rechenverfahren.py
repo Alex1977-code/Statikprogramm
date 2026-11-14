@@ -990,6 +990,66 @@ def _anschluss_blechdicke(model) -> bool:
     return False
 
 
+def _anschluss_feder_ueber_80(model) -> bool:
+    """Ein Kopfplattenanschluss, dessen Platte ueber 80 mm dick ist und dessen
+    Werkstoff dort kein f_y hat (nur Stahlsorte, keine Dickentabelle). Seit Stand
+    45 (Befund C4) warf momenten_rotation dort, federn_setzen uebersprang den
+    Anschluss still, und das Stabende rechnete starr statt mit der Drehfeder
+    (Befund A'3 der zweiten Runde, 14.11.2026). Ein fest „starr“ vorgegebener
+    Anschluss rechnete ohnehin starr."""
+    from .joints import anschluss as _an
+    for j in (getattr(model, "joints", None) or {}).values():
+        if not getattr(j, "design", True) or getattr(j, "typ", "") != "kopfplatte" \
+                or str(getattr(j, "modellierung", "") or "").lower() == "starr":
+            continue
+        try:
+            t = _an.vorlage(model, j)
+            mat = model.materials[model.elements[int(j.elem)].mat]
+        except Exception:                       # noqa: BLE001 - nicht gefuehrt, nicht betroffen
+            continue
+        tp = float(getattr(t, "tp", 0.0) or 0.0)
+        if tp > 0 and mat.dicke_ohne_wert(tp, "fy"):
+            return True
+    return False
+
+
+def _werkstoffe_sorte_ueber_80(model) -> list:
+    """Namen der benutzten Werkstoffe, deren Stufe ueber 80 mm (Erzeugnisnorm,
+    Material.erzeugnisnorm_setzen) zu einer anderen Sorte eingetragen wurde, als
+    sie heute traegt - erkennbar an der Stufe bis 80 mm, die beim Eintragen den
+    Wert 40-80 mm der damaligen Sorte bekam. Bis zum 14.11.2026 behielten
+    Werkstofftabelle und -maske die Stufe beim Sortenwechsel (Befund A'6 der
+    zweiten Runde). Nicht erkennbar ist ein Wechsel zwischen Sorten mit gleichen
+    Werten 40-80 mm und einer, nach dem f_y oder f_u von Hand geaendert wurde."""
+    from .model import STEEL_GRADES, DICKE_TAB31
+    benutzt = {getattr(e, "mat", None) for e in (getattr(model, "elements", None) or [])}
+    benutzt |= {getattr(k, "material", None) for k in (getattr(model, "koerper", None) or {}).values()}
+    benutzt |= {getattr(f, "material", None) for f in (getattr(model, "flaechen", None) or {}).values()}
+    aus = []
+    for name, mt in (getattr(model, "materials", None) or {}).items():
+        sorte = mt._sorte() if hasattr(mt, "_sorte") else None
+        if name not in benutzt or not sorte or not hasattr(mt, "erzeugnisnorm_wert"):
+            continue
+        for was, spalte in (("fy", 2), ("fu", 3)):
+            if mt.erzeugnisnorm_wert(was) is None:
+                continue
+            tab = mt.fy_dicke if was == "fy" else mt.fu_dicke
+            stufe = next((float(b) for a, b in tab if abs(float(a) - DICKE_TAB31) < 1e-12), None)
+            if stufe is not None and abs(stufe - float(STEEL_GRADES[sorte][spalte])) > 1.0:
+                aus.append(str(name))
+                break
+    return aus
+
+
+def _werkstoffe_sorte_ueber_80_im_modell(model) -> str:
+    namen = _werkstoffe_sorte_ueber_80(model)
+    if not namen:
+        return ""
+    return (f"die Werkstoffe {_kurz(namen)} tragen über 80 mm Erzeugnisdicke die Werte einer früheren "
+            "Stahlsorte – im Werkstoffdialog die Zeile „f_y/f_u über 80 mm“ für die heutige Sorte "
+            "eintragen oder leeren, dann neu rechnen")
+
+
 def _dicke_ueber_80(model) -> bool:
     """Ein Bauteil ueber 80 mm Erzeugnisdicke aus einem Werkstoff, der nur die
     Stahlsorte kennt (keine Dickentabelle) - dort blieb f_y bis zum 14.11.2026
@@ -3154,10 +3214,37 @@ MERKMALE: list = [
         modellgrund="Netz getrennt erzeugt (Rippe einzeln neu vernetzt, Polylinie gegen Polylinie oder älterer "
                     "Programmstand)",
         vorschlag="Netz › Vernetzen: das Netz neu erzeugen"),
+    # Befund A'3 der zweiten Runde (14.11.2026): seit Stand 45 warf die Steifigkeit
+    # eines Kopfplattenanschlusses ueber 80 mm ohne Dickentabelle (kein f_y), der
+    # Anschluss fiel still aus der Rechnung, das Stabende rechnete starr (Kragarm
+    # 4 m, IPE 300, Kopfplatte 90 mm: 25,88 statt 39,97 mm). S_j haengt nicht an
+    # f_y. Fehlerkorrektur
+    Merkmal(
+        name="anschluss_feder_ueber_80", titel="Drehfeder eines Kopfplattenanschlusses über 80 mm",
+        texte={"alt": "Kopfplatte über 80 mm ohne f_y: Anschluss übersprungen, Stabende starr",
+               "neu": "Drehfeder S_j ohne f_y (Tab. 6.11); M_j,Rd und Rotationsvermögen nicht bestimmt, "
+                      "mit Meldung"},
+        wechsel=(Wechsel(stand=53, datum="14.11.2026", commit="fix/k6-werkstoff", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Kopfplattenanschluss mit Platte über 80 mm aus einem Werkstoff ohne Dickentabelle",
+        betrifft=_anschluss_feder_ueber_80),
+    # Befund A'6 der zweiten Runde (14.11.2026): Werkstofftabelle und -maske
+    # behielten beim Sortenwechsel die Werte ueber 80 mm der alten Sorte (S235 bei
+    # 100 mm mit f_y 285). Der Wert steht im Modell - erst ein neuer Eintrag wirkt.
+    # Fehlerkorrektur, Status am Modell
+    Merkmal(
+        name="werkstoff_sorte_ueber_80", titel="Werte über 80 mm nach einem Sortenwechsel",
+        texte={"alt": "Sortenwechsel in Tabelle oder Maske behält die Werte über 80 mm der alten Sorte",
+               "neu": "Sortenwechsel leert die Werte über 80 mm (wie der Werkstoffdialog), mit Protokollzeile"},
+        wechsel=(Wechsel(stand=53, datum="14.11.2026", commit="fix/k6-werkstoff", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Werkstoff, dessen Stufe über 80 mm zu einer anderen Stahlsorte eingetragen wurde",
+        betrifft=lambda model: bool(_werkstoffe_sorte_ueber_80(model)),
+        im_modell=_werkstoffe_sorte_ueber_80_im_modell),
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 52
+VERFAHRENSSTAND = 53
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

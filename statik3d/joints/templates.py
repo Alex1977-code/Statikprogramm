@@ -421,19 +421,31 @@ class EndPlate(JointTemplate):
         st = dict(stuetze or {})
         t_gegen = float(st.get("tf", 0.0)) or self.tp
         L_bolt = R.klemmlaenge(self.tp, t_gegen, self.bolt)
-        fy_p = self._blech(self.tp)[0]          # Kopfplatte mit ihrer Dicke (Befund B8)
+        # Kopfplatte mit ihrer Dicke (Befund B8). Die Steifigkeit S_j (k_5, k_10,
+        # Tab. 6.11) haengt nicht an f_y; f_y braucht nur die Tragfaehigkeit der
+        # Reihen (M_j,Rd) und das Rotationsvermoegen. Bis zum 14.11.2026 wurde f_y
+        # zuerst geholt: ueber 80 mm ohne Dickentabelle (kein Wert, Befund C4) warf
+        # das, federn_setzen uebersprang den Anschluss, und der Stab rechnete still
+        # starr (Kopfplatte 90 mm an IPE 300: Kragarm 25,88 statt 39,97 mm, Befund
+        # A'3 der zweiten Runde). Jetzt S_j ohne f_y, M_j,Rd und Rotation mit Meldung.
+        try:
+            fy_p = self._blech(self.tp)[0]
+            ohne_fy = ""
+        except ValueError as ex:
+            fy_p, ohne_fy = None, str(ex)
 
         for h_r, m, le, e_arm in self._zugreihen():
             r = R.Reihe(h=h_r)
             leff_min = min(le["cp"], le["nc"]) if le.get("cp") else le["nc"]
             r.komponenten.append(R.k5_stirnplatte(leff_min, self.tp, m))
             r.komponenten.append(R.k10_schrauben(self.bolt.As, L_bolt))
-            ts = TStub(t=self.tp, fy=fy_p, m=m, e=e_arm, leff_cp=le["cp"],
-                       leff_nc=le["nc"], Ft_Rd=self.bolt.Ft_Rd(), n_bolts=2,
-                       gamma_M0=self.gamma_M0)
-            res = ts.resistance()
-            r.F_Rd = res["F_T_Rd"]
-            r.versagen = res["versagen"]
+            if fy_p is not None:
+                ts = TStub(t=self.tp, fy=fy_p, m=m, e=e_arm, leff_cp=le["cp"],
+                           leff_nc=le["nc"], Ft_Rd=self.bolt.Ft_Rd(), n_bolts=2,
+                           gamma_M0=self.gamma_M0)
+                res = ts.resistance()
+                r.F_Rd = res["F_T_Rd"]
+                r.versagen = res["versagen"]
             if st:
                 t_fc = float(st.get("tf", 0.0))
                 t_wc = float(st.get("tw", 0.0))
@@ -481,11 +493,12 @@ class EndPlate(JointTemplate):
         Mc_Rd = (sec.Wpl_y or 0.0) * self.fy / self.gamma_M0
         F_c = Mc_Rd / max(h - tf, 1e-6) if Mc_Rd > 0 else \
             (sec.b or 0.15) * tf * self.fy / self.gamma_M0
-        g.M_j_Rd, anteile = R.momententragfaehigkeit(g.reihen, F_c)
-        if sum(F for _h, F, _v in anteile) < sum(r.F_Rd for r in g.reihen) - 1e-6:
-            g.hinweise.append(
-                f"Die Druckzone begrenzt: F_c,Rd = {F_c / 1e3:.0f} kN, die Zugkräfte "
-                "werden von der untersten Reihe her abgebaut (6.2.7.2(6)).")
+        if fy_p is not None:
+            g.M_j_Rd, anteile = R.momententragfaehigkeit(g.reihen, F_c)
+            if sum(F for _h, F, _v in anteile) < sum(r.F_Rd for r in g.reihen) - 1e-6:
+                g.hinweise.append(
+                    f"Die Druckzone begrenzt: F_c,Rd = {F_c / 1e3:.0f} kN, die Zugkräfte "
+                    "werden von der untersten Reihe her abgebaut (6.2.7.2(6)).")
 
         # Klassifizierung
         if I_b is None or L_b is None:
@@ -497,6 +510,14 @@ class EndPlate(JointTemplate):
                     L_b = 0.0
         g.klasse, g.klasse_grund, g.grenze_starr, g.grenze_gelenkig = R.klassifizieren(
             g.S_j_ini, R.E_STAHL, I_b or 0.0, L_b or 0.0, rahmen)
+        if fy_p is None:
+            # ohne f_y der Kopfplatte: Steifigkeit und Klasse ja, Tragfaehigkeit und
+            # Rotationsvermoegen nicht (kein angenommener Wert, Befund C4)
+            g.M_j_Rd, g.tragklasse, g.phi_Cd, g.rotation_ok = 0.0, "", 0.0, False
+            g.rotation_grund = f"nicht bestimmt – f_y der Kopfplatte fehlt: {ohne_fy}"
+            g.hinweise.append(f"M_j,Rd und Rotationsvermögen nicht bestimmt: {ohne_fy} Die Steifigkeit "
+                              "S_j hängt nicht an f_y und sitzt in der Rechnung.")
+            return g
         g.tragklasse = R.tragfaehigkeitsklasse(g.M_j_Rd, Mc_Rd)
 
         # Rotationsvermoegen

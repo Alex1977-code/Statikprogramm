@@ -1733,7 +1733,9 @@ class JointDialog(QtWidgets.QDialog):
              + (f", Rechenwert S_j = {g.S_j / 1e6:.1f} MNm/rad (eta = {zl.zahl_text(g.eta, punkt=True)})"
                 if math.isfinite(g.S_j) and g.S_j > 0 else ""),
              f"Klasse:  {g.beschreibung()}",
-             f"M_j,Rd = {g.M_j_Rd / 1e3:.1f} kNm ({g.tragklasse or '-'})",
+             # ohne f_y der Kopfplatte (ueber 80 mm, 14.11.2026) nicht bestimmt: „–“, nicht 0,0 kNm
+             f"M_j,Rd = {g.M_j_Rd / 1e3:.1f} kNm ({g.tragklasse or '-'})" if g.M_j_Rd
+             else "M_j,Rd = – (nicht bestimmt, siehe Hinweis)",
              f"Rotationsvermögen: {'ausreichend' if g.rotation_ok else 'nicht nachgewiesen'}"
              f" - {g.rotation_grund}"]
         for h in g.hinweise:
