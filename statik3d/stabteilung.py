@@ -1,4 +1,5 @@
-"""Interne Stabteilung fuer Theorie II. und III. Ordnung (seit 12.11.2026).
+"""Interne Stabteilung fuer Theorie II. und III. Ordnung (seit 12.11.2026),
+alpha_cr „auto“ und das Knicken (solver.solve_buckling, seit 14.11.2026).
 
 Ein Biegestab in einem einzigen Element rechnet am verformten System mit
 einer kubischen Biegelinie zwischen seinen Enden. Sind die Enden gehalten,
@@ -161,11 +162,24 @@ def relevant(model, i: int, N: float) -> bool:
 
 def kraefte_theorie1(model, system, factors: dict) -> dict:
     """{Balken: Normalkraft} nach Theorie I. Ordnung fuer ``factors`` -
-    wie theorie2.normalkraefte_kg, samt Anfangsdehnung."""
+    wie theorie2.normalkraefte_kg, samt Anfangsdehnung.
+
+    Mit einer Vorspannkraft (Sollkraft) der Grundzustand mit Spannschritt und
+    Verriegelung, N wie im Ergebnis - so wie alpha_cr „auto“ und das Knicken
+    K_G bauen (Runde k7, 14.11.2026). Bis dahin stand das verriegelte Zugband
+    hier mit N = 0, blieb ungeteilt, und alpha_cr „auto“ lag am Zugband-
+    Kurzstab (70 kN) bei 801,6 statt 603,4 (Band von Hand in 10 Teilen)."""
     from .solver import case_loads, case_prescribed, anfangsnormalkraefte
     from .theorie2 import normalkraefte_kg
+    from .vorspannkraft import sollkraefte
     aktiv = getattr(system, "aktiv", None)
     F, feq, _q, _temp = case_loads(model, factors, aktiv)
+    if sollkraefte(model, factors):
+        from .solver import _solve_loads, _anfang_im_ergebnis
+        r_s = _solve_loads(model, system, factors, "Grundzustand", "combination")
+        u = np.zeros(model.ndof)
+        u[:model.nn * 6] = np.asarray(r_s.u, float).ravel()[:model.nn * 6]
+        return normalkraefte_kg(model, u, aktiv, _anfang_im_ergebnis(model, r_s, factors, aktiv), feq)
     u = system.solve(F, us=case_prescribed(model, factors))
     # mit den Stablasten: ein Laengsgelenk traegt die Last in Stabrichtung
     # (Befund B1 vom 14.11.2026 - bis dahin N = 0, der Stab blieb ungeteilt)
@@ -281,8 +295,9 @@ def laengslast_hinweise(model, factors: dict, aktiv=None, faktor: int = 1, kraef
 
     Massgebend ist die **tatsaechlich gerechnete** Elementzahl: die Elemente
     des Modells samt interner Stabteilung (``teilen``: Theorie II./III.
-    Ordnung und alpha_cr mit ``faktor`` wie :func:`teilzahlen`; beim Knicken
-    ``teilen=False``). Mit der Vorgabe 10 teilt die Rechnung ohnehin - dort
+    Ordnung, alpha_cr und Knicken mit ``faktor`` wie :func:`teilzahlen`;
+    ``teilen=False`` zaehlt nur die Elemente des Modells). Mit der Vorgabe 10
+    teilt die Rechnung ohnehin - dort
     kein Hinweis. ``kraefte`` {Element: N nach Theorie I. Ordnung} oder eine
     Funktion, die sie liefert (nur gerufen, wenn ein Stab in Frage kommt): ein
     Stab, dessen Elemente mit Last in Stabrichtung alle unter :data:`RELEVANZ`
@@ -472,15 +487,23 @@ def teilen(model, aktiv=None, zahlen: dict = None):
     return m2, abb, aktiv2
 
 
-def fein_system(model, system, factors: dict):
+def fein_system(model, system, factors: dict, kraefte=None):
     """(feines Modell, sein StaticSystem, Abbildung) zu ``model``, ``system``
     und den Lastfaktoren ``factors`` (sie bestimmen ueber die Normalkraefte
     nach Theorie I. Ordnung, welche Balken geteilt werden) - je System und
-    Teilung gemerkt - oder None ohne zu teilendes Element."""
+    Teilung gemerkt - oder None ohne zu teilendes Element. ``kraefte``
+    {Element: N} oder eine Funktion, die sie liefert (nur gerufen, wenn ein
+    Balken in Frage kommt): die Normalkraefte liegen schon vor (das Knicken
+    nimmt die seines Grundzustands - keine zweite Loesung, mit PyAMG waere es
+    eine volle Iteration); ohne sie :func:`kraefte_theorie1`."""
     aktiv = getattr(system, "aktiv", None)
     if not teilzahlen(model, aktiv):
         return None
-    zahlen = teilzahlen(model, aktiv, kraefte=kraefte_theorie1(model, system, factors))
+    if callable(kraefte):
+        kraefte = kraefte()
+    if kraefte is None:
+        kraefte = kraefte_theorie1(model, system, factors)
+    zahlen = teilzahlen(model, aktiv, kraefte=kraefte)
     if not zahlen:
         return None
     schluessel = (len(model.nodes), len(model.elements), tuple(sorted(zahlen.items())),

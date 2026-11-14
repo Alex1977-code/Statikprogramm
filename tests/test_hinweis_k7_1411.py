@@ -243,21 +243,24 @@ def test_1_alpha_cr():
 
 def test_1_knicken():
     from statik3d import solver
-    for n, soll in ((1, True), (4, False)):
-        m, _i, _e = _saeule(n, 10, theorie="I")
+    # Seit Runde k7 (Agent „knick“) teilt auch das Knicken intern: ein Element
+    # mit der Vorgabe 10 rechnet in 10 Teilen - kein Hinweis; mit Stabteilung 1
+    # bleibt es ein Element - Hinweis
+    for n, teilung, soll in ((1, 1, True), (1, 10, False), (4, 10, False)):
+        m, _i, _e = _saeule(n, teilung, theorie="I")
         zeilen = []
         with contextlib.redirect_stdout(io.StringIO()):
             r = solver.solve_buckling(m, 2, lambda t, *a: zeilen.append(str(t)), case=m.active_case)
         h = _hinweise(zeilen)
         if soll:
-            check("(1) Knicken, ein Element (keine interne Teilung beim Knicken): Hinweis im Protokoll, "
+            check("(1) Knicken, ein Element, Stabteilung 1 (keine interne Teilung): Hinweis im Protokoll, "
                   "in res.info und in der Zusammenfassung",
                   any("Stab S1 (Element 0)" in x and "in 1 Element geteilt" in x for x in h)
                   and r.info.get("laengslast_teilung") and "trägt Last in Stabrichtung" in r.summary(),
                   " | ".join(h)[:200])
         else:
-            check("(1) Knicken, vier Elemente: kein Hinweis", not h and not r.info.get("laengslast_teilung"),
-                  " | ".join(h)[:200])
+            check(f"(1) Knicken, {'vier Elemente' if n == 4 else 'ein Element intern in 10 geteilt'}: kein Hinweis",
+                  not h and not r.info.get("laengslast_teilung"), " | ".join(h)[:200])
 
 
 # --------------------------------------------------------------------------

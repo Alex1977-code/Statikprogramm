@@ -319,6 +319,16 @@ def _zugband(art, soll, F0=70e3, teile=16, arm=0.3):
     return m, band
 
 
+def _kurzstab_ungeteilt(arm):
+    """Das Kurzstabmodell mit Sollkraft ohne interne Stabteilung (netz.stabteilung = 1):
+    seit Runde k7 (Agent „knick“) teilen Knicken und alpha_cr „auto“ das gezogene
+    Band (603,44 statt 801,59), den Stab mit Versatz nicht - verglichen wird hier
+    die Formulierung des Arms, also beide ungeteilt."""
+    m = _zugband("kurzstab", True, arm=arm)[0]
+    m.netz.stabteilung = 1
+    return m
+
+
 def _knick(m):
     from statik3d import solver
     rb = solver.solve_buckling(m, nmodes=4, case="V")
@@ -332,7 +342,7 @@ def test_knicken_sollkraft():
     from statik3d import solver
     for arm, vorher in ((0.3, "88,34"), (-0.3, "1038,76")):
         a = _knick(_zugband("versatz", True, arm=arm)[0])
-        b = _knick(_zugband("kurzstab", True, arm=arm)[0])
+        b = _knick(_kurzstab_ungeteilt(arm))
         m1, band = _zugband("versatz", False, arm=arm)
         r1 = solver.solve_static(m1, case="V")
         be = np.asarray(r1.beam_end[band], float)
@@ -357,7 +367,7 @@ def test_alpha_cr_auto_sollkraft():
         f = np.asarray(rb.buckling_factors, float)
         lb = float(f[f > 0].min())
         info = theorie2.check_theorie2(m, None, ["K1"]).kombinationen["K1"]
-        b = _knick(_zugband("kurzstab", True, arm=arm)[0])
+        b = _knick(_kurzstab_ungeteilt(arm))
         check(f"A3 α_cr im Modus „auto“ mit Sollkraft 70 kN, Arm {arm:+.1f} m: wie Knicken der Kombination "
               "und wie Kurzstab (1e-3); vorher ∞",
               math.isfinite(info.alpha_cr) and abs(info.alpha_cr / lb - 1) < 1e-3 and abs(info.alpha_cr / b - 1) < 1e-3,

@@ -1612,7 +1612,12 @@ class Results:
     modes: np.ndarray = None                # (nmodes, nn, 6)
     freqs: np.ndarray = None                # [Hz]
     buckling_factors: np.ndarray = None
-    buckling_modes: np.ndarray = None
+    buckling_modes: np.ndarray = None       # (nmodes, nn, 6) an den Knoten des Modells
+    #: Knicken am intern geteilten Modell (Runde k7, 14.11.2026): die Eigenform
+    #: der Zwischenknoten (nmodes, Zwischenknoten, 6) in der Reihenfolge von
+    #: stabteilung.teilen zu info["stabteilung"]; sonst None. Lesen nur mit
+    #: getattr (aeltere Ergebnisse haben das Feld nicht).
+    buckling_modes_teile: np.ndarray = None
     singular: list = field(default_factory=list)   # freie Bewegungen (singular.py)
     info: dict = field(default_factory=dict)
     model: Model = None
@@ -11695,7 +11700,11 @@ def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = Non
 
     Die Faktoren sind die ``nmodes`` betragskleinsten, beiderlei Vorzeichens
     (negativ: Knicken bei umgekehrter Last), aufsteigend nach Betrag - siehe
-    :func:`_verzweigung`, warum mit K als Metrik geloest wird."""
+    :func:`_verzweigung`, warum mit K als Metrik geloest wird.
+
+    Balken werden intern geteilt wie nach Theorie II. Ordnung
+    (statik3d.stabteilung, seit 14.11.2026); ``buckling_modes`` steht an den
+    Knoten des Modells, die Zwischenknoten in ``buckling_modes_teile``."""
     t0 = time.time()
     schalenlage = _schalen_ausrichten(model, progress)
     if combination:
@@ -11710,12 +11719,44 @@ def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = Non
         static = solve_combination(model, model.combinations[combination], None, system, workers)
     else:
         static = solve_static(model, progress, case, workers, system)
-    u = static.u.ravel()
     if combination:
         c_ = model.combinations[combination]
         faktoren = {} if c_.ist_umhuellende else dict(c_.factors)
     else:
         faktoren = _lastfall_faktoren(model, case)[0]
+    # Am intern geteilten Modell wie Theorie II. Ordnung und alpha_cr „auto“
+    # (statik3d.stabteilung; Runde k7, 14.11.2026, vom Anwender freigegeben):
+    # ein Stab aus einem Element knickte bis dahin mit seiner kubischen
+    # Biegelinie - Saeule mit Last in Stabrichtung 16,80 statt 5,81 (alpha_cr
+    # „auto“), die beidseits eingespannte Stuetze gar nicht. Welche Balken
+    # geteilt werden, entscheiden die Normalkraefte des Grundzustands, wie sie
+    # in K_G stehen (keine zweite Loesung); gerechnet wird dann am feinen
+    # Modell, Ergebnis und Eigenformen gehen auf die Knoten und Elemente des
+    # Modells zurueck (stabteilung.zurueck).
+    from .stabteilung import fein_system, laengslast_hinweise
+    gemerkt: dict = {}
+
+    def kraefte():
+        if "N" not in gemerkt:
+            from .theorie2 import normalkraefte_kg
+            gemerkt["N"] = normalkraefte_kg(
+                model, static.u.ravel(), system.aktiv,
+                _anfang_im_ergebnis(model, static, faktoren, system.aktiv),
+                case_loads(model, faktoren, system.aktiv)[1])
+        return gemerkt["N"]
+
+    fein = fein_system(model, system, faktoren, kraefte=kraefte) if faktoren else None
+    # Stab mit Last in Stabrichtung in weniger als vier gerechneten Elementen
+    # (samt interner Teilung, wie Theorie II. Ordnung): Hinweis (Runde k7)
+    ll_hinweise = laengslast_hinweise(model, faktoren, system.aktiv, 1, kraefte=kraefte)
+    if fein is not None:
+        modell_grob = model
+        model, system, abb = fein
+        if combination:
+            static = solve_combination(model, model.combinations[combination], None, system, workers)
+        else:
+            static = solve_static(model, progress, case, workers, system)
+    u = static.u.ravel()
     # Stablasten fuer den Armanteil der Staebe mit Versatz (14.11.2026), davon
     # der symmetrische Teil wie in theorie2.alpha_cr; ohne Versatz nicht gebraucht
     feq = None
@@ -11731,11 +11772,6 @@ def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = Non
     Kg = asm.geometric_stiffness(model, u, system.aktiv,
                                  n_anfang=_anfang_im_ergebnis(model, static, faktoren, system.aktiv),
                                  feq=feq, symmetrisch=True, endkraefte=end)
-    # Stab mit Last in Stabrichtung in weniger als vier Elementen: Hinweis
-    # (Runde k7, 14.11.2026). Das Knicken teilt nicht intern - es zaehlen die
-    # Elemente des Modells.
-    from .stabteilung import laengslast_hinweise
-    ll_hinweise = laengslast_hinweise(model, faktoren, system.aktiv, teilen=False)
     for t in ll_hinweise:
         _melde(progress, "Hinweis: " + t)
     fi = system.fi
@@ -11756,10 +11792,21 @@ def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = Non
         if mx > 0:
             modes[i] /= mx
 
-    res = static
+    formen = modes[:, :model.nn * NDOF].reshape(k, model.nn, NDOF)
+    if fein is not None:
+        # zurueck auf das Modell: nur seine Knoten und Elemente. Die Eigenform
+        # der Zwischenknoten (Knoten nn.. des feinen Modells, in der Reihenfolge
+        # von stabteilung.teilen) steht getrennt in buckling_modes_teile - fuer
+        # die modale Energie der Knicklaengen (ec3.knicklaengen)
+        from .stabteilung import zurueck
+        res = zurueck(modell_grob, static, abb)
+        res.buckling_modes = formen[:, :abb.nn].copy()
+        res.buckling_modes_teile = formen[:, abb.nn:].copy()
+    else:
+        res = static
+        res.buckling_modes = formen
     res.kind = "buckling"
     res.buckling_factors = vals_
-    res.buckling_modes = modes[:, :model.nn * NDOF].reshape(k, model.nn, NDOF)
     res.info["time"] = time.time() - t0
     if ll_hinweise:
         res.info["laengslast_teilung"] = list(ll_hinweise)

@@ -2037,6 +2037,26 @@ def _alpha_cr_im_ergebnis(an, _an2=None) -> str:
             if namen else "")
 
 
+def _knicken_im_ergebnis(model, an) -> str:
+    """Ein Knickergebnis (solve_buckling) in der Analyse, das Ergebnis selbst,
+    Knicklaengen aus der Knickfigur, oder alpha_cr in einem Modell mit
+    Vorspannkraft (Sollkraft) - Merkmal knicken_stabteilung."""
+    namen = [str(n) for n, r in _ergebnis_paare(an) if getattr(r, "kind", "") == "buckling"]
+    try:
+        from .vorspannkraft import sollkraefte
+        soll = any(sollkraefte(model, {n: 1.0}) for n in (getattr(model, "load_cases", None) or {}))
+    except Exception:                                   # noqa: BLE001 - lieber betroffen
+        soll = True
+    if soll:
+        namen += _alpha_cr_namen(an)
+    if getattr(an, "kind", "") == "buckling":
+        namen.append(str(getattr(an, "name", "") or "Knicken"))
+    if getattr(an, "knicklaengen", None) is not None:
+        namen.append("Knicklängen aus der Knickfigur")
+    namen = sorted(set(namen))
+    return ("Knicken: " + ", ".join(namen[:6]) + (" …" if len(namen) > 6 else "")) if namen else ""
+
+
 def _theorie3_im_ergebnis(model, an) -> str:
     th3 = getattr(an, "theorie3", None)
     namen = [str(n) for n in (getattr(th3, "kombinationen", None) or {})]
@@ -3546,10 +3566,29 @@ MERKMALE: list = [
         modellmerkmal="Laschenstoß mit Flanschlasche über 80 mm aus einem Werkstoff ohne Dickentabelle, fest "
                       "„gelenkig“ modelliert oder mit Drehfeder von Hand",
         betrifft=_laschenstoss_ueber_80),
+    # Runde k7 (14.11.2026, vom Anwender freigegeben): das Knicken (solve_buckling)
+    # teilte Staebe nicht intern wie Theorie II. Ordnung und alpha_cr „auto“ - ein
+    # Stab aus einem Element knickte mit seiner kubischen Biegelinie (Saeule 5 m
+    # mit Last in Stabrichtung unten: 16,80 statt 5,81; gelenkige Stuetze +21,6 %,
+    # beidseits eingespannt „Keine Normalkräfte“; Zugband-Kurzstab 4 369,9 statt
+    # 3 289,6). Seither am intern geteilten Modell. Dazu alpha_cr „auto“ mit
+    # Vorspannkraft (Sollkraft): die Teilung las dort N = 0 im verriegelten
+    # Zugband (801,6 statt 603,4). Fehlerkorrektur
+    Merkmal(
+        name="knicken_stabteilung", titel="Interne Stabteilung beim Knicken",
+        texte={"alt": "Knicken in den Elementen des Modells (ein Element je Stab: kubische Biegelinie); "
+                      "α_cr mit Vorspannkraft: gespannter Stab ungeteilt",
+               "neu": "Knicken am intern geteilten Modell wie Theorie II. Ordnung und α_cr; Teilung mit der "
+                      "Normalkraft der Vorspannkraft"},
+        wechsel=(Wechsel(stand=61, datum="14.11.2026", commit="fix/k7-knick", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Knicken (oder α_cr mit Vorspannkraft) mit Stäben, die die interne Stabteilung teilen "
+                      "würde (weniger Elemente je Stab als die Stabteilung)",
+        betrifft=_balken_teilbar, im_ergebnis=_knicken_im_ergebnis),
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 59
+VERFAHRENSSTAND = 61
 
 
 def merkmal(name: str) -> Optional[Merkmal]:
