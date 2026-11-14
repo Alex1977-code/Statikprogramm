@@ -57,8 +57,10 @@ def int_qp(h):
 
 
 L, T, H = 10.0, 0.3, 3.0
-#: Wand 10 x 3 m: Zone A je 0,3 h = 0,9 m an beiden Enden, B dazwischen (x_ende <= 5 < 2 h)
-HAND_WAND = (2.3 * 2 * 0.9 + 1.4 * (L - 2 * 0.9)) * int_qp(H)
+#: Wand 10 x 3 m: Zone A je 0,3 h = 0,9 m an beiden Enden, B dazwischen (x_ende <= 5 < 2 h);
+#: c_p,net nach Tab. 7.9 fuer l/h = 3,33 geradlinig zwischen den Zeilen 3 und 5: A 2,4,
+#: B 1,4667 (bis zum 14.11.2026 hier wie im Programm die Zeile l/h ≤ 3 mit 2,3/1,4, Befund B4)
+HAND_WAND = ((2.3 + 0.6 / 6.0) * 2 * 0.9 + (1.4 + 0.4 / 6.0) * (L - 2 * 0.9)) * int_qp(H)
 #: Tafel: c_f = 1,8 ueber die ganze Flaeche
 HAND_TAFEL = 1.8 * L * int_qp(H)
 S30 = (math.cos(math.radians(30)), math.sin(math.radians(30)), 0.0)

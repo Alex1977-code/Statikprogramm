@@ -319,6 +319,69 @@ def _wind_freie_wand_ganz_im_ergebnis(model, _analyse) -> str:
     return alte_wandlasten_text(model)
 
 
+def _wind_nordsee(model) -> bool:
+    """Windlasten des Generators im Mischprofil „Inseln der Nordsee“ (Befund C2)."""
+    from .wind import nordsee_lasten
+    return bool(nordsee_lasten(model))
+
+
+def _wind_nordsee_staebe(model) -> bool:
+    """Stablasten eines Nordsee-Winds mit dem Profil vor dem 14.11.2026 (wind.alte_nordsee_stablasten)."""
+    from .wind import alte_nordsee_stablasten
+    return bool(alte_nordsee_stablasten(model))
+
+
+def _wind_nordsee_staebe_im_ergebnis(model, _analyse) -> str:
+    from .wind import alte_nordsee_stablasten_text
+    return alte_nordsee_stablasten_text(model)
+
+
+def _wind_freie_wand_lh(model) -> bool:
+    """Windlast des Generators (Normverfahren) auf einer freien Wand mit l/h > 3:
+    dort waehlt c_p,net seit dem 14.11.2026 eine andere Zeile der Tab. 7.9
+    (Befund B4). l ist die Laenge entlang der Wand, bei aelteren Lasten die
+    Breite quer zum Wind - wie das Verteilen sie nimmt."""
+    for lc in (getattr(model, "load_cases", None) or {}).values():
+        for gl in getattr(lc, "geometrielasten", None) or []:
+            v = getattr(gl, "verlauf", None) or {}
+            g = v.get("geometrie") or {}
+            if v.get("art") != "wind" or v.get("rolle") != "freie_wand" or v.get("feld") or not g:
+                continue
+            try:
+                if float(g.get("l", g.get("b", 0.0))) > 3.0 * float(g["h"]) + 1e-9:
+                    return True
+            except (KeyError, TypeError, ValueError):
+                return True
+    return False
+
+
+def _wind_freie_wand_zonen(model) -> bool:
+    """Windlasten des Generators auf freien Waenden bzw. Tafeln mit Zonen quer
+    zum Wind oder auf einer Schale parallel zum Wind (wind.alte_wandzonen, Befund B5)."""
+    from .wind import alte_wandzonen
+    return bool(alte_wandzonen(model))
+
+
+def _wind_freie_wand_zonen_im_ergebnis(model, _analyse) -> str:
+    from .wind import alte_wandzonen_text
+    return alte_wandzonen_text(model)
+
+
+def _wasserdruck_geneigt(model) -> bool:
+    """Stroemungsnumerischer Wasserdruck mit Druckfeld auf einer geneigten oder
+    waagerechten Schale (wasserdruck.alte_geneigte_felder, Befund B6)."""
+    from .wasserdruck import alte_geneigte_felder
+    try:
+        return bool(alte_geneigte_felder(model))
+    except Exception:                       # noqa: BLE001 - nicht pruefbar: möglicherweise betroffen
+        return True
+
+
+def _wasserdruck_geneigt_im_ergebnis(model, _analyse) -> str:
+    from .wasserdruck import alte_geneigte_felder_text
+    return alte_geneigte_felder_text(model)
+
+
 def _wind_abmessungen_im_ergebnis(model, _analyse) -> str:
     from .wind import alte_abmessungen_text
     return alte_abmessungen_text(model)
@@ -2770,10 +2833,82 @@ MERKMALE: list = [
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Verformungsnachweis der Art „Stab“ mit φx, φy oder φz",
         betrifft=_gzg_stab_verdrehung),
+    # Befund C2 der Einheiten-Agenten (14.11.2026): Mischprofil „Inseln der Nordsee“
+    # (DIN EN 1991-1-4/NA, Tab. NA.B.2) mit 1,1 und 1,5 als Faktoren auf q_b statt q_p
+    # in kN/m², dazu eine dritte Stufe ueber 50 m (z = 10 m: 0,844 statt 1,500 kN/m²).
+    # Flaechenlasten rechnen q_p beim Verteilen neu - ein Neurechnen genuegt.
+    # Fehlerkorrektur
+    Merkmal(
+        name="wind_nordsee", titel="Wind im Mischprofil „Inseln der Nordsee“",
+        texte={"alt": "q_p = 1,1·q_b bzw. 1,5·q_b·(z/10)^0,19, über 50 m 1,7·q_b·(z/10)^0,16",
+               "neu": "q_p = 1,1 kN/m² bis 2 m, darüber 1,5·(z/10)^0,19 kN/m² bis 300 m (Tab. NA.B.2)"},
+        wechsel=(Wechsel(stand=49, datum="14.11.2026", commit="fix/k5-b-windwasser", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Windlast des Generators im Mischprofil „Inseln der Nordsee“",
+        betrifft=_wind_nordsee),
+    # Befund C2, zweiter Teil: die Stablasten eines Winds stehen mit ihrem Wert im
+    # Modell - erst das Neuerzeugen setzt das richtige q_p an. Fehlerkorrektur am Modell
+    Merkmal(
+        name="wind_nordsee_staebe", titel="Stablasten aus Wind im Mischprofil „Inseln der Nordsee“",
+        texte={"alt": "Stablasten mit q_p = 1,1·q_b bzw. 1,5·q_b·(z/10)^0,19",
+               "neu": "Stablasten mit q_p = 1,1 kN/m² bzw. 1,5·(z/10)^0,19 kN/m²"},
+        wechsel=(Wechsel(stand=49, datum="14.11.2026", commit="fix/k5-b-windwasser", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Stablast eines Winds im Mischprofil „Inseln der Nordsee“, erzeugt mit dem Profil "
+                      "vor dem 14.11.2026",
+        betrifft=_wind_nordsee_staebe, import_korrektur=True, im_ergebnis=_wind_nordsee_staebe_im_ergebnis,
+        modellgrund="Windlasten mit einem älteren Programmstand erzeugt",
+        vorschlag="Lasten › Wind: den Wind öffnen und die Windlasten neu erzeugen"),
+    # Befund B4 (14.11.2026): Tab. 7.9 nur mit der Zeile l/h ≤ 3 (Wand 30 x 3 m: ΣF_x
+    # 68,547 statt 94,443 kN; 15 x 3 m: 37,716 statt 47,581 kN). c_p,net entsteht beim
+    # Verteilen - ein Neurechnen genuegt. Fehlerkorrektur
+    Merkmal(
+        name="wind_freie_wand_lh", titel="Windlast auf freistehende Wand mit l/h über 3",
+        texte={"alt": "c_p,net immer aus der Zeile l/h ≤ 3 der Tab. 7.9",
+               "neu": "c_p,net nach l/h geradlinig zwischen den Zeilen l/h ≤ 3, = 5 und ≥ 10 der Tab. 7.9"},
+        wechsel=(Wechsel(stand=49, datum="14.11.2026", commit="fix/k5-b-windwasser", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Windlast des Generators auf einer freien Wand mit l/h > 3",
+        betrifft=_wind_freie_wand_lh),
+    # Befund B5 (14.11.2026): die Zonen A-D einer freien Wand zaehlten quer zur
+    # Windrichtung statt entlang der Wand, eine Schale parallel zum Wind trug die volle
+    # Nettolast mit einem Vorzeichen nach dem Umlauf (Wand 10 x 3 m: ±39,395 kN). Die
+    # Abmessungen stehen im Verlauf der Last - erst das Neuerzeugen behebt es. Fehlerkorrektur
+    Merkmal(
+        name="wind_freie_wand_zonen", titel="Windlast auf schräg oder parallel angeströmte freie Wand "
+                                           "bzw. Anzeigetafel",
+        texte={"alt": "Zonen A–D quer zur Windrichtung gemessen; Schale parallel zum Wind mit Nettolast",
+               "neu": "Zonen A–D entlang der Wand ab ihren freien Enden (Bild 7.19); Schale parallel zum "
+                      "Wind (|n·d| < 0,1) ohne Nettolast"},
+        wechsel=(Wechsel(stand=49, datum="14.11.2026", commit="fix/k5-b-windwasser", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Windlast des Generators auf einer schräg angeströmten freien Wand mit Zonen quer "
+                      "zum Wind, oder auf einer Schale parallel zum Wind",
+        betrifft=_wind_freie_wand_zonen, import_korrektur=True,
+        im_ergebnis=_wind_freie_wand_zonen_im_ergebnis,
+        modellgrund="Windlasten mit einem älteren Programmstand erzeugt",
+        vorschlag="Lasten › Wind: den Wind öffnen und die Windlasten neu erzeugen"),
+    # Befund B6 (14.11.2026): der stroemungsnumerische Wasserdruck trug an geneigten
+    # Schalen kaum oder verkehrte Last (80°: ΣF_y −2,6 statt 61,3 kN), an waagerechten
+    # keine. Entscheidung des Anwenders: dort analytisch. Das Druckfeld steht im Modell -
+    # erst das Neuerzeugen behebt es. Fehlerkorrektur
+    Merkmal(
+        name="wasserdruck_geneigt", titel="Strömungsnumerischer Wasserdruck an geneigten oder waagerechten "
+                                         "Schalen",
+        texte={"alt": "Druckfeld der Potentialströmung auch an geneigten und waagerechten Schalen",
+               "neu": "an Schalen über 0,1° gegen die Lotrechte geneigt oder waagerecht analytisch "
+                      "(Näherungsformeln), lotrechte weiter numerisch"},
+        wechsel=(Wechsel(stand=49, datum="14.11.2026", commit="fix/k5-b-windwasser", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Strömungsnumerischer Wasserdruck des Generators mit Druckfeld auf einer geneigten "
+                      "oder waagerechten Schale",
+        betrifft=_wasserdruck_geneigt, import_korrektur=True, im_ergebnis=_wasserdruck_geneigt_im_ergebnis,
+        modellgrund="Druckfeld mit einem älteren Programmstand erzeugt",
+        vorschlag="Lasten › Wasserdruck: den Wasserdruck neu erzeugen"),
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 47
+VERFAHRENSSTAND = 49
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

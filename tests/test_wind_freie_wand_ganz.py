@@ -64,11 +64,18 @@ def int_qp(h):
 
 H = 3.0
 IQ = int_qp(H)
+#: c_p,net nach Tab. 7.9 (φ = 1, ohne Eckausbildung) je l/h - bis zum 14.11.2026 rechnete
+#: diese Pruefung (wie das Programm) fuer jede Wand mit der Zeile l/h ≤ 3 (2,3/1,4/1,2/1,2;
+#: Befund B4, Stand 49): Wand 30 m (l/h = 10) Zeile ≥ 10, Wand 10 m (l/h = 3,33) zwischen
+#: den Zeilen 3 und 5 geradlinig: A 2,3 + 0,6/6 = 2,4, B 1,4 + 0,4/6 = 1,4667
+CP_30 = (3.4, 2.1, 1.7, 1.2)
+CP_10 = (2.3 + 0.6 / 6.0, 1.4 + 0.4 / 6.0)
 #: Wand 30 x 3 m, Zonen ab beiden Enden: A 0,9 m, B bis 6 m, C bis 12 m, D die mittleren 6 m
-HAND_30 = (2.3 * 2 * 0.9 + 1.4 * 2 * (6.0 - 0.9) + 1.2 * 2 * (12.0 - 6.0) + 1.2 * (30.0 - 24.0)) * IQ
+HAND_30 = (CP_30[0] * 2 * 0.9 + CP_30[1] * 2 * (6.0 - 0.9) + CP_30[2] * 2 * (12.0 - 6.0)
+           + CP_30[3] * (30.0 - 24.0)) * IQ
 #: Wand 10 x 3 m: A 0,9 m je Ende, B dazwischen
-HAND_10 = (2.3 * 2 * 0.9 + 1.4 * (10.0 - 2 * 0.9)) * IQ
-#: Stirnflaeche 0,3 x 3 m als freie Wand, ganz in Zone A
+HAND_10 = (CP_10[0] * 2 * 0.9 + CP_10[1] * (10.0 - 2 * 0.9)) * IQ
+#: Stirnflaeche 0,3 x 3 m als freie Wand (l/h = 0,1: Zeile ≤ 3), ganz in Zone A
 HAND_STIRN = 2.3 * 0.3 * IQ
 
 
