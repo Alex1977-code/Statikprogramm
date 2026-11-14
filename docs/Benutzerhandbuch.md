@@ -4526,6 +4526,14 @@ Schalter *Lasten beschriften* und schreibt die Einheit an jede Zahl (siehe
 
 ### Einheiten und Genauigkeiten
 
+Seit dem 14.11.2026 folgen auch die Tabellen „Lasten“ und „Umhüllende“ der
+Einstellung und nennen die Einheit; Lastbeschriftungen zeigen bei
+0 Nachkommastellen die volle Zahl. Das Register Lager hat ein eigenes Feld
+„Drehfedersteifigkeit [Moment/rad]“ für die Drehfreiheitsgrade (bisher galt die
+Wegfeder auch für die Drehungen und hing von der Längeneinheit ab). In der
+Browser-Oberfläche wird das Antriebsmoment einer Stellung in kNm eingegeben und
+der Knoten ab 0 gezählt.
+
 *Ansicht → Einheiten* (auch *Extras → Einheiten und Genauigkeiten…*) öffnet
 rechts die Maske, in der Einheit und Nachkommastellen für die Anzeige gewählt
 werden. Gerechnet wird immer in SI (N, m, Pa); die Einstellung betrifft nur,
@@ -7453,6 +7461,14 @@ Was die Strömungsrechnung annimmt und nicht kann, steht im Theoriehandbuch
 (Abschnitt 2.1a): reibungsfreie Potentialströmung in einer Schnittebene,
 Wasserspiegel als feste Deckel, keine Wechselsprünge, keine Wellen.
 
+**Strömungsnumerik an geneigten Flächen** (seit 14.11.2026, Stand 49). Beim
+strömungsnumerischen Wasserdruck rechnet das Programm Schalen, die mehr als 0,1°
+gegen die Lotrechte geneigt oder waagerecht sind, analytisch und sagt das im
+Protokoll; die Strömung im lotrechten Schnitt kann bei ihnen Ober- und
+Unterwasser nicht trennen (80° geneigt bisher −2,6 statt 61,3 kN, waagerecht 0
+statt 78,5 kN). Lotrechte Flächen und Volumenränder bleiben numerisch. Ein so
+erzeugter alter Wasserdruck ist neu zu erzeugen; das Programm meldet es.
+
 ### Lastgenerierer Wind (DIN EN 1991-1-4)
 
 *Lasten → Generierer → Wind* (oder Modellbaum → Einwirkungen → Lastgenerierer
@@ -7552,6 +7568,22 @@ Nettolast; das Protokoll nennt sie (bisher 1,18 kN quer zum Wind an einer
 Stirnfläche). Der Ladehinweis „Abmessungen“ vergleicht an freien Wänden und
 Tafeln nur noch Höhe und Wandenden. Verfahrensstand 43; geprüft in
 `tests/test_wind_freie_wand_ganz.py`.
+
+**Nordsee, Tabelle 7.9 nach l/h, Zonen entlang der Wand** (seit 14.11.2026,
+Stand 49). Das Mischprofil „Inseln der Nordsee“ rechnet nach Tab. NA.B.2 mit
+festen Werten: q_p = 1,1 kN/m² bis 2 m, darüber 1,5·(z/10)^0,19 kN/m² bis
+300 m; bisher wurden die Zahlen als Faktoren auf q_b gelesen (0,84 statt
+1,50 kN/m² bei 10 m). c_p,net der freistehenden Wand folgt Tab. 7.9 nach l/h der
+ganzen Wand, geradlinig zwischen den Zeilen l/h ≤ 3, 5 und ≥ 10 (φ = 1 ohne
+Eckausbildung); bisher galt immer die Zeile l/h ≤ 3 (Wand 30 × 3 m: 94,4 statt
+68,5 kN). Die Zonen A bis D zählen entlang der Wand ab ihren freien Enden, auch
+bei schrägem Wind, und eine Wand – auch als Schale – nahezu parallel zum Wind
+bekommt keine Nettolast. Berichtigung: Die in den Absätzen zu Stand 39 und 43
+genannten Summen (Wand 10 × 3 m 26,8 kN, 30 × 3 m 68,5 kN) rechneten noch mit der
+Zeile l/h ≤ 3; richtig sind 28,0 kN (l/h = 3,3) und 94,4 kN. Für Nordsee-Wind
+und l/h > 3 genügt ein Neurechnen; bei schräg oder parallel angeströmten Wänden
+und Nordsee-Stablasten sind die Windlasten neu zu erzeugen. Geprüft in
+`tests/test_wind_wasser_b_1411.py`.
 
 **Numerischer Windkanal.** Mit *Verfahren → numerischer Windkanal* wird die
 Strömung um die gewählten Flächen und Stäbe in einem Schnitt gerechnet
@@ -8759,6 +8791,18 @@ sich das im Ergebnis zeigt, ist nicht gemessen. Im Ergebnis steht dann
 `start_vermerk` „Auftrag ohne Warmstart".
 
 ## 7 Import
+
+**Korrekturen vom 14.11.2026 an Import und Export (Stand 46).** Der RFEM-6-Import
+bildet das Eigengewicht aus der Wichte γ wie RFEM (Erdbeschleunigung der Datei,
+meist 10 m/s²; bisher ρ·9,81, Stahl 1,9 % zu leicht); die Masse für Eigenformen
+bleibt ρ. Ältere so übernommene Modelle melden „neu importieren“. Der
+Importdialog übernimmt bei IFC und SDNF die Längeneinheit aus der Datei, IFC
+beachtet Flächen- und Trägheitsmomenteinheiten, Nastran und Abaqus in mm werden
+ganz als mm-N-MPa-t umgerechnet, unbekannte Einheiten in Kopfzeilen werden
+gewarnt, Tabellen im RFEM-Aufbau kommen beim eigenen Import vollständig
+zurück, SAF-Dateien von Statik3D vor dem 12.11.2026 lesen Federn wieder richtig
+und SAF ohne Spalte „Category“ bringt Nutzlastkategorien und Erdbeben zurück.
+Geprüft in `tests/test_import_einheiten.py`.
 
 **Z-Achse nach unten (RFEM).** RFEM legt seine Modelle mit der Z-Achse nach
 unten an. Das Programm rechnet mit z nach oben. Im Importdialog für .rf6,
@@ -11573,6 +11617,17 @@ Versatz die Stabenden aufeinander, meldet die Modellprüfung einen FEHLER, kehrt
 er den Stab um, eine WARNUNG. Verfahrensstand 41; geprüft gegen Handrechnung und
 Kurzstabmodell in `tests/test_versatz_achsen_lotrecht.py`.
 
+**Längsgelenk mit Last in Stabrichtung, Gelenk am Wölbbalken** (seit
+14.11.2026, Stand 48). Trägt ein Stab mit Längsgelenk eine Stablast in
+Stabrichtung, rechnen geometrische Steifigkeit, α_cr, Knicken, Stabteilung und
+Feldanteil mit dem Mittel der Stabend-Normalkräfte statt mit 0 (Stütze 5 m,
+6 MN Längslast: α_cr 2,60 statt „∞“, nach Theorie III. Ordnung 5,06 statt
+3,13 kNm). Gelenke und Federgelenke an Balken mit Wölbkrafttorsion wirken in
+Steifigkeit, Last, Stabendkräften und K_G (bisher 16,9 statt 0 kNm am Gelenk).
+Theorie III. Ordnung rechnet keine Wölbkrafttorsion; ein Lastfall nach
+Theorie III. Ordnung mit Wölbbalken wird in der Modellprüfung mit Klartext
+abgewiesen. Geprüft in `tests/test_laengsgelenk_woelb_1411.py`.
+
 **Wölbkrafttorsion und Längsgelenk nach Theorie II. Ordnung** (seit
 12.11.2026). Balken mit Wölbkrafttorsion rechnen ihre Stabendkräfte jetzt mit
 der geometrischen Steifigkeit, (k + k_G)·u, und führen den Anteil N·w im Feld
@@ -11803,6 +11858,27 @@ Nicht gemeldet wird das lineare Ergebnis bisher insbesondere hier:
 In beiden Fällen nennt das Kapitel zur Theorie II. bzw. III. Ordnung den
 Grund. Wer GZG-Kombinationen oder Ergebniskombinationen nach II. oder
 III. Ordnung rechnet, sieht dort nach, ob jede Zeile gerechnet wurde.
+
+**Korrekturen vom 14.11.2026 an Nachweisen und Werkstoff (Stand 45).**
+Die Umfangsbeulspannung von Zylinderschalen folgt EN 1993-1-6, D.1.3.1, mit
+eigenen Längenbereichen und C_θ je Randbedingung (langer Zylinder r 1 m, t 10 mm:
+5,78 statt 39 222 N/mm²); die Formeln für kurze Zylinder (Tab. D.4) bitte am
+Normtext gegenlesen. Ebene Beulfelder drehen die Spannungen auch bei
+gegenläufiger Elementnormale richtig in die Feldachsen. Anschlussbleche
+rechnen mit f_y und f_u ihrer eigenen Dicke, Nähte mit dem kleineren f_u der
+verbundenen Teile. Über 80 mm Erzeugnisdicke gibt Tab. 3.1 keinen Wert: ein
+Werkstoff, der nur die Stahlsorte kennt, meldet „f_y nach Erzeugnisnorm
+eintragen“ und wird nicht nachgewiesen, bis im Werkstoffdialog die Zeile „f_y/f_u
+über 80 mm (Erzeugnisnorm)“ ausgefüllt ist; die Stahlsorte und β_w bleiben dabei
+erhalten, RFEM-Dickentabellen unverändert. Schrauben und Gewindestangen auf Zug
+über 30 mm bekommen in der Ermüdung k_s = (30/d)^0,25 (Kerbfall-Vorschläge neu
+erzeugen). I_w der U-Profile wird auf der Profilmittellinie gerechnet (UPN 200:
+10 499 statt 12 277 cm⁶); beim Öffnen fragt das Programm, ob gespeicherte
+U-Profile mit dem alten Formelwert umgestellt werden sollen. Ein
+Verformungsnachweis der Art „Stab“ führt nur Verschiebungen; eine Verdrehung
+wird als Knotennachweis angelegt (Stand 47). Geprüft in
+`tests/test_befunde_b_1411.py`, `tests/test_vorschlaege_1411.py` und
+`tests/test_anzeige_e1_e7.py`.
 
 ### Verformungsnachweise (GZG)
 
@@ -13037,6 +13113,24 @@ neu ausführen“); beim Öffnen meldet „Schalennetz nicht verbunden“ auch g
 Netze an doppelten Randlinien. Kann das Programm eine dieser Prüfungen nicht
 ausführen, gilt das Ergebnis als möglicherweise betroffen. Geprüft in
 `tests/test_status_modellkorrektur.py`.
+
+**Eine Fläche einzeln neu vernetzen, Polylinien** (seit 14.11.2026, Stand 50).
+Wird eine einzelne Schalenfläche neu vernetzt (mit Auswahl, beim Übernehmen in
+der Flächenmaske oder „Nur das Objekt ohne Netz“), vernetzt das Programm die
+schon vernetzten Nachbarflächen mit, die mit ihr eine Linie teilen; das
+Protokoll nennt sie. Bisher trennte das neue Netz die Fläche still vom Nachbarn
+(397,7 statt 149,6 mm). Eine gerade Linie und eine Polylinie mit Zwischenknoten
+auf derselben Strecke sind im Netz verbunden (407,0 statt 150,0 mm). Vor jeder
+Rechnung warnt die Eingabeprüfung bei einem getrennten Schalennetz; ein
+gespeichertes getrenntes Netz trägt den Status „Netz neu erzeugen“. Geprüft in
+`tests/test_netz_teilvernetzen.py`.
+
+**Flächenlager nach Neuvernetzen prüfen** (seit 14.11.2026). Öffnen Sie eine
+Ergebnisdatei von vor dem 12.11.2026, bekommt jedes Flächenlager mit
+Elementliste auf vernetzten Flächen den Hinweis „Flächenlager nach Neuvernetzen
+prüfen“, weil damals das Neuvernetzen die Elementnummern solcher Lager nicht
+nachzog. Der Hinweis steht im Status, bis Sie ihn mit Rechtsklick auf das
+Flächenlager › „Flächenlager geprüft“ bestätigen.
 
 ### Abnahme des Netzes vor dem Rechnen
 
