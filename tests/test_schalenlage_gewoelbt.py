@@ -371,6 +371,161 @@ def test_a7_mantel270():
               f"Lastvektor {_v(F)}, Hand {hand:.1f}")
         check(f"A7 seite {seite:+d}: Elementsumme p A n = Lastvektor (zweiter Weg)",
               abs(abs(S2[0]) - hand) < 0.01 * hand and float(S2[0] * F[0]) > 0, f"{_v(S2)}")
+        # Befund A'11 (14.11.2026, Beleg b8): die Pruefung bestand auch mit
+        # vertauschter Wasserseite. Die Flaechennormale zeigt hier radial nach
+        # aussen; seite +1 = Wasser aussen, Druck nach innen: F_x = −43 354,5 N,
+        # seite −1 (innen): +43 354,5 N
+        check(f"A7 seite {seite:+d}: Vorzeichen F_x = {-seite * hand:+.1f} N (Wasser "
+              f"{'aussen' if seite > 0 else 'innen'}), Lastvektor und Elementsumme",
+              abs(F[0] + seite * hand) < 0.005 * hand and abs(S2[0] + seite * hand) < 0.01 * hand,
+              f"Lastvektor F_x {F[0]:.1f}, Elementsumme {S2[0]:.1f}")
+
+
+# --------------------------------------------------------------------------
+# A'7 (14.11.2026, zweite Runde): gewoelbte Flaeche aus EINEM Netzstueck mit
+# Loch oder Kerbe - der Randumlauf entscheidet, nicht Stokes gegen den Rand
+# --------------------------------------------------------------------------
+def _radial_aussen_summe(m, f, s):
+    """Zweiter Weg: Summe der Vektorflaechen der Elemente, je Element radial
+    nach aussen gerichtet (unabhaengig von der Knotenfolge), mal s p."""
+    geo = np.zeros(3)
+    for e in f.elemente:
+        X = m.nodes[[int(k) for k in m.elements[e].nodes[:4]]]
+        v = 0.5 * np.cross(X[2] - X[0], X[3] - X[1])
+        c = X.mean(axis=0)
+        c[2] = 0.0
+        geo += v if float(v @ c) > 0 else -v
+    return s * P * geo
+
+
+def _sehne_z(t0, t1):
+    c = np.asarray(_pkt(math.radians(t1), 0.0)) - np.asarray(_pkt(math.radians(t0), 0.0))
+    return np.cross(c, [0.0, 0.0, 1.0])
+
+
+def test_a7s_loch_kerbe():
+    """Zylinder 300 Grad, 15 x 6 shell4, p = 10 kN/m² senkrecht; ein grosses
+    Loch bzw. eine Kerbe von unten, das Netz bleibt EIN Stueck. Vor der
+    Behebung drehte Stokes (Vektorflaeche gegen die Normale des Randes, die das
+    Loch nicht kennt) alle Elemente um: Lastsumme (−370,5; 4 844,5; 0) statt
+    (370,5; −4 844,5; 0) N. Hand: s p (L Sehne(0-300) − h Sehne(Loch)) x e_z."""
+    from statik3d import schalenlage as SL, solver
+    for art, auswahl, soll in (
+            ("Loch 90-210 Grad, z 1/3..5/3", lambda th, z: 90 < th < 210 and 1 / 3 < z < 5 / 3, (370.5, -4844.5)),
+            ("Kerbe von unten 90-210 Grad, z 0..5/3", lambda th, z: 90 < th < 210 and z < 5 / 3,
+             (4793.3, -8555.7))):
+        m, f = zylinder(nu=15, nv=6)
+        m.add_geometrielast("F", P)
+        m.lasten_verteilen()
+        F0 = _lastsumme(m)
+        s = 1.0 if float(F0 @ _hand_luecke([(0, 300)], 1.0)) > 0 else -1.0
+        lage0 = {_radial(m, e) for e in f.elemente}
+        weg = [e for e in f.elemente if auswahl(_winkel(m, e), _mitte(m, e)[2])]
+        kn = sorted({int(k) for e in weg for k in m.elements[e].nodes})
+        th = [math.degrees(math.atan2(m.nodes[k, 1], m.nodes[k, 0])) % 360.0 for k in kn]
+        zz = [float(m.nodes[k, 2]) for k in kn]
+        m.elemente_loeschen(weg)
+        idx = sorted(int(e) for e in f.elemente)
+        C, ne = SL._ecken(m, idx)
+        n_st = len(SL._stuecke(m, idx, SL._vektorflaechen(m, idx, C, ne), C, ne)[1])
+        m.lasten_verteilen()
+        with _still():
+            meld = SL.schalen_ausrichten(m)
+        lage1 = {_radial(m, e) for e in f.elemente}
+        check(f"A'7 {art}: ein Netzstueck, kein Element umgedreht, Lage wie vorher",
+              n_st == 1 and not meld and lage1 == lage0, f"Stuecke {n_st}, Lage {lage0} -> {lage1}, {meld}")
+        F1 = _lastsumme(m)
+        hand = s * P * (L * _sehne_z(0, 300) - (max(zz) - min(zz)) * _sehne_z(min(th), max(th)))
+        geo = _radial_aussen_summe(m, f, s)
+        check(f"A'7 {art}: Lastsumme = Hand ({soll[0]:.1f}; {soll[1]:.1f}; 0) N = Elementflaechen radial "
+              "(zweiter Weg)",
+              np.allclose(F1, hand, atol=0.5) and np.allclose(geo, hand, atol=0.5)
+              and np.allclose(hand[:2], soll, atol=0.1),
+              f"Programm {_v(F1)}, Hand {_v(hand)}, Weg 2 {_v(geo)}")
+        for k in range(m.nn):
+            if abs(m.nodes[k, 2] - L) < 1e-9:
+                m.fix(k, [0, 1, 2, 3, 4, 5])
+        with _still():
+            r = solver.solve_static(m)
+        S = np.asarray(r.reactions, float)[:, :3].sum(axis=0)
+        check(f"A'7 {art}: Rechnung ΣR = −Hand", np.allclose(S, -hand, atol=0.5), f"ΣR {_v(S)} N")
+
+
+def test_a7s_ganz_unveraendert():
+    """Die Regel bleibt fuer die ganze Flaeche: nichts umgedreht; ganz
+    gespiegelt (ein Stueck) kommt sie zum Randumlauf zurueck."""
+    from statik3d import schalenlage as SL
+    m, f = zylinder(nu=15, nv=6)
+    lage0 = {e: _radial(m, e) for e in f.elemente}
+    with _still():
+        meld0 = SL.schalen_ausrichten(m)
+    for e in f.elemente:
+        el = m.elements[e]
+        el.nodes = [el.nodes[j] for j in SPIEGEL[el.typ]]
+    with _still():
+        meld1 = SL.schalen_ausrichten(m)
+    check("A'7 ganze Flaeche: nichts umgedreht; ganz gespiegelt: alle zurueck",
+          not meld0 and len(meld1) == 1 and all(_radial(m, e) == lage0[e] for e in f.elemente),
+          f"{meld1[0][:60] if meld1 else '-'}")
+
+
+def test_a7s_wasser_loch():
+    """Wasserdruck analytisch am Mantel 270 Grad (R = 1 m, H = 3 m, OW 2,5 m)
+    mit grossem Loch −60..60 Grad, z 0,2..2,8 m; das Netz bleibt ein Stueck.
+    Vor der Behebung drueckte das Wasser von der falschen Seite (Radialsumme
+    +90 902,9 statt −92 709,8 N bei seite +1). Hand radial: −seite ρg ∫(h−z)dz
+    mal Bogen (ganz minus Loch); zweiter Weg: Summe p A n der Elementlasten."""
+    from statik3d import schalenlage as SL, solver
+    from statik3d.wasserdruck import Wasserdruck, lasten_erzeugen
+    rho_g, hw = 1000.0 * 9.81, 2.5
+    phi = math.radians(135.0)
+
+    def integral(z0, z1):
+        z1 = min(z1, hw)
+        return 0.0 if z1 <= z0 else rho_g * ((hw * z1 - z1 ** 2 / 2) - (hw * z0 - z0 ** 2 / 2))
+    for seite in (1, -1):
+        m = _mantel270()
+        f = m.flaechen["M"]
+
+        def wk(e):
+            X = _mitte(m, e)
+            return math.degrees(math.atan2(X[1], X[0]))
+        weg = [e for e in f.elemente if abs(wk(e)) < 60.0 and 0.2 < _mitte(m, e)[2] < 2.8]
+        kn = {int(k) for e in weg for k in m.elements[e].nodes}
+        th = [math.degrees(math.atan2(m.nodes[k, 1], m.nodes[k, 0])) for k in kn]
+        zz = [float(m.nodes[k, 2]) for k in kn]
+        m.elemente_loeschen(weg)
+        idx = sorted(int(e) for e in f.elemente)
+        C, ne = SL._ecken(m, idx)
+        n_st = len(SL._stuecke(m, idx, SL._vektorflaechen(m, idx, C, ne), C, ne)[1])
+        wd = Wasserdruck("W1", flaechen=["M"], h_ow=hw, verfahren="analytisch", seite=seite, absenkung=False)
+        with _still():
+            kw = lasten_erzeugen(m, wd)
+        F = np.asarray(solver.case_loads(m, {wd.lastfall: 1.0}, None)[0], float).reshape(-1, 6)[:, :3].sum(axis=0)
+        radial, aus, ein = 0.0, 0, 0
+        S2 = np.zeros(3)
+        for fl in m.load_cases[wd.lastfall].face_loads:
+            el = m.elements[int(fl.elem)]
+            X = m.nodes[[int(k) for k in el.nodes[:4]]]
+            v = 0.5 * np.cross(X[2] - X[0], X[3] - X[1]) if el.typ in ("shell4", "shell8") \
+                else 0.5 * np.cross(X[1] - X[0], X[2] - X[0])
+            k = float(fl.p) * v
+            S2 += k
+            c = X.mean(axis=0)
+            er = np.array([c[0], c[1], 0.0]) / math.hypot(c[0], c[1])
+            radial += float(k @ er)
+            aus += float(k @ er) > 0
+            ein += float(k @ er) < 0
+        hand = -seite * (integral(0.0, hw) * 2 * phi - integral(min(zz), max(zz)) * math.radians(max(th) - min(th)))
+        check(f"A'7 Wasser am Mantel 270 Grad mit Loch, seite {seite:+d}: ein Stueck, kein Umdrehen, alle "
+              f"Elementlasten {'nach innen' if seite > 0 else 'nach aussen'}",
+              n_st == 1 and not kw.get("schalenlage") and (ein if seite > 0 else aus) > 0
+              and (aus if seite > 0 else ein) == 0,
+              f"Stuecke {n_st}, nach aussen {aus}, nach innen {ein}, {kw.get('schalenlage')}")
+        check(f"A'7 Wasser mit Loch, seite {seite:+d}: Radialsumme = Hand {hand:.1f} N (3 %, Sehnen statt "
+              "Bogen), Lastvektor = Summe p A n",
+              abs(radial - hand) < 0.03 * abs(hand) and np.allclose(F, S2, atol=1.0),
+              f"Programm {radial:.1f} N, Lastvektor {_v(F)}, p A n {_v(S2)}")
 
 
 # --------------------------------------------------------------------------
@@ -482,10 +637,89 @@ def test_verfahrenstabelle():
           mk.betrifft(m_st) and mk.betrifft(m_w))
 
 
+def _halbkreis_stellung(bogen=True):
+    """Ebene Halbkreisplatte R = 1 m (Durchmesser auf der x-Achse, Rand aus
+    zwei Boegen bzw. einem Vieleck) in einer Situation mit Stellung 180° um x
+    (Beleg b6 vom 14.11.2026)."""
+    from statik3d.model import Model, Material, ShellProp, Situation
+    from statik3d import mesher
+    from statik3d.bridges.positions import Stellung
+    m = Model("Halbkreis")
+    m.add_material(Material("S", E=210e9, nu=0.3, rho=0.0, fy=355e6, alpha=1.2e-5))
+    m.add_shell_prop(ShellProp("t", 0.02))
+    a = m.add_node(-1.0, 0.0, 0.0)
+    b = m.add_node(1.0, 0.0, 0.0)
+    c = m.add_node(0.0, 1.0, 0.0)
+    m.add_line("D", [a, b])
+    r2 = math.sqrt(0.5)
+    if bogen:
+        m.add_line("B1", [b, c], "arc", punkte=[(1.0, 0.0, 0.0), (r2, r2, 0.0), (0.0, 1.0, 0.0)])
+        m.add_line("B2", [c, a], "arc", punkte=[(0.0, 1.0, 0.0), (-r2, r2, 0.0), (-1.0, 0.0, 0.0)])
+    else:
+        m.add_line("B1", [b, c])
+        m.add_line("B2", [c, a])
+    f = m.add_flaeche("H", ["D", "B1", "B2"], material="S", dicke="t")
+    m.netz.ziellaenge = 0.2
+    with _still():
+        mesher.modell_vernetzen(m, log=[], workers=1)
+    m.add_load_case("LF2")
+    m.add_geometrielast("H", P, case="LF2")
+    m.lasten_verteilen()
+    gruppen = sorted({m.elements[e].group for e in f.elemente})
+    m.stellungen.append(Stellung("S180", 180.0, "", dreh_achse=(1.0, 0.0, 0.0), dreh_punkt=(0.0, 0.0, 0.0),
+                                 dreh_winkel=180.0, dreh_gruppen=gruppen, faelle=["LF2"]))
+    m.situationen["U"] = Situation("U", "S180", [], "")
+    m.load_cases["LF2"].situation = "U"
+    return m
+
+
+def test_a10s_eben_bogen_stellung():
+    """Befund A'10 (14.11.2026): eine bewegte Stellung mit einer EBENEN
+    Schalenflaeche mit krummen Randlinien war bis Stand 41 genauso betroffen
+    (die Stuetzpunkte der Boegen drehten nicht mit), das Merkmal
+    schalenlage_gewoelbt zaehlte nur gewoelbte Flaechen."""
+    from statik3d import rechenverfahren as rv
+    mk = rv.merkmal("schalenlage_gewoelbt")
+    check("A'10 ebene Halbkreisplatte mit Boegen in bewegter Stellung: schalenlage_gewoelbt betroffen; "
+          "dieselbe Platte mit geraden Randlinien nicht",
+          mk is not None and mk.betrifft(_halbkreis_stellung(True)) and not mk.betrifft(_halbkreis_stellung(False)))
+
+
+def test_verfahrenstabelle_55():
+    """Merkmal Stand 55: gewoelbte einteilige Flaeche, bei der Randumlauf und
+    Stokes verschieden entscheiden (Loch, Kerbe)."""
+    from statik3d import rechenverfahren as rv
+    from statik3d.model import Model
+    mk = rv.merkmal("schalenlage_gewoelbt_einteilig")
+    ok = mk is not None and any(w.stand == 55 for w in mk.wechsel) and rv.VERFAHRENSSTAND >= 55
+    check("Merkmal schalenlage_gewoelbt_einteilig mit Stand 55, VERFAHRENSSTAND >= 55", ok,
+          f"Stand {rv.VERFAHRENSSTAND}")
+    if mk is None:
+        check("… betroffen: Zylinder mit Loch ja, ganzer Zylinder nein, Zylinder mit Streifen (Stand 42) nein, "
+              "leer nein", False, "kein Merkmal")
+        return
+    m_loch, f = zylinder(nu=15, nv=6)
+    m_loch.elemente_loeschen([e for e in f.elemente if 90 < _winkel(m_loch, e) < 210
+                              and 1 / 3 < _mitte(m_loch, e)[2] < 5 / 3])
+    m_ganz, _f = zylinder(nu=15, nv=6)
+    m_str, f2 = zylinder()
+    m_str.elemente_loeschen([e for e in f2.elemente if 40.0 < _winkel(m_str, e) < 60.0])
+    from statik3d import schalenlage as SL
+    vorher = mk.betrifft(m_loch)
+    with _still():
+        SL.schalen_ausrichten(m_loch)
+    check("… betroffen: Zylinder mit Loch ja (vor und nach dem Ausrichten), ganzer Zylinder nein, Zylinder "
+          "mit Streifen (Stand 42) nein, leer nein",
+          vorher and mk.betrifft(m_loch) and not mk.betrifft(m_ganz) and not mk.betrifft(m_str)
+          and not mk.betrifft(Model("leer")))
+
+
 def main():
     for t in (test_a5_luecke, test_a5_stueck_gespiegelt, test_a5_insel, test_a5_eben_unveraendert,
-              test_a6_stellung, test_a6_stellungsreihe, test_a7_mantel270, test_a10_fuge_schale_schale,
-              test_a10_meldung_generatoren, test_verfahrenstabelle):
+              test_a6_stellung, test_a6_stellungsreihe, test_a7_mantel270, test_a7s_loch_kerbe,
+              test_a7s_ganz_unveraendert, test_a7s_wasser_loch, test_a10_fuge_schale_schale,
+              test_a10_meldung_generatoren, test_verfahrenstabelle, test_a10s_eben_bogen_stellung,
+              test_verfahrenstabelle_55):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

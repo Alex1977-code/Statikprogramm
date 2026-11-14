@@ -382,6 +382,41 @@ def _wasserdruck_geneigt_im_ergebnis(model, _analyse) -> str:
     return alte_geneigte_felder_text(model)
 
 
+def _wasserdruck_volumen_geneigt(model) -> bool:
+    """Stroemungsnumerischer Wasserdruck mit Druckfeld auf einem geneigten oder
+    waagerechten Volumenrand (wasserdruck.alte_geneigte_volumenfelder, Befund A'8)."""
+    from .wasserdruck import alte_geneigte_volumenfelder
+    try:
+        return bool(alte_geneigte_volumenfelder(model))
+    except Exception:                       # noqa: BLE001 - nicht pruefbar: möglicherweise betroffen
+        return True
+
+
+def _wasserdruck_volumen_geneigt_im_ergebnis(model, _analyse) -> str:
+    from .wasserdruck import alte_geneigte_volumenfelder_text
+    return alte_geneigte_volumenfelder_text(model)
+
+
+def _wasserdruck_richtung_schraeg(model) -> bool:
+    """Wasserdruck mit globaler Richtung auf Elementseiten, die nicht senkrecht
+    zu ihr stehen (wasserdruck.richtung_schraeg, Entscheidung vom 14.11.2026)."""
+    from .wasserdruck import richtung_schraeg
+    try:
+        return bool(richtung_schraeg(model))
+    except Exception:                       # noqa: BLE001 - nicht pruefbar: möglicherweise betroffen
+        return True
+
+
+def _schalen_gewoelbt_einteilig(model) -> bool:
+    """Gewoelbte Schalenflaeche aus einem Netzstueck, an der Randumlauf und
+    Stokes verschieden entscheiden (schalenlage.gewoelbt_einteilig_anders, Befund A'7)."""
+    from .schalenlage import gewoelbt_einteilig_anders
+    try:
+        return bool(gewoelbt_einteilig_anders(model))
+    except Exception:                       # noqa: BLE001 - nicht pruefbar: nicht betroffen
+        return False
+
+
 def _wind_abmessungen_im_ergebnis(model, _analyse) -> str:
     from .wind import alte_abmessungen_text
     return alte_abmessungen_text(model)
@@ -1547,26 +1582,53 @@ def _schalen_uneinheitlich(model) -> bool:
         return True
 
 
+def _schale_mit_krummem_rand(model) -> bool:
+    """Eine Flaeche mit Schalenelementen, deren Rand (oder Oeffnung) eine
+    krumme Linie hat - eine Linie mit Geometrie (Bogen, Kreis, Spline ...)."""
+    from . import elemente as _EL
+    linien = getattr(model, "lines", None) or {}
+    n_el = len(getattr(model, "elements", None) or [])
+    for f in (getattr(model, "flaechen", None) or {}).values():
+        if not any(0 <= int(e) < n_el and model.elements[int(e)].typ in _EL.SCHALEN_TYPEN
+                   for e in (f.elemente or [])):
+            continue
+        for name in list(f.linien or []) + [x for loch in (getattr(f, "oeffnungen", None) or []) for x in loch]:
+            ln = linien.get(name)
+            if ln is not None and (bool(getattr(ln, "geometrie", None))
+                                   or str(getattr(ln, "typ", "polyline") or "polyline") != "polyline"):
+                return True
+    return False
+
+
 def _schalen_gewoelbt_betroffen(model) -> bool:
     """Gewoelbte Schalenflaechen, deren Lage oder Wasserdruck bis Stand 41
     falsch bestimmt sein konnte (Befunde A5-A7 vom 14.11.2026, Stand 42): eine
     gewoelbte Flaeche aus mehreren Netzstuecken; eine Situation mit bewegter
     Stellung oder eine bewegte Stellung im Modell, wenn es gewoelbte Flaechen
     gibt; ein Wasserdruck des Generators ohne globale Richtung auf einer
-    gewoelbten Schalenflaeche."""
+    gewoelbten Schalenflaeche.
+
+    Die bewegte Stellung zaehlt auch bei einer **ebenen** Schalenflaeche mit
+    krummen Randlinien (Bogen, Kreis, Spline - eine Linie mit Geometrie):
+    auch deren Stuetzpunkte drehten bis Stand 41 nicht mit (Befund A'10 vom
+    14.11.2026, Halbkreisplatte in einer Stellung 180° um x)."""
     from .schalenlage import gewoelbte_flaechen
     try:
         gew = gewoelbte_flaechen(model)
     except Exception:                    # noqa: BLE001 - nicht pruefbar: nicht betroffen
         return False
-    if not gew:
-        return False
     if any(n > 1 for n in gew.values()):
         return True
+    bewegt = False
     for st in getattr(model, "stellungen", None) or []:
         v = [float(x) for x in (getattr(st, "verschiebung", None) or ())]
         if float(getattr(st, "dreh_winkel", 0.0) or 0.0) or any(abs(x) > 0.0 for x in v):
-            return True
+            bewegt = True
+            break
+    if bewegt and (gew or _schale_mit_krummem_rand(model)):
+        return True
+    if not gew:
+        return False
     koerper = getattr(model, "koerper", None) or {}
     for lc in (getattr(model, "load_cases", None) or {}).values():
         for gl in getattr(lc, "geometrielasten", None) or []:
@@ -3245,10 +3307,59 @@ MERKMALE: list = [
         modellmerkmal="Werkstoff, dessen Stufe über 80 mm zu einer anderen Stahlsorte eingetragen wurde",
         betrifft=lambda model: bool(_werkstoffe_sorte_ueber_80(model)),
         im_modell=_werkstoffe_sorte_ueber_80_im_modell),
+    # Befund A'7 der zweiten Runde (14.11.2026): eine gewoelbte Flaeche aus EINEM
+    # Netzstueck mit Loch, Kerbe oder Oeffnung wurde nach Stokes gegen die Normale
+    # des Randes gerichtet - der Rand des Netzes ist dort nicht der Rand der
+    # Flaeche, alle Elemente kehrten sich um (Zylinder 300° mit Loch: Lastsumme
+    # (−370,5; 4 844,5; 0) statt (370,5; −4 844,5; 0) N; Wasser von der falschen
+    # Seite). Seitdem entscheidet auch dort der Randumlauf. Ausgerichtet wird vor
+    # jeder Rechnung - neu rechnen genuegt. Fehlerkorrektur
+    Merkmal(
+        name="schalenlage_gewoelbt_einteilig", titel="Lage der Schalen an gewölbten Flächen mit Loch oder Kerbe",
+        texte={"alt": "ein Netzstück nach Stokes gegen die Normale des Flächenrandes gerichtet",
+               "neu": "auch ein einzelnes Netzstück nach dem Randumlauf an seinem Ort"},
+        wechsel=(Wechsel(stand=55, datum="14.11.2026", commit="fix/k6-schale", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="gewölbte Schalenfläche aus einem Netzstück mit Loch, Kerbe oder Öffnung (Randumlauf und "
+                      "Flächennormale widersprechen sich)",
+        betrifft=_schalen_gewoelbt_einteilig),
+    # Befund A'8 (14.11.2026): der stroemungsnumerische Wasserdruck rechnete
+    # geneigte Volumenraender weiter im Gitter - die Treppe des Gitters liess 6 bis
+    # 9 % der Last fehlen (45°, Gitter 40: −7,1 %), das Protokoll nannte
+    # „Resultierende 0,0 kN“. Seitdem dort analytisch wie an Schalen (Stand 49).
+    # Das Druckfeld steht im Modell - erst das Neuerzeugen behebt es. Fehlerkorrektur
+    Merkmal(
+        name="wasserdruck_volumen_geneigt", titel="Strömungsnumerischer Wasserdruck an geneigten Volumenrändern",
+        texte={"alt": "Druckfeld der Potentialströmung auch an geneigten und waagerechten Volumenrändern",
+               "neu": "an Volumenrändern über 0,1° gegen die Lotrechte geneigt oder waagerecht analytisch "
+                      "(Näherungsformeln), lotrechte weiter numerisch"},
+        wechsel=(Wechsel(stand=55, datum="14.11.2026", commit="fix/k6-schale", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Strömungsnumerischer Wasserdruck des Generators mit Druckfeld auf einem geneigten "
+                      "oder waagerechten Volumenrand",
+        betrifft=_wasserdruck_volumen_geneigt, import_korrektur=True,
+        im_ergebnis=_wasserdruck_volumen_geneigt_im_ergebnis,
+        modellgrund="Druckfeld mit einem älteren Programmstand erzeugt",
+        vorschlag="Lasten › Wasserdruck: den Wasserdruck neu erzeugen"),
+    # Entscheidung des Anwenders vom 14.11.2026 (Frage 1 der Befundliste, zweite
+    # Runde): Wasserdruck mit globaler Richtung wirkt auf die Projektion der
+    # Flaeche senkrecht zu dieser Richtung, wie im Stahlwasserbau - nicht auf die
+    # wahre Flaeche (45°-Wand 2 m breit, 2,5 m Wasser: ½γh²b = 61,31 statt
+    # 86,64 kN). Die Elementlasten entstehen beim Oeffnen und Verteilen aus der
+    # Objektlast neu - neu rechnen genuegt. Fehlerkorrektur
+    Merkmal(
+        name="wasserdruck_richtung_projektion", titel="Wasserdruck mit globaler Richtung an geneigten Flächen",
+        texte={"alt": "Druck auf die wahre Fläche, Kraft p·A in Richtung d",
+               "neu": "Druck auf die Projektion senkrecht zu d, Kraft p·A·|n·d| in Richtung d"},
+        wechsel=(Wechsel(stand=55, datum="14.11.2026", commit="fix/k6-schale", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Wasserdruck des Generators mit globaler Lastrichtung auf einer Fläche, die nicht "
+                      "senkrecht zu dieser Richtung steht",
+        betrifft=_wasserdruck_richtung_schraeg),
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 53
+VERFAHRENSSTAND = 55
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

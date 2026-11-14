@@ -33,6 +33,12 @@ Darum werden die Schalenelemente ausgerichtet:
   durchlaufen jede Kante, die auf dem Rand der Flaeche liegt, in dessen
   Umlaufrichtung. Ein Stueck ohne Kante auf dem Rand (eine Insel) folgt den
   naechsten schon gerichteten Elementen. Ebene Flaechen bleiben bei n · N.
+  Seit Stand 55 (Befund A'7) gilt das auch fuer eine gewoelbte Flaeche aus
+  EINEM Stueck: mit einem Loch, einer Kerbe oder einer Oeffnung ist der Rand
+  des Netzes nicht der Rand der Flaeche, und Stokes gegen die Normale des
+  Randes drehte alle Elemente um (Zylinder 300° mit Loch: Lastsumme
+  (−370,5; 4 844,5; 0) statt (370,5; −4 844,5; 0) N). Stokes entscheidet nur
+  noch, wenn kein Stueck den Rand beruehrt.
 * Das **Modell einer Stellung** behaelt die Lage des Grundmodells
   (:func:`lage_festhalten`, Befund A6): es wird vor dem Bewegen
   ausgerichtet und danach nicht mehr.
@@ -365,7 +371,11 @@ def _stuecke_gewoelbt(model, f, idx: list, C, ne, V: np.ndarray, stueck: np.ndar
     n_st = len(bezug)
     stimmen = _stimmen_rand(model, f, idx, stueck, s, n_st)
     lang = float(np.abs(stimmen).max()) if n_st else 0.0
-    if lang <= 0.0:
+    # Stimmen, die sich bis auf Rundungsreste aufheben (eine Naht, die zweimal
+    # im Rand steht), sind keine Stimmen: Massstab ist die Groesse des Netzes
+    Xn = np.asarray(model.nodes, float)[np.unique(C[C >= 0])] if n_st else np.zeros((0, 3))
+    gross = float(np.linalg.norm(np.ptp(Xn, axis=0))) if len(Xn) else 0.0
+    if lang <= 0.0 or lang <= 1e-9 * gross:
         return None
     lage = np.zeros(n_st)
     fest = np.abs(stimmen) > 1e-9 * lang
@@ -392,21 +402,28 @@ def _stuecke_gewoelbt(model, f, idx: list, C, ne, V: np.ndarray, stueck: np.ndar
     return lage
 
 
-def _plan_flaeche(model, f, idx: list) -> list:
+def _lagen_flaeche(model, f, idx: list) -> tuple:
+    """(stueck, s, widerspruch, Lage je Stueck aus dem Randumlauf oder None,
+    Lage je Stueck nach Stokes bzw. n · N oder None) der Schalenelemente
+    ``idx`` einer Flaeche."""
     C, ne = _ecken(model, idx)
     V = _vektorflaechen(model, idx, C, ne)
     stueck, bezug, s, wid = _stuecke(model, idx, V, C, ne)
     N = flaechennormale(model, f)
-    lage = None
-    if len(bezug) > 1 and (N is None or not _eben(V, N)):
-        # gewoelbte Flaeche aus mehreren Stuecken (Befund A5, 14.11.2026): die
-        # Normale des ganzen Randes sagt am Ort eines Stuecks nichts - am
-        # Zylinder 300° mit geloeschtem Streifen kehrte sich das Stueck
-        # 0-40° um. Es entscheidet der Umlauf des Randes am Stueck.
-        lage = _stuecke_gewoelbt(model, f, idx, C, ne, V, stueck, bezug, s)
-    if lage is not None:
-        s = s * lage[stueck].astype(s.dtype)
-    elif N is not None:
+    rand = None
+    if N is None or not _eben(V, N):
+        # gewoelbte Flaeche: die Normale des ganzen Randes sagt am Ort eines
+        # Stuecks nichts (Befund A5, 14.11.2026: Zylinder 300° mit geloeschtem
+        # Streifen, das Stueck 0-40° kehrte sich um). Auch bei EINEM Stueck
+        # gilt Stokes nur, wenn der Rand des Netzes der Rand der Flaeche ist -
+        # ein Loch, eine Kerbe oder eine Oeffnung gehoert zum Rand des Netzes,
+        # nicht zur Normale der Flaeche (Befund A'7, 14.11.2026: Zylinder 300°
+        # mit Loch, alle 66 Elemente umgedreht, Lastsumme (−370,5; 4 844,5; 0)
+        # statt (370,5; −4 844,5; 0) N). Es entscheidet der Umlauf des Randes
+        # am Stueck; Stokes nur, wenn kein Stueck den Rand beruehrt.
+        rand = _stuecke_gewoelbt(model, f, idx, C, ne, V, stueck, bezug, s)
+    stokes = None
+    if N is not None:
         # je Stueck: Vektorflaeche (relativ zum Bezugselement) gegen die
         # Flaechennormale - bei einer ebenen Flaeche je Element n · N; bei
         # einer gewoelbten aus einem Stueck nach Stokes die halbe
@@ -415,11 +432,45 @@ def _plan_flaeche(model, f, idx: list) -> list:
         S = np.bincount(stueck, weights=s * (V @ N), minlength=len(bezug))
         groesse = np.bincount(stueck, weights=np.linalg.norm(V, axis=1),
                               minlength=len(bezug)) * float(np.linalg.norm(N))
-        s = s * np.where(S < -1e-9 * groesse, -1, 1)[stueck]
+        stokes = np.where(S < -1e-9 * groesse, -1.0, 1.0)
+    return stueck, s, wid, rand, stokes
+
+
+def _plan_flaeche(model, f, idx: list) -> list:
+    stueck, s, wid, rand, stokes = _lagen_flaeche(model, f, idx)
+    lage = rand if rand is not None else stokes
+    if lage is not None:
+        s = s * lage[stueck].astype(s.dtype)
     drehen = [idx[int(p)] for p in np.flatnonzero(s < 0)]
     if not drehen and not wid:
         return []
     return [("flaeche", f.name, sorted(drehen), wid)]
+
+
+def gewoelbt_einteilig_anders(model) -> list:
+    """Namen der gewoelbten Schalenflaechen aus EINEM Netzstueck, an denen der
+    Randumlauf anders entscheidet als Stokes gegen die Normale des Randes (ein
+    Loch, eine Kerbe, eine Oeffnung): bis Stand 54 lagen ihre Elemente
+    umgekehrt (Merkmal der Verfahrenstabelle, Stand 55, Befund A'7). Das
+    haengt nicht an der Knotenfolge: vor wie nach dem Ausrichten widersprechen
+    sich die beiden Regeln."""
+    alle = set(_schalen_indizes(model))
+    aus: list = []
+    if not alle:
+        return aus
+    for name, f in (getattr(model, "flaechen", None) or {}).items():
+        idx = sorted({int(e) for e in (f.elemente or []) if int(e) in alle})
+        if not idx:
+            continue
+        try:
+            _st, _s, _w, rand, stokes = _lagen_flaeche(model, f, idx)
+        except Exception:                    # noqa: BLE001 - nicht pruefbar: nicht betroffen
+            continue
+        if rand is None or stokes is None or len(rand) != 1:
+            continue
+        if float(rand[0]) != float(stokes[0]):
+            aus.append(str(name))
+    return aus
 
 
 def gegen_flaeche(model, f) -> set:
