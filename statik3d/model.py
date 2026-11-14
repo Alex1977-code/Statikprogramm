@@ -9043,7 +9043,18 @@ class Model:
         return self.nodes[e.nodes]
 
     def element_length(self, i: int) -> float:
+        """Laenge des Elements zwischen seinen ersten beiden Knoten - bei einem
+        Stabelement mit verschiedenem Versatz an Anfang und Ende die Laenge
+        des Stabs zwischen seinen versetzten Enden (assemble.stab_achsen; seit
+        dem 12.11.2026, vorher die der Knotenlinie). Stablasten (a, b),
+        Ersatzlasten und Schnittgroessen laufen entlang dieser Laenge."""
         e = self.elements[i]
+        if getattr(e, "exzentrizitaet", None) and e.typ in _EL.STAB_TYPEN:
+            from .elements import beam3d as _bm
+            X = self.nodes[e.nodes]
+            arme = _bm.versatz_arme(X[0], X[1], e.roll, e.exzentrizitaet)
+            if arme is not None:
+                return float(np.linalg.norm((X[1] + arme[1]) - (X[0] + arme[0])))
         return float(np.linalg.norm(self.nodes[e.nodes[1]] - self.nodes[e.nodes[0]]))
 
     def member_length(self, m: Member) -> float:
@@ -9895,6 +9906,15 @@ class Model:
                         else (versatz(s_neu + Ln), versatz(s_neu)))
                 ea.exzentrizitaet = [versatz(s_alt).tolist(), versatz(s_alt + La).tolist()]
                 en.exzentrizitaet = [(D @ v).tolist() for v in paar]
+        # Elementlasten laufen entlang des Stabs (element_length): mit
+        # verschiedenem Versatz an den Enden liegt er zwischen den versetzten
+        # Enden, beide Teile auf derselben Achse (12.11.2026); sonst ist es die
+        # Laenge der Knotenlinie wie oben
+        La_s, Ln_s = self.element_length(alt), self.element_length(neu)
+        if (La_s, Ln_s) != (La, Ln):
+            La, Ln = La_s, Ln_s
+            L0 = La + Ln
+            s_alt, s_neu = (0.0, La) if ende_alt == 1 else (Ln, 0.0)
         drehung = None                  # lokal alt -> lokal neu, erst bei Bedarf
         for lc in self.load_cases.values():
             liste = []

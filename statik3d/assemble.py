@@ -71,11 +71,17 @@ def beam_local(model: Model, e, punkte=None):
 
     ``punkte``: Anfang und Ende des Stabes statt seiner Knoten (Theorie III.
     Ordnung legt einen Stab mit Versatz zwischen seine Stabenden, 12.11.2026).
+    Ohne ``punkte`` liegt ein Stab mit verschiedenem Versatz an den Enden
+    zwischen seinen versetzten Stabenden (:func:`stab_achsen`, seit dem
+    12.11.2026 auch nach Theorie I. und II. Ordnung).
     """
     mat = model.materials[e.mat]
     sec = model.sections[e.sec]
-    X = model.nodes[e.nodes] if punkte is None else np.asarray(punkte, float)
-    T3, L = bm.local_axes(X[0], X[1], e.roll)
+    if punkte is None:
+        T3, L = stab_achsen(model, e)
+    else:
+        X = np.asarray(punkte, float)
+        T3, L = bm.local_axes(X[0], X[1], e.roll)
     T = bm.transform_matrix(T3)
     if e.typ in ("truss", "seil"):
         kl = bm.k_local_truss(mat.E, sec.A, L)
@@ -87,22 +93,58 @@ def beam_local(model: Model, e, punkte=None):
 
 def beam_versatz(e):
     """Starre Versaetze der Stabenden (Exzentrizitaet) als 12x12-Matrix A
-    in lokalen Achsen: u_stab = A u_knoten. None ohne Versatz."""
+    in den lokalen Achsen der **Knotenlinie**: u_stab = A u_knoten. None ohne
+    Versatz. Die Rechnung nimmt :func:`stab_versatz` (die Achsen des Stabs
+    zwischen seinen versetzten Enden); bei gleichem Versatz an beiden Enden
+    ist es dieselbe Matrix."""
+    rr = bm.versatz_vektoren(getattr(e, "exzentrizitaet", None))
+    if rr is None:
+        return None
+    return bm.versatz_matrix(rr[0], rr[1])
+
+
+def stab_arme(model: Model, e):
+    """Die starren Arme (2, 3) global vom Knoten zum Stabende, wenn der Versatz
+    an Anfang und Ende verschieden ist - sonst None (bm.versatz_arme)."""
     ex = getattr(e, "exzentrizitaet", None)
-    if not ex:
+    if not ex or e.typ not in LINE_TYPES or len(e.nodes) < 2:
         return None
-    r1 = np.zeros(3)
-    r2 = np.zeros(3)
-    try:
-        if len(ex) >= 1 and ex[0] is not None:
-            r1[:len(ex[0])] = np.asarray(ex[0], float)[:3]
-        if len(ex) >= 2 and ex[1] is not None:
-            r2[:len(ex[1])] = np.asarray(ex[1], float)[:3]
-    except (TypeError, ValueError):
+    X = model.nodes[e.nodes]
+    return bm.versatz_arme(X[0], X[1], e.roll, ex)
+
+
+def stab_achsen(model: Model, e):
+    """(T3, L) eines Stabelements: lokale Achsen und Laenge des Stabs.
+
+    Mit verschiedenem Versatz an Anfang und Ende liegt der Stab zwischen
+    seinen versetzten Enden P_i = x_i + a_i (:func:`stab_arme`), sonst
+    zwischen den Knoten (gleicher Versatz verschiebt nur parallel). Bis zum
+    12.11.2026 kamen Achsen und Laenge nach Theorie I. und II. Ordnung immer
+    von der Knotenlinie: Kragarm, Zug 50 kN durch die Einspannung, Versatz
+    0,1 m quer nur am Ende - Einspannmoment 5,0 statt 0 kNm, die Momente um
+    die Einspannung nicht im Gleichgewicht (tests/test_versatz_starrer_arm.py).
+    """
+    X = model.nodes[e.nodes]
+    arme = stab_arme(model, e)
+    if arme is None:
+        return bm.local_axes(X[0], X[1], e.roll)
+    return bm.local_axes(X[0] + arme[0], X[1] + arme[1], e.roll)
+
+
+def stab_versatz(model: Model, e):
+    """Die Versatzmatrix A (12x12, u_stab = A u_knoten) in den Achsen des
+    Stabs (:func:`stab_achsen`): der Versatz als starrer Arm vom Knoten zum
+    Stabende, wie in Theorie III. Ordnung. None ohne Versatz; bei gleichem
+    Versatz an beiden Enden :func:`beam_versatz` (bitgleich wie bisher)."""
+    A = beam_versatz(e)
+    if A is None:
         return None
-    if not (np.any(r1) or np.any(r2)):
-        return None
-    return bm.versatz_matrix(r1, r2)
+    arme = stab_arme(model, e)
+    if arme is None:
+        return A
+    X = model.nodes[e.nodes]
+    T3, _L = bm.local_axes(X[0] + arme[0], X[1] + arme[1], e.roll)
+    return bm.versatz_matrix(T3 @ arme[0], T3 @ arme[1])
 
 
 def beam_woelb_local(model: Model, e):
@@ -110,8 +152,7 @@ def beam_woelb_local(model: Model, e):
     (12 Stab-FHG + Verwoelbung an beiden Enden), dazu T3, L."""
     mat = model.materials[e.mat]
     sec = model.sections[e.sec]
-    X = model.nodes[e.nodes]
-    T3, L = bm.local_axes(X[0], X[1], e.roll)
+    T3, L = stab_achsen(model, e)
     kl = bm.k_local_beam14(mat.E, mat.G, sec.A, sec.Iy, sec.Iz, sec.It,
                            float(getattr(sec, "Iw", 0.0) or 0.0), L, sec.Asy, sec.Asz)
     return kl, T3, L
@@ -278,7 +319,7 @@ def element_matrix(model: Model, e):
     if e.typ in LINE_TYPES:
         if model.stab_woelbt(e):
             kl, T3, L = beam_woelb_local(model, e)
-            A = beam_versatz(e)
+            A = stab_versatz(model, e)
             if A is not None:
                 A14 = np.eye(14)
                 A14[:12, :12] = A
@@ -290,7 +331,7 @@ def element_matrix(model: Model, e):
             kl, _, _ = hinge_springs(kl, np.zeros(12), e.hinge_springs)
         if e.hinges:
             kl, _, _ = condense(kl, np.zeros(12), e.hinges)
-        A = beam_versatz(e)
+        A = stab_versatz(model, e)
         if A is not None:
             kl = A.T @ kl @ A
         return T.T @ kl @ T
@@ -351,11 +392,11 @@ def element_mass(model: Model, e):
     X = model.nodes[e.nodes]
     if e.typ in LINE_TYPES:
         sec = model.sections[e.sec]
-        T3, L = bm.local_axes(X[0], X[1], e.roll)
+        T3, L = stab_achsen(model, e)
         if model.stab_woelbt(e):
             ml = bm.m_local_beam14(mat.rho, sec.A, L, sec.Iy + sec.Iz,
                                    float(getattr(sec, "Iw", 0.0) or 0.0))
-            A = beam_versatz(e)
+            A = stab_versatz(model, e)
             if A is not None:
                 A14 = np.eye(14)
                 A14[:12, :12] = A
@@ -364,7 +405,7 @@ def element_mass(model: Model, e):
             return T.T @ ml @ T
         T = bm.transform_matrix(T3)
         ml = bm.m_local_beam(mat.rho, sec.A, L, sec.Iy + sec.Iz)
-        A = beam_versatz(e)
+        A = stab_versatz(model, e)
         if A is not None:
             ml = A.T @ ml @ A
         return T.T @ ml @ T
@@ -1793,13 +1834,12 @@ def stab_normalkraft(model: Model, e, u: np.ndarray, n_anfang: float = 0.0, _ach
     mat = model.materials[e.mat]
     sec = model.sections[e.sec]
     if _achsen is None:
-        X = model.nodes[e.nodes]
-        T3, L = bm.local_axes(X[0], X[1], e.roll)
+        T3, L = stab_achsen(model, e)
         T = bm.transform_matrix(T3)
     else:
         T, L = _achsen
     ul = T @ np.asarray(u, float)[element_dofs(e, model)[:12]]
-    A = beam_versatz(e)
+    A = stab_versatz(model, e)
     if A is not None:
         ul = A @ ul                     # das Stabende hinter dem Versatz
     federn = [(int(d), float(k)) for d, k in (getattr(e, "hinge_springs", None) or [])
@@ -1837,8 +1877,7 @@ def geometric_stiffness(model: Model, u: np.ndarray, aktiv=None, n_anfang: dict 
         if e.typ not in LINE_TYPES or not _wirkt(aktiv, i):
             continue
         sec = model.sections[e.sec]
-        X = model.nodes[e.nodes]
-        T3, L = bm.local_axes(X[0], X[1], e.roll)
+        T3, L = stab_achsen(model, e)
         T = bm.transform_matrix(T3)
         d = element_dofs(e, model)[:12]
         N = stab_normalkraft(model, e, u, n_anfang.get(i, 0.0), _achsen=(T, L))
@@ -1854,8 +1893,10 @@ def geometric_stiffness(model: Model, u: np.ndarray, aktiv=None, n_anfang: dict 
         # Steifigkeit (element_matrix): K_G = A^T k_G A. Bis zum 09.11.2026
         # wirkte k_G auf die Knoten statt auf die Stabenden - ein Druckstab
         # 0,2 m neben seiner Knotenlinie hatte alpha_cr 1,158 statt 2,000
-        # (Nebenbefund 16 b, tests/test_theorie_nebenbefund16.py)
-        A = beam_versatz(e)
+        # (Nebenbefund 16 b, tests/test_theorie_nebenbefund16.py). Laenge und
+        # Achsen des Stabs zwischen seinen versetzten Enden (stab_achsen,
+        # 12.11.2026)
+        A = stab_versatz(model, e)
         if A is not None:
             kg = A.T @ kg @ A
         kg = T.T @ kg @ T
@@ -2057,9 +2098,10 @@ def beam_load_local(model: Model, e, bl) -> tuple[np.ndarray, np.ndarray]:
     Länge“, seit 14.10.2026) gilt je Laenge der Projektion des Stabs senkrecht
     zur Lastrichtung; je Stablaenge ist sie um :func:`projektionsfaktor`
     kleiner, die Summe q l_proj bleibt. Bis zum 14.10.2026 liess der
-    RFEM-Import solche Lasten weg („Lastrichtung unbekannt“)."""
-    X = model.nodes[e.nodes]
-    T3, L = bm.local_axes(X[0], X[1], e.roll)
+    RFEM-Import solche Lasten weg („Lastrichtung unbekannt“). Die Achsen sind
+    die des Stabs (:func:`stab_achsen`, mit verschiedenem Versatz an den Enden
+    zwischen den versetzten Stabenden)."""
+    T3, L = stab_achsen(model, e)
     q1 = np.asarray(bl.q, float)
     q2 = np.asarray(bl.q2, float) if bl.q2 is not None else q1.copy()
     if bl.system == "global":
@@ -2102,8 +2144,7 @@ def element_equivalent_loads(model: Model, case: LoadCase, aktiv=None) -> dict[i
             if e.typ in LINE_TYPES and _wirkt(aktiv, i):
                 mat = model.materials[e.mat]
                 sec = model.sections[e.sec]
-                X = model.nodes[e.nodes]
-                T3, L = bm.local_axes(X[0], X[1], e.roll)
+                T3, L = stab_achsen(model, e)
                 q = T3 @ (mat.rho * sec.A * g)
                 out[i] = out.get(i, np.zeros(12)) + bm.fixed_end_forces(q, L)
     for tl in case.temp_loads:
@@ -2173,8 +2214,7 @@ def element_distributed_loads(model: Model, case: LoadCase, aktiv=None) -> dict[
             if e.typ in LINE_TYPES and _wirkt(aktiv, i):
                 mat = model.materials[e.mat]
                 sec = model.sections[e.sec]
-                X = model.nodes[e.nodes]
-                T3, L = bm.local_axes(X[0], X[1], e.roll)
+                T3, L = stab_achsen(model, e)
                 q = T3 @ (mat.rho * sec.A * g)
                 anhaengen(i, [0.0, L, *q, *q])
     return out
@@ -2320,7 +2360,7 @@ def stablasten_einbauen(model: Model, feq: dict, F: np.ndarray) -> None:
             kl, fl, _ = hinge_springs(kl, fl, e.hinge_springs)
         if e.hinges:
             _, fl, _ = condense(kl, fl, e.hinges)
-        A = beam_versatz(e)
+        A = stab_versatz(model, e)
         if A is not None:
             fl = A.T @ fl
         F[element_dofs(e, model)[:12]] += T.T @ fl

@@ -536,6 +536,23 @@ def _stab_mit_versatz(model) -> bool:
                for e in getattr(model, "elements", None) or [])
 
 
+def _stab_mit_ungleichem_versatz(model) -> bool:
+    """Ein Stabelement mit verschiedenem Versatz an Anfang und Ende - es lag
+    nach Theorie I. und II. Ordnung bis zum 12.11.2026 auf der Knotenlinie
+    statt zwischen seinen versetzten Enden. Gleicher Versatz an beiden Enden
+    rechnet wie bisher (bitgleich, tests/test_versatz_starrer_arm.py)."""
+    import numpy as np
+    from .elements import beam3d as bm
+    from . import assemble as asm
+    for e in getattr(model, "elements", None) or []:
+        if getattr(e, "typ", "") not in asm.LINE_TYPES:
+            continue
+        rr = bm.versatz_vektoren(getattr(e, "exzentrizitaet", None))
+        if rr is not None and not np.array_equal(rr[0], rr[1]):
+            return True
+    return False
+
+
 def _balken_mit_schubflaeche(model) -> bool:
     """Ein Balkenelement, dessen Querschnitt eine Schubflaeche hat - sein
     Feldanteil N w nach Theorie II. Ordnung liess bis zum 09.11.2026 die
@@ -1832,6 +1849,22 @@ MERKMALE: list = [
         modellmerkmal="Stab mit Versatz der Stabenden (Exzentrizität), nach Theorie III. Ordnung gerechnet",
         # dieselbe Pruefung wie theorie2_versatz (Stand 26)
         betrifft=_stab_mit_versatz, im_ergebnis=_theorie3_im_ergebnis),
+    # Nachstellung vom 12.11.2026: nach Theorie I. und II. Ordnung lag ein Stab
+    # mit verschiedenem Versatz an Anfang und Ende auf der Knotenlinie (Laenge
+    # und Achsen von dort), nur seine Enden waren starr versetzt - das
+    # Momentengleichgewicht ging verloren (Kragarm 4 m, Zug 50 kN durch die
+    # Einspannung, Versatz 0,1 m quer nur am Ende: Einspannmoment 5,0 statt
+    # 0 kNm). Seither liegt der Stab zwischen seinen versetzten Enden, der
+    # Versatz ist ein starrer Arm am Knoten (wie Theorie III. Ordnung). Gleicher
+    # Versatz an beiden Enden ist nicht betroffen (bitgleich). Fehlerkorrektur
+    Merkmal(
+        name="versatz_starrer_arm", titel="Stab mit verschiedenem Versatz an Anfang und Ende",
+        texte={"alt": "Stab auf der Knotenlinie (Länge und Achsen von dort), nur die Enden starr versetzt",
+               "neu": "Stab zwischen den versetzten Enden (Länge und Achsen von dort), Versatz als starrer Arm"},
+        wechsel=(Wechsel(stand=38, datum="12.11.2026", commit="fix/k3-versatz", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Stab mit verschiedenem Versatz (Exzentrizität) an Anfang und Ende",
+        betrifft=_stab_mit_ungleichem_versatz),
     # Befund vom 11.11.2026 (Pruefung der Testmodelle): der Wasserdruck an
     # Schalen ohne globale Lastrichtung hatte das falsche Vorzeichen - „gegen
     # die Normale (in den Körper)“ wirkte mit der Elementnormale, numerisch
