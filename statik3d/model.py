@@ -188,6 +188,12 @@ STEEL_GRADES = {
 #: (Material.dicke_ohne_wert; Entscheidung des Anwenders 14.11.2026, Befund C4). Bis dahin
 #: blieb es ueber 80 mm still beim Wert der Zeile 40-80 mm (S355, 200 mm: 335 statt 285).
 DICKE_TAB31 = 0.080
+#: Obere Grenze [m] der Dickenstufe „über 80 mm (Erzeugnisnorm)“, die der Werkstoffdialog
+#: anlegt (Material.erzeugnisnorm_setzen; Vorschlag vom 14.11.2026, vom Anwender
+#: freigegeben). Ueber der letzten Stufe gilt ohnehin deren Wert; die Grenze kennzeichnet nur
+#: die Tabelle [[0,040, ...], [0,080, ...], [1,000, Eingabe]] als eingetragen und nicht aus
+#: einer Quelldatei (RFEM fuehrt keine Stufe bis 1000 mm).
+DICKE_ERZEUGNISNORM = 1.0
 
 #: f_u der Sorten S355 und S355W bis 40 mm vor dem 07.10.2026 (Nachtrag M26): der Wert, den
 #: ein Werkstoff einer aelteren Datei traegt, wenn er aus der Sortentabelle kam
@@ -397,6 +403,76 @@ def lagerreibung_hinweis(model) -> list:
     return [text + " " + stand + " (" + vorschlag + ")"]
 
 
+#: Art des Hinweises „Flächenlager nach Neuvernetzen prüfen“ (importhinweise)
+FLAECHENLAGER_HINWEIS = "flaechenlager_neuvernetzen"
+#: Verfahrensstand, ab dem das Neuvernetzen in der Oberflaeche elementbezogene
+#: Flaechenlager nachzieht (rechenverfahren, Merkmal „flaechenlager_neuvernetzen“,
+#: fix/k2-netz vom 12.11.2026, Befund 11)
+STAND_FLAECHENLAGER = 37
+
+
+def flaechenlager_elementbezogen(model) -> list:
+    """Namen der Flaechenlager mit Elementliste (ohne Flaechenbezug), die auf
+    Elementen einer vernetzten Flaeche oder eines vernetzten Koerpers liegen - nur
+    deren Netz wird neu vernetzt (Befund 11 vom 11.11.2026)."""
+    netz = {int(e) for o in list((getattr(model, "flaechen", None) or {}).values())
+            + list((getattr(model, "koerper", None) or {}).values()) for e in (o.elemente or [])}
+    aus = []
+    for ss in getattr(model, "surface_supports", None) or []:
+        if ss.elements and not getattr(ss, "flaechen", None) and any(int(e) in netz for e in ss.elements):
+            if str(ss.name) not in aus:
+                aus.append(str(ss.name))
+    return aus
+
+
+def flaechenlager_neuvernetzen_hinweis(model, stand) -> list:
+    """Beim **Oeffnen einer Ergebnisdatei** von vor Stand 37 (``stand`` der Datei, None
+    = unbekannt, also aelter): jedes elementbezogene Flaechenlager auf vernetzten
+    Flaechen bekommt den offenen Hinweis „Flächenlager nach Neuvernetzen prüfen“ im
+    Modell (Vorschlag vom 14.11.2026, vom Anwender freigegeben). Bis zum 12.11.2026
+    zog das Neuvernetzen in der Oberflaeche die Elementnummern dieser Lager nicht
+    nach - nach dem Neuvernetzen der Nachbarflaeche lag die Bettung still auf deren
+    Elementen. Das gespeicherte Lager traegt den Fehler weiter, auch nach „neu
+    rechnen“; darum steht der Hinweis am Modell, bis der Anwender ihn bestaetigt
+    (:meth:`Model.flaechenlager_geprueft`). Ein Lager, das schon einen Hinweis hat
+    (offen oder erledigt), bekommt keinen zweiten. Rueckgabe: Zeilen fuers Protokoll."""
+    if stand is not None and int(stand) >= STAND_FLAECHENLAGER:
+        return []
+    hinweise = getattr(model, "importhinweise", None)
+    if hinweise is None:
+        hinweise = model.importhinweise = []
+    schon = {str(o) for h in hinweise if h.get("art") == FLAECHENLAGER_HINWEIS for o in (h.get("objekte") or [])}
+    zeilen = []
+    for name in flaechenlager_elementbezogen(model):
+        if name in schon:
+            continue
+        text = (f"Flächenlager nach Neuvernetzen prüfen: „{name}“ ist über eine Elementliste an das Netz "
+                "gebunden, die Ergebnisdatei stammt von einem Programmstand vor dem 12.11.2026. Damals zog das "
+                "Neuvernetzen einer Fläche in der Oberfläche die Elementnummern solcher Lager nicht nach – wurde "
+                "eine Fläche danach neu vernetzt, kann das Lager auf anderen Elementen liegen (auch auf einer "
+                "anderen Fläche). Bitte prüfen, wo es liegt, und als geprüft bestätigen.")
+        hinweise.append({"art": FLAECHENLAGER_HINWEIS, "text": text, "objekte": [name],
+                         "vorschlag": "Rechtsklick auf das Flächenlager › „Flächenlager geprüft“",
+                         "erledigt": False, "datei": ""})
+        zeilen.append(text)
+    return zeilen
+
+
+def flaechenlager_neuvernetzen_offen(model) -> list:
+    """Namen der Flaechenlager mit offenem Hinweis „Flächenlager nach Neuvernetzen
+    prüfen“, die es noch gibt und die weiter eine Elementliste auf vernetzten Flaechen
+    tragen."""
+    da = set(flaechenlager_elementbezogen(model))
+    aus = []
+    for h in getattr(model, "importhinweise", None) or []:
+        if h.get("art") != FLAECHENLAGER_HINWEIS or h.get("erledigt"):
+            continue
+        for o in h.get("objekte") or []:
+            if str(o) in da and str(o) not in aus:
+                aus.append(str(o))
+    return aus
+
+
 def werkstoffe_alter_datei_nachziehen(model) -> list:
     """Stellt f_u der Werkstoffe einer **geoeffneten Datei** auf die Sortentabelle um (M26,
     07.10.2026) und gibt die Zeilen fuers Protokoll zurueck.
@@ -563,11 +639,28 @@ class Material:
                 return wert
         return stufen[-1][1]
 
+    def _tabellenwert(self, was: str, t: float):
+        """Der Wert der Dickentabelle bei der Dicke t - oder None (dann gilt die Regel
+        ohne Tabelle). Eine im Werkstoffdialog eingetragene Stufe ueber 80 mm
+        (:meth:`erzeugnisnorm_setzen`) gibt nur ueber 80 mm und nur mit Stahlsorte
+        ihren Wert; bis 80 mm gilt wie ohne Tabelle Tab. 3.1 mit f_y, f_u und der Sorte
+        von heute - auch wenn sie nach dem Eintragen geaendert wurden."""
+        ueber_80 = self.erzeugnisnorm_wert(was)
+        if ueber_80 is not None:
+            return ueber_80 if (float(t or 0.0) > DICKE_TAB31 + 1e-12 and self._sorte()) else None
+        return self._nach_dicke(self.fy_dicke if was == "fy" else self.fu_dicke, t)
+
     def dickentext(self, was: str = "fy") -> str:
         """Die Dickentabelle als Text („≤16: 355, ≤40: 345 … N/mm²")."""
         tabelle = self.fy_dicke if was == "fy" else self.fu_dicke
         if not tabelle:
             return ""
+        ueber_80 = self.erzeugnisnorm_wert(was)
+        if ueber_80 is not None:
+            # die eingetragene Stufe: bis 80 mm die Werte von heute, darueber „>80“, nicht „≤1000“
+            wert = self.yield_strength if was == "fy" else self.zugfestigkeit_angegeben
+            return (f"≤40: {(wert(0.0) or 0.0) / 1e6:g}, ≤80: {(wert(DICKE_TAB31) or 0.0) / 1e6:g}, "
+                    f">80 (Erzeugnisnorm): {ueber_80 / 1e6:g} N/mm²")
         return ", ".join(f"≤{t * 1e3:g}: {w / 1e6:g}" for t, w in sorted((float(a), float(b)) for a, b in tabelle)) \
             + " N/mm²"
 
@@ -583,12 +676,21 @@ class Material:
         verloren. Darum bleibt die Tabelle, ihre duennste Stufe folgt dem neuen Wert,
         die uebrigen Stufen bleiben. Ein geleertes Feld laesst die Tabelle
         unveraendert (es gibt keinen Wert, dem sie folgen koennte), und das Protokoll
-        sagt es. Ein gleichgebliebener Wert aendert nichts und meldet nichts."""
+        sagt es. Ein gleichgebliebener Wert aendert nichts und meldet nichts.
+
+        Eine im Werkstoffdialog eingetragene Stufe ueber 80 mm (Erzeugnisnorm,
+        :meth:`erzeugnisnorm_setzen`) ist keine Tabelle der Quelldatei: ihre Stufen bis
+        80 mm folgen dem Werkstoff wie ohne Tabelle (f_y bzw. die Sorte), die Stufe
+        darueber bleibt; ohne eigene Protokollzeile."""
         zeilen = []
         for was, alt, neu, tabelle, kennwert in (
                 ("fy", fy_alt, self.fy, self.fy_dicke, self.fliess_name()),
                 ("fu", fu_alt, self.fu, self.fu_dicke, self.grenze_name())):
             if not tabelle or (not alt and not neu) or werte_gleich(alt, neu):
+                continue
+            ueber_80 = self.erzeugnisnorm_wert(was)
+            if ueber_80 is not None:
+                self._erzeugnisnorm_tabelle(was, ueber_80)
                 continue
             kopf = (f"Werkstoff {self.name}: {kennwert} {_mpa_text(alt)} N/mm² → leer." if not neu else
                     f"Werkstoff {self.name}: {kennwert} {_mpa_text(alt)} → {_mpa_text(neu)} N/mm².")
@@ -603,6 +705,75 @@ class Material:
             zeilen.append(kopf + " Die Dickentabelle der Quelldatei bleibt erhalten, nur ihre dünnste Stufe "
                           f"(≤{float(tabelle[i][0]) * 1e3:g} mm) folgt dem neuen Wert; die übrigen Stufen "
                           f"sind unverändert. Jetzt: {kennwert} {self.dickentext(was)}.")
+        return zeilen
+
+    def erzeugnisnorm_wert(self, was: str = "fy") -> Optional[float]:
+        """Der im Werkstoffdialog eingetragene Wert ueber 80 mm (Zeile „f_y/f_u über
+        80 mm (Erzeugnisnorm)“) [Pa] - None, wenn keiner eingetragen ist oder die
+        Dickentabelle aus einer Quelldatei stammt (RFEM). Erkannt an der Form, die
+        :meth:`erzeugnisnorm_setzen` anlegt: Stufen bis 40 mm, bis 80 mm und bis
+        DICKE_ERZEUGNISNORM."""
+        tabelle = self.fy_dicke if was == "fy" else self.fu_dicke
+        try:
+            stufen = sorted((float(a), float(b)) for a, b in (tabelle or []))
+        except (TypeError, ValueError):
+            return None
+        grenzen = (0.040, DICKE_TAB31, DICKE_ERZEUGNISNORM)
+        if len(stufen) != 3 or any(abs(s[0] - g) > 1e-12 for s, g in zip(stufen, grenzen)):
+            return None
+        return stufen[2][1]
+
+    def dickentabelle_aus_quelle(self) -> bool:
+        """Traegt der Werkstoff eine Dickentabelle aus einer Quelldatei (RFEM) - nicht
+        die im Werkstoffdialog eingetragene Stufe ueber 80 mm?"""
+        return any(tab and self.erzeugnisnorm_wert(was) is None
+                   for was, tab in (("fy", self.fy_dicke), ("fu", self.fu_dicke)))
+
+    def _erzeugnisnorm_tabelle(self, was: str, wert: float) -> None:
+        """Die Tabelle fuer ``was`` aus dem Werkstoff ohne Tabelle (Tab. 3.1: f_y bzw.
+        die Sorte bis 40 mm, die Sorte 40-80 mm) und der Stufe ueber 80 mm."""
+        setattr(self, "fy_dicke" if was == "fy" else "fu_dicke", [])
+        if was == "fy":
+            a, b = self.yield_strength(0.0), self.yield_strength(DICKE_TAB31)
+        else:
+            a, b = self.zugfestigkeit_angegeben(0.0), self.zugfestigkeit_angegeben(DICKE_TAB31)
+        setattr(self, "fy_dicke" if was == "fy" else "fu_dicke",
+                [[0.040, float(a or 0.0)], [DICKE_TAB31, float(b or 0.0)], [DICKE_ERZEUGNISNORM, float(wert)]])
+
+    def erzeugnisnorm_setzen(self, fy_80, fu_80) -> list:
+        """f_y und f_u ueber 80 mm Erzeugnisdicke nach der Erzeugnisnorm [Pa]; None
+        (leeres Feld) = nicht angegeben. Vorschlag vom 14.11.2026, vom Anwender
+        freigegeben: DIN EN 1993-1-1 Tab. 3.1 reicht bis 80 mm, darueber hat ein
+        Werkstoff, der nur die Stahlsorte kennt, keinen Wert (Befund C4,
+        :meth:`dicke_ohne_wert`). Bis dahin ging ein Wert nur, indem man die Sorte
+        loeschte - dann fehlte der Naht β_w.
+
+        Abgelegt wird eine Dickentabelle wie die aus RFEM, mit drei Stufen: bis 40 mm
+        und bis 80 mm die Werte, die der Werkstoff ohne Tabelle hat (f_y bzw. die
+        Sorte, die Sorte 40-80 mm), darueber die Eingabe. Die Sorte bleibt. Ein
+        Werkstoff mit einer Dickentabelle aus der Quelldatei bleibt unveraendert. Ein
+        Werkstoff ohne Stahlsorte bekommt keine Stufe (sein f_y gilt fuer jede Dicke),
+        eine vorhandene entfaellt. Ein leeres Feld nimmt die eingetragene Stufe wieder weg. Rueckgabe: Zeilen fuers
+        Protokoll (nur, wenn sich der Wert ueber 80 mm aendert)."""
+        zeilen = []
+        if self.dickentabelle_aus_quelle():
+            return zeilen
+        for was, wert, kennwert in (("fy", fy_80, self.fliess_name()), ("fu", fu_80, self.grenze_name())):
+            alt = self.erzeugnisnorm_wert(was)
+            # ohne Stahlsorte gilt f_y fuer jede Dicke: eine eingetragene Stufe entfaellt
+            wert = float(wert) if wert and self._sorte() else None
+            if wert is None:
+                if alt is not None:
+                    setattr(self, "fy_dicke" if was == "fy" else "fu_dicke", [])
+                    zeilen.append(f"Werkstoff {self.name}: {kennwert} über 80 mm (Erzeugnisnorm) "
+                                  f"{_mpa_text(alt)} N/mm² → leer; über 80 mm kein Wert und kein Nachweis.")
+                continue
+            self._erzeugnisnorm_tabelle(was, wert)
+            if alt is None or not werte_gleich(alt, wert):
+                zeilen.append(f"Werkstoff {self.name}: {kennwert} über 80 mm Erzeugnisdicke "
+                              f"(Erzeugnisnorm) {_mpa_text(alt)} → {_mpa_text(wert)} N/mm², eingetragen als "
+                              f"Dickenstufe ({kennwert} {self.dickentext(was)}); Stahlsorte "
+                              f"{self.grade} bleibt.")
         return zeilen
 
     @staticmethod
@@ -637,7 +808,7 @@ class Material:
         Dickentabelle des Materials (RFEM-Import), sonst EN 1993-1-1 Tab. 3.1
         (zwei Stufen bei 40 mm, bis 80 mm). Ueber 80 mm ohne Dickentabelle 0 -
         die Meldung dazu gibt :meth:`dicke_ohne_wert`."""
-        wert = self._nach_dicke(self.fy_dicke, t)
+        wert = self._tabellenwert("fy", t)
         if wert is not None:
             return wert
         sorte = self._sorte()
@@ -655,7 +826,7 @@ class Material:
         return self.fy or 0.0
 
     def ultimate_strength(self, t: float = 0.0) -> float:
-        wert = self._nach_dicke(self.fu_dicke, t)
+        wert = self._tabellenwert("fu", t)
         if wert is not None:
             return wert
         sorte = self._sorte()
@@ -675,7 +846,7 @@ class Material:
         Festlegung des Anwenders gibt es ohne f_u eine Meldung, keinen
         Vorgabewert (Anschlussnachweis seit 09.11.2026, Befund A23). Ueber
         80 mm ohne Dickentabelle None (Befund C4, :meth:`dicke_ohne_wert`)."""
-        wert = self._nach_dicke(self.fu_dicke, t)
+        wert = self._tabellenwert("fu", t)
         if wert is not None:
             return wert
         sorte = self._sorte()
@@ -706,6 +877,12 @@ def iw_u_profil(h: float, b: float, tw: float, tf: float) -> float:
         return 0.0
     return (tf * bs ** 3 * hs ** 2 / 12.0
             * (3 * tf * bs + 2 * hs * tw) / (6 * tf * bs + hs * tw))
+
+
+def _zahl_cm6(iw: float) -> str:
+    """I_w [m^6] als Text in cm^6 mit einer Nachkommastelle („10 499,5“)."""
+    from .zahlen import zahl_text
+    return zahl_text(round(float(iw) * 1e12, 1))
 
 
 def iw_u_profil_alt(h: float, b: float, tw: float, tf: float) -> float:
@@ -10734,6 +10911,54 @@ class Model:
             from .diagnose import meldungen
             msgs += [z for z in meldungen(self) if not z.startswith("Hinweis")]
         return msgs
+
+    # ---------------- Vorschlaege vom 14.11.2026 ----------------
+    def u_profile_iw_alt(self) -> list:
+        """Namen der U-Profile, deren I_w genau dem Wert der Formel bis zum 14.11.2026
+        entspricht (volle Flanschbreite, Befund C6; :func:`iw_u_profil_alt`) und vom
+        berichtigten Wert abweicht - benutzt oder nicht. Ein anderer Wert ist ein
+        eigener des Anwenders und zaehlt nicht."""
+        aus = []
+        for name, sec in (self.sections or {}).items():
+            if getattr(sec, "typ", "") != "U":
+                continue
+            alt = iw_u_profil_alt(sec.h, sec.b, sec.tw, sec.tf)
+            neu = iw_u_profil(sec.h, sec.b, sec.tw, sec.tf)
+            if alt > 0 and abs(float(sec.Iw or 0.0) - alt) <= 1e-6 * alt and abs(alt - neu) > 1e-6 * alt:
+                aus.append(str(name))
+        return aus
+
+    def u_profile_iw_berichtigen(self) -> list:
+        """I_w der U-Profile nach der berichtigten Formel (:func:`iw_u_profil`) neu
+        rechnen - nur fuer die aus :meth:`u_profile_iw_alt`, eigene Werte bleiben
+        (Vorschlag vom 14.11.2026, vom Anwender freigegeben; die Frage stellt die
+        Oberflaeche beim Oeffnen). Rueckgabe: die Zeile fuers Protokoll (leer, wenn
+        nichts zu tun war). Danach entfaellt der Status „u_profil_iw“."""
+        teile = []
+        for name in self.u_profile_iw_alt():
+            sec = self.sections[name]
+            alt, neu = float(sec.Iw), iw_u_profil(sec.h, sec.b, sec.tw, sec.tf)
+            sec.Iw = neu
+            teile.append(f"{name} {_zahl_cm6(alt)} → {_zahl_cm6(neu)} cm⁶")
+        if not teile:
+            return []
+        return ["I_w der U-Profile nach der berichtigten Formel neu berechnet (Mittellinie b − t_w/2, "
+                "Befund C6 vom 14.11.2026): " + "; ".join(teile)]
+
+    def flaechenlager_geprueft(self, name: Optional[str] = None) -> list:
+        """Der Anwender bestaetigt den Hinweis „Flächenlager nach Neuvernetzen prüfen“
+        (:func:`flaechenlager_neuvernetzen_hinweis`) fuer das Flaechenlager ``name`` -
+        ohne Namen fuer alle. Der Hinweis wird erledigt und mit dem Modell gespeichert;
+        der Status „flaechenlager_neuvernetzen“ entfaellt. Rueckgabe: die Namen."""
+        aus = []
+        for h in getattr(self, "importhinweise", None) or []:
+            if h.get("art") != FLAECHENLAGER_HINWEIS or h.get("erledigt"):
+                continue
+            objekte = [str(o) for o in (h.get("objekte") or [])]
+            if name is None or str(name) in objekte:
+                h["erledigt"] = True
+                aus += [o for o in objekte if o not in aus]
+        return aus
 
     # ---------------- Speichern / Laden ----------------
     def to_dict(self, fortschritt=None, netz: bool = True) -> dict:

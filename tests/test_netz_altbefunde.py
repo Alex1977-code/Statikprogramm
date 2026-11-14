@@ -290,10 +290,18 @@ def test_verfahrenstabelle_11():
     s2 = m2.add_surface_support(name="Geo", uz=DofBehaviour("spring", stiffness=1e7))
     s2.flaechen = ["B"]
     m3 = zwei_flaechen()
+    # seit dem 14.11.2026 (Vorschlag, vom Anwender freigegeben) eine Korrektur am Modell:
+    # betroffen erst mit dem offenen Hinweis, den das Oeffnen einer Ergebnisdatei von vor
+    # Stand 37 setzt (model.flaechenlager_neuvernetzen_hinweis; tests.test_vorschlaege_1411)
+    from statik3d.model import flaechenlager_neuvernetzen_hinweis
+    ohne_hinweis = mk.betrifft(m) if mk is not None else True
+    for x in (m, m2, m3):
+        flaechenlager_neuvernetzen_hinweis(x, 30)
     check("Verfahrenstabelle: Merkmal „flaechenlager_neuvernetzen“, Stand 37, Fehlerkorrektur; betrifft "
-          "nur elementbezogene Flächenlager auf Flächen/Körpern",
+          "nur elementbezogene Flächenlager auf Flächen/Körpern (mit offenem Hinweis aus einer alten Datei)",
           mk is not None and mk.wechsel[-1].stand == 37 and mk.wechsel[-1].art == rv.FEHLERKORREKTUR
-          and rv.VERFAHRENSSTAND >= 37 and mk.betrifft(m) and not mk.betrifft(m2) and not mk.betrifft(m3),
+          and rv.VERFAHRENSSTAND >= 37 and not ohne_hinweis and mk.betrifft(m) and not mk.betrifft(m2)
+          and not mk.betrifft(m3),
           f"{mk.modellmerkmal if mk else 'fehlt'}")
 
 

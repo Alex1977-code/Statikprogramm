@@ -1177,7 +1177,8 @@ class Report:
                 for mat in mit_tabelle:
                     rows.append([mat.name, mat.dickentext("fy"), mat.dickentext("fu") or "–"])
                 b.append(("table", rows, "Streckgrenze und Zugfestigkeit nach Erzeugnisdicke (aus der "
-                                         "Materialdatenbank der Quelldatei; die Nachweise nehmen den "
+                                         "Materialdatenbank der Quelldatei, über 80 mm auch nach "
+                                         "Erzeugnisnorm im Werkstoff eingetragen; die Nachweise nehmen den "
                                          "Wert der Dicke des Bauteils)", None, "compact"))
             if any(mat.grade and not getattr(mat, "fy_dicke", None) for mat in m.materials.values()):
                 b.append(("note", "Streckgrenzen für Erzeugnisdicken t ≤ 40 mm nach der Erzeugnisnorm "

@@ -658,14 +658,20 @@ def _doppelte_randlinien_wo(model, _analyse) -> str:
 
 
 def _elementbezogene_flaechenlager(model) -> bool:
-    """Ein Flaechenlager mit Elementliste (ohne Flaechenbezug), das auf Elementen
-    einer Flaeche oder eines Koerpers liegt - nur deren Netz wird neu vernetzt
-    (Befund 11)."""
-    netz = {int(e) for o in list((getattr(model, "flaechen", None) or {}).values())
-            + list((getattr(model, "koerper", None) or {}).values()) for e in (o.elemente or [])}
-    return any(ss.elements and not getattr(ss, "flaechen", None)
-               and any(int(e) in netz for e in ss.elements)
-               for ss in (getattr(model, "surface_supports", None) or []))
+    """Ein Flaechenlager mit Elementliste auf vernetzten Flaechen, das beim Oeffnen
+    einer Ergebnisdatei von vor Stand 37 den Hinweis „Flächenlager nach Neuvernetzen
+    prüfen“ bekam und noch nicht als geprueft bestaetigt ist
+    (model.flaechenlager_neuvernetzen_hinweis; Vorschlag vom 14.11.2026). Bis dahin
+    hing das Merkmal am Alter der Ergebnisdatei: „neu rechnen“ loeschte den Status,
+    obwohl das Lager weiter auf den falschen Elementen lag (Beleg ag_k5_a-meldung,
+    lager_alt.py)."""
+    from .model import flaechenlager_neuvernetzen_offen
+    return bool(flaechenlager_neuvernetzen_offen(model))
+
+
+def _elementbezogene_flaechenlager_wo(model, _analyse) -> str:
+    from .model import flaechenlager_neuvernetzen_offen
+    return "Flächenlager " + _kurzliste([f"„{n}“" for n in flaechenlager_neuvernetzen_offen(model)])
 
 
 def _trennflaechen_getrennt(model) -> bool:
@@ -2474,8 +2480,17 @@ MERKMALE: list = [
                       "sonst Meldung „Netz geändert – Lager prüfen“"},
         wechsel=(Wechsel(stand=37, datum="12.11.2026", commit="fix/k2-netz", alt="alt", neu="neu",
                          art=FEHLERKORREKTUR),),
-        modellmerkmal="Flächenlager mit Elementliste auf vernetzten Flächen oder Körpern",
-        betrifft=_elementbezogene_flaechenlager),
+        # seit dem 14.11.2026 eine Korrektur am Modell (Vorschlag, vom Anwender
+        # freigegeben): der Hinweis entsteht beim Oeffnen einer Ergebnisdatei von vor
+        # Stand 37 und bleibt, auch nach „neu rechnen“, bis der Anwender das Lager als
+        # geprueft bestaetigt (Model.flaechenlager_geprueft)
+        modellmerkmal="Flächenlager mit Elementliste auf vernetzten Flächen oder Körpern aus einer Datei mit "
+                      "Ergebnissen von vor Stand 37, noch nicht als geprüft bestätigt",
+        betrifft=_elementbezogene_flaechenlager, import_korrektur=True,
+        im_ergebnis=_elementbezogene_flaechenlager_wo,
+        modellgrund="Flächenlager nach Neuvernetzen prüfen – Datei von einem Programmstand vor dem 12.11.2026",
+        vorschlag="prüfen, wo das Lager liegt, und es als geprüft bestätigen (Rechtsklick auf das Flächenlager "
+                  "› „Flächenlager geprüft“)"),
     # Befund 39 der Pruefagenten (11.11.2026): zwei Randlinien verschiedener
     # Schalenflaechen zwischen denselben Knoten (Rippe mit eigener Linie auf
     # dem Plattenrand) wurden nur verbunden, wenn ein fremder Knoten darauf lag

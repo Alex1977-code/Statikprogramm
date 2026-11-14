@@ -124,7 +124,25 @@ class MaterialDialog(QtWidgets.QDialog):
         f.addRow("Streckgrenze fy [MPa]", self.fy)
         f.addRow("Zugfestigkeit fu [MPa]", self.fu)
         self._grade_anfang = self.grade.currentText()
-        if getattr(m, "fy_dicke", None):
+        # f_y/f_u ueber 80 mm nach der Erzeugnisnorm (Vorschlag vom 14.11.2026, vom
+        # Anwender freigegeben): DIN EN 1993-1-1 Tab. 3.1 endet bei 80 mm, darueber
+        # gibt es ohne Eintrag keinen Nachweis (Befund C4). Die Eingabe wird eine
+        # Dickenstufe (Material.erzeugnisnorm_setzen), die Stahlsorte bleibt (β_w).
+        # Gesperrt bei einer Dickentabelle aus der Quelldatei und ohne Stahlsorte.
+        self._quelltabelle = bool(m.dickentabelle_aus_quelle()) if hasattr(m, "dickentabelle_aus_quelle") \
+            else bool(getattr(m, "fy_dicke", None) or getattr(m, "fu_dicke", None))
+        self._ueber_80_anfang = tuple(
+            (w / 1e6 if w else None) for w in ((m.erzeugnisnorm_wert("fy"), m.erzeugnisnorm_wert("fu"))
+                                               if hasattr(m, "erzeugnisnorm_wert") else (None, None)))
+        self.fy80 = NumEdit(self._ueber_80_anfang[0], 70)
+        self.fu80 = NumEdit(self._ueber_80_anfang[1], 70)
+        for feld, kenn in ((self.fy80, "f_y"), (self.fu80, "f_u")):
+            feld.setToolTip(f"{kenn} für Erzeugnisdicken über 80 mm nach der Erzeugnisnorm (etwa EN 10025-2), "
+                            "in N/mm². DIN EN 1993-1-1 Tab. 3.1 reicht bis 80 mm; ohne Eintrag gibt es "
+                            "darüber keinen Nachweis. Leer = nicht angegeben. Die Stahlsorte bleibt.")
+        f.addRow("f_y/f_u über 80 mm (Erzeugnisnorm) [N/mm²]", row("f_y", self.fy80, "f_u", self.fu80))
+        self._ueber_80_freigeben()
+        if self._quelltabelle:
             # aus der Quelldatei (RFEM): die Nachweise nehmen den Wert der Bauteildicke
             lbl = QtWidgets.QLabel("fy " + m.dickentext("fy") + ("\nfu " + m.dickentext("fu") if m.fu_dicke else ""))
             lbl.setWordWrap(True)
@@ -143,9 +161,32 @@ class MaterialDialog(QtWidgets.QDialog):
             self.name.setText(g)
             self.E.set(m.E / 1e9); self.nu.set(m.nu); self.rho.set(m.rho)
             self.fy.set(m.fy / 1e6); self.fu.set(m.fu / 1e6)
+        # die Werte ueber 80 mm gehoeren zur Sorte: bei einer anderen leer, zurueck bei der alten
+        anfang = g == self._grade_anfang
+        self.fy80.set(self._ueber_80_anfang[0] if anfang else None)
+        self.fu80.set(self._ueber_80_anfang[1] if anfang else None)
+        self._ueber_80_freigeben()
         if self.lbl_dicke is not None:
             self.lbl_dicke.setText(self._dicke_text if self._tabelle_gilt() else
                                    f"entfällt – die Werte der Stahlsorte {g} ersetzen die Tabelle aus der Quelldatei")
+
+    def _ueber_80_freigeben(self) -> None:
+        """Die Zeile ueber 80 mm gilt nur fuer eine Stahlsorte der Tabelle und ohne
+        Dickentabelle aus der Quelldatei."""
+        frei = not self._quelltabelle and self.grade.currentText() in STEEL_GRADES
+        for feld in (self.fy80, self.fu80):
+            feld.setEnabled(frei)
+
+    def _ueber_80(self) -> tuple:
+        """(f_y, f_u) ueber 80 mm aus der Zeile [Pa], leer = None."""
+        werte = []
+        for feld in (self.fy80, self.fu80):
+            try:
+                w = feld.wert(None)
+            except zl.Eingabefehler:
+                w = None                   # eine ungueltige Eingabe sperrt OK ohnehin (Waechter)
+            werte.append(float(w) * 1e6 if w and w > 0 else None)
+        return tuple(werte)
 
     def _tabelle_gilt(self) -> bool:
         """Gelten die Dickentabellen der Vorlage noch? Ja, solange die Stahlsorte die der
@@ -177,11 +218,13 @@ class MaterialDialog(QtWidgets.QDialog):
         vor = self._vorlage
         self.dicken_meldungen = []
         if vor is None:
-            return Material(self.name.text() or "Mat", self.E.value() * 1e9, self.nu.value(),
-                            self.rho.value(), self.alpha.value() * 1e-6,
-                            fy if fy > 0 else None, fu if fu > 0 else None,
-                            g if g in STEEL_GRADES else "",
-                            verfestigung=self._verfestigung, art=self._art)
+            mt = Material(self.name.text() or "Mat", self.E.value() * 1e9, self.nu.value(),
+                          self.rho.value(), self.alpha.value() * 1e-6,
+                          fy if fy > 0 else None, fu if fu > 0 else None,
+                          g if g in STEEL_GRADES else "",
+                          verfestigung=self._verfestigung, art=self._art)
+            self.dicken_meldungen = mt.erzeugnisnorm_setzen(*self._ueber_80())
+            return mt
         # Eine Kopie des Werkstoffs mit den Werten aus den Feldern, soweit sie sich von
         # der Vorlage unterscheiden (13.10.2026): alles Uebrige bleibt, wie es war
         if g in STEEL_GRADES:
@@ -198,7 +241,11 @@ class MaterialDialog(QtWidgets.QDialog):
             alt = getattr(mt, k)
             if not werte_gleich(alt, v) and not (k in ("fy", "fu") and not alt and v is None):
                 setattr(mt, k, v)
-        if self._tabelle_gilt():
+        if not self._quelltabelle:
+            # keine Tabelle aus der Quelldatei: die Stufe ueber 80 mm aus der Zeile des
+            # Dialogs; die Stufen bis 80 mm folgen f_y, f_u und der Sorte von oben
+            self.dicken_meldungen = mt.erzeugnisnorm_setzen(*self._ueber_80())
+        elif self._tabelle_gilt():
             self.dicken_meldungen = mt.dickentabellen_nachfuehren(vor.fy, vor.fu)
         elif mt.fy_dicke or mt.fu_dicke:
             mt.fy_dicke, mt.fu_dicke = [], []

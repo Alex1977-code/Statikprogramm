@@ -1156,6 +1156,16 @@ def lesen(pfad: str, model, fortschritt=None):
     stand = angabe.get("stand") if isinstance(angabe.get("stand"), int) else None
     if stand is None and "reibverfahren" in inhalt:
         stand = 2                       # a371cf2 bis b63e669 (15.10.2026 abends)
+    # Eine Datei von vor Stand 37 (Vorschlag vom 14.11.2026): elementbezogene
+    # Flaechenlager auf vernetzten Flaechen bekommen den offenen Hinweis „Flächenlager
+    # nach Neuvernetzen prüfen“ im Modell - auch wenn die Datei sonst nicht passt; er
+    # steht im Status, bis der Anwender ihn bestaetigt (rechenverfahren, Merkmal
+    # „flaechenlager_neuvernetzen“). Die Kennung liest importhinweise nicht.
+    from .model import flaechenlager_neuvernetzen_hinweis
+    try:
+        flaechenlager_neuvernetzen_hinweis(model, stand)
+    except Exception:                   # noqa: BLE001 - ein Hinweis sperrt kein Oeffnen
+        pass
     # R2-A2: Hat das Oeffnen die Namen auf LF/LK/EK umgestellt (model._umbenennung),
     # traegt die Datei die alten Namen. Die Kennung wird dann gegen den Stand mit
     # den alten Namen geprueft (Model._dict_vor_umstellung), Kombinationen ueber die

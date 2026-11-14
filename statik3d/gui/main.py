@@ -1826,6 +1826,11 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 eintrag("Lagerdichte…", lambda _n: self.lagerdichte_einstellen())
             eintrag("Größe aller Lager…", lambda _n: self.lagergroesse_einstellen(None))
+            # offener Hinweis „Flächenlager nach Neuvernetzen prüfen“ (Vorschlag vom
+            # 14.11.2026): bestaetigen, dass das Lager geprueft ist (Model.flaechenlager_geprueft)
+            if art == "flaechenlager" and self._flaechenlager_hinweis_offen(name):
+                eintrag("Flächenlager geprüft (Hinweis „nach Neuvernetzen prüfen“ erledigt)",
+                        lambda n: self.flaechenlager_geprueft(int(n)))
         elif art == "last":
             eintrag("Bearbeiten…", lambda n: self._lastmaske(*n), maske=True)
         menu.addSeparator()
@@ -9066,10 +9071,13 @@ class MainWindow(QtWidgets.QMainWindow):
                         "nach_dicke", "nach Dicke", "info",
                         "\n".join(f"{mt.fliess_name() if was == 'fy' else mt.grenze_name()} {mt.dickentext(was)}"
                                   for was, tab in (("fy", mt.fy_dicke), ("fu", mt.fu_dicke)) if tab),
-                        hinweis="Streckgrenze und Zugfestigkeit nach Erzeugnisdicke aus der Quelldatei; die "
-                                "Nachweise nehmen den Wert der Dicke des Bauteils. f_y und f_u oben sind die "
-                                "Werte der dünnsten Stufe: ändert man sie, folgt die dünnste Stufe, die "
-                                "übrigen bleiben."))
+                        hinweis=("Streckgrenze und Zugfestigkeit nach Erzeugnisdicke aus der Quelldatei; die "
+                                 "Nachweise nehmen den Wert der Dicke des Bauteils. f_y und f_u oben sind die "
+                                 "Werte der dünnsten Stufe: ändert man sie, folgt die dünnste Stufe, die "
+                                 "übrigen bleiben.") if mt.dickentabelle_aus_quelle() else
+                                ("Über 80 mm nach Erzeugnisnorm eingetragen (Werkstoffdialog, Zeile „f_y/f_u "
+                                 "über 80 mm“); bis 80 mm gelten f_y, f_u und die Stahlsorte nach "
+                                 "DIN EN 1993-1-1 Tab. 3.1.")))
                 titel = f"Werkstoff {name}"
         elif art == "querschnitt":
             sec = m.sections.get(name)
@@ -22813,6 +22821,75 @@ class MainWindow(QtWidgets.QMainWindow):
         self._refresh_status()
         self.statusBar().showMessage("Lagerreibung: selbst gesetzt – behalten", 8000)
 
+    def _flaechenlager_hinweis_offen(self, idx) -> bool:
+        """Hat das Flaechenlager Nummer ``idx`` den offenen Hinweis „Flächenlager nach
+        Neuvernetzen prüfen“ (model.flaechenlager_neuvernetzen_offen)?"""
+        from ..model import flaechenlager_neuvernetzen_offen
+        lager = self.model.surface_supports
+        try:
+            ss = lager[int(idx)]
+        except (IndexError, TypeError, ValueError):
+            return False
+        return str(ss.name) in flaechenlager_neuvernetzen_offen(self.model)
+
+    def flaechenlager_geprueft(self, idx: int) -> None:
+        """Rechtsklick „Flächenlager geprüft“ (Vorschlag vom 14.11.2026): der Anwender
+        bestaetigt den Hinweis „nach Neuvernetzen prüfen“; die Logik steht in
+        Model.flaechenlager_geprueft. Der Status der geladenen Ergebnisse wird neu
+        bewertet - sie bleiben (der Hinweis zaehlt nicht in der Rechnung). Ein
+        Rueckgaengig-Schritt."""
+        from .. import rechenverfahren as _rv
+        ss = self.model.surface_supports[int(idx)]
+        self.merken(f"Flächenlager {ss.name} geprüft", beschriftung=True)
+        self.model.flaechenlager_geprueft(ss.name)
+        info = getattr(self.analysis, "info", None)
+        if isinstance(info, dict) and isinstance(info.get("rechenverfahren"), dict):
+            bew = _rv.bewerten(self.model, info["rechenverfahren"], self.analysis)
+            for k, v in (("verfahren_hinweis", bew["hinweis"]), ("verfahren_betroffen", bew["betroffen"])):
+                if v:
+                    info[k] = v
+                else:
+                    info.pop(k, None)
+        self.log.appendPlainText(f"Flächenlager „{ss.name}“ nach Neuvernetzen geprüft – Hinweis erledigt "
+                                 "(im Modell vermerkt)")
+        self._refresh_kopf()
+        self._refresh_status()
+        self.statusBar().showMessage(f"Flächenlager „{ss.name}“: geprüft", 8000)
+
+    def _u_profile_iw_fragen(self) -> bool:
+        """Beim Oeffnen (Vorschlag vom 14.11.2026, vom Anwender freigegeben): traegt die
+        Datei U-Profile mit I_w nach der Formel bis zum 14.11.2026 (Befund C6), fragt das
+        Programm, ob I_w nach der berichtigten Formel neu berechnet werden soll. Ja:
+        Rueckgaengig-Schritt, Model.u_profile_iw_berichtigen (eigene Werte bleiben),
+        Protokollzeile; geladene Ergebnisse gehoeren zum alten I_w und werden verworfen
+        (Modell geaendert). Nein: alles bleibt, der Status bleibt. Rueckgabe: berichtigt?"""
+        namen = self.model.u_profile_iw_alt()
+        if not namen:
+            return False
+        ergebnisse = self.analysis is not None or self.results is not None
+        text = ("Die Datei enthält U-Profile, deren Wölbwiderstand I_w nach der Formel bis zum 14.11.2026 "
+                "berechnet ist (volle Flanschbreite, zu groß): " + ", ".join(namen[:6])
+                + (" …" if len(namen) > 6 else "") + ".\n\n"
+                "I_w der U-Profile nach der berichtigten Formel neu berechnen?\n\n"
+                "Eigene I_w-Werte bleiben unverändert. Ein Rückgängig-Schritt."
+                + (" Die geladenen Ergebnisse gehören zum alten I_w und werden verworfen (neu rechnen); "
+                   "Rückgängig holt sie nicht zurück." if ergebnisse else ""))
+        if not self._fragen("I_w der U-Profile", text):
+            self.log.appendPlainText("I_w der U-Profile nicht neu berechnet (" + ", ".join(namen[:6])
+                                     + (" …" if len(namen) > 6 else "")
+                                     + ") – der Status „Wölbwiderstand I_w der U-Profile“ bleibt")
+            return False
+        self.merken("I_w der U-Profile neu berechnet")
+        for z in self.model.u_profile_iw_berichtigen():
+            self.log.appendPlainText(z)
+        if ergebnisse:
+            self.analysis = None
+            self.results = None
+            self._ergebnisse_verworfen_nachziehen()
+        self.refresh_all()
+        self.info("I_w der U-Profile nach der berichtigten Formel neu berechnet")
+        return True
+
     def _lager_rfem_anwenden(self, w: dict):
         from ..importers import rfem6_db as R6
         m = self.model
@@ -31914,6 +31991,12 @@ class MainWindow(QtWidgets.QMainWindow):
         if (getattr(self.model, "_umbenennung", None) or {}).get("geaendert"):
             self._namen_umgestellt = True
             self._titel_nachziehen()
+        # U-Profile mit I_w nach der alten Formel (Vorschlag vom 14.11.2026): die Frage
+        # nach dem Oeffnen; Ja ist eine Aenderung (Stern im Titel, Rueckgaengig)
+        try:
+            self._u_profile_iw_fragen()
+        except Exception as ex:          # noqa: BLE001 - eine Frage sperrt kein Oeffnen
+            self.log.appendPlainText(f"I_w der U-Profile nicht geprüft: {ex}")
         return True
 
     def _analyse_passt(self) -> str:
