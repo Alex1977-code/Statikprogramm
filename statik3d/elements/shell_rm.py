@@ -578,6 +578,23 @@ def verzerrungen_schale(typ: str, P, E, nu, t, u_glob, laminat=None) -> dict:
             "T3": T3}
 
 
+def laminat_randspannungen(lam: Laminat, n, m) -> tuple:
+    """Spannungen (sx, sy, txy) der aeussersten Fasern eines Laminats aus den
+    Schnittgroessen n, m (Elementsystem) nach der klassischen Laminattheorie:
+    [eps0; kappa] = ABD^-1 [n; m], sigma = Qbar_k (eps0 + z kappa) - oben mit
+    der obersten Lage bei z = +t/2, unten mit der untersten bei z = -t/2.
+
+    n und m sind die mechanischen Schnittgroessen (die Rueckrechnung zieht
+    den Temperaturanteil ab); mit einer Waermedehnzahl fuer alle Lagen sind
+    eps0 und kappa daraus die mechanischen Dehnungen. Rueckgabe (oben, unten)."""
+    abd = np.block([[lam.A, lam.B], [lam.B, lam.D]])
+    ek = np.linalg.solve(abd, np.concatenate([np.asarray(n, float), np.asarray(m, float)]))
+    eps, kappa = ek[:3], ek[3:]
+    Q_oben, _, _, z_oben = lam.q_lagen[-1]
+    Q_unten, _, z_unten, _ = lam.q_lagen[0]
+    return Q_oben @ (eps + z_oben * kappa), Q_unten @ (eps + z_unten * kappa)
+
+
 def _von_mises(sig) -> float:
     sx, sy, sxy = sig
     return float(np.sqrt(sx ** 2 - sx * sy + sy ** 2 + 3 * sxy ** 2))

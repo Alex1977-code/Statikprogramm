@@ -3709,18 +3709,18 @@ geneigter Quader auf Bettung verschob sich in eine um 49° falsche Richtung,
 ein radial gebetteter Zylinder war in einer Querrichtung ungehalten).
 Ausgenommen ist ein Lager, das in allen drei Richtungen gleich wirkt (gleiche
 Feder oder starr, ohne Ausfall und Reibung): dort spielt die Achse keine
-Rolle. Bei Schalen ist die Normale die lokale z-Achse aus der Knotenreihenfolge
-der Elemente; eine ebene Schalenplatte gilt darum in jeder Höhe als einseitig.
+Rolle. Bei Schalen ist die Normale die lokale z-Achse der Elemente, die seit dem
+12.11.2026 vor jeder Rechnung zur Fläche ausgerichtet sind (Abschnitt „Lage
+der Schalenelemente“); eine ebene Schalenplatte gilt darum in jeder Höhe als einseitig.
 Zeigen einzelne Elemente einer Schalenfläche ohne Körper zur Gegenseite
 (etwa von Hand umgedreht), richtet die Prüfung sie seit dem 12.11.2026 nach
 der ersten Facette aus: Die Lage der Schalenelemente wählt der Anwender frei,
 und das Lager einer Schalenfläche liegt ohnehin unten. Es gibt keinen Fehler
 mehr, und die Auflagerkräfte sind dieselben wie ohne das umgedrehte Element.
 Bis dahin meldete die Prüfung „hat Facetten nach beiden Seiten“ und die
-Rechnung startete nicht. An anderen Stellen hängt die Rechnung noch an der
-Lage des einzelnen Elements, etwa bei Flächenlasten in lokal z und beim
-Temperaturunterschied oben − unten (offen, siehe Release-Notes vom
-12.11.2026). Ein aus RFEM übernommenes Lager kennt seine Linien bzw. Flächen
+Rechnung startete nicht. Seit dem 12.11.2026 hängt die Rechnung auch sonst nicht
+mehr an der Lage des einzelnen Elements (Abschnitt „Lage der
+Schalenelemente“). Ein aus RFEM übernommenes Lager kennt seine Linien bzw. Flächen
 der Geometrie; die Symbole belegen darum die ganze Fläche, auch wenn noch
 kein Netz vorliegt. Wie dicht die Symbole stehen, sagt die **Lagerdichte**:
 Schieber „Lagerdichte" in der rechten **Maske „Darstellung“** (*Ansicht →
@@ -7432,6 +7432,23 @@ durch den Verschluss** mit Druckfigur und Resultierender. Ein Generierer lässt
 sich im Modellbaum anklicken (ändern, erneut erzeugen) und mit Entf samt seinen
 Lasten löschen.
 
+**Wasserdruck an Schalen ohne globale Richtung** (seit 12.11.2026). Die Seite,
+auf der das Wasser steht, ergibt sich aus der Eingabe und der Flächennormalen
+aus dem Umlauf der Randlinien, nicht aus der Knotenfolge der Elemente; dasselbe
+gilt für „Oberwasser an der Oberseite/Unterseite“. Bis zum 12.11.2026 wirkte
+der Wasserdruck an Schalenflächen ohne globale Lastrichtung zum Wasser hin statt
+vom Wasser weg: „senkrecht zur Fläche, gegen die Normale (in den Körper)“ wirkte
+an Schalen mit der Normalen, und strömungsnumerisch drückte das Oberwasser die
+Schale zu sich hin. An einer Wand 2 × 3 m mit 2,5 m Wasser (½·γ·h²·b =
+61,31 kN) bog sie sich 64,7 mm zum Wasser statt vom Wasser weg. Volumen und
+Wasserdrücke mit globaler Richtung waren richtig, die Testmodelle
+Fischbauchklappe, Hubtor und Stemmtor sind nicht betroffen. Ergebnisse
+betroffener Modelle tragen den Status „Ergebnis möglicherweise betroffen – neu
+rechnen“ (Verfahrensstand 32). Außerdem erkennt der Zwischenspeicher des
+strömungsnumerischen Druckfelds geänderte Geometrie jetzt auch bei gleicher
+Knoten- und Elementzahl; bis dahin konnte nach dem Drehen einer Wand das alte
+Feld mit umgekehrtem Vorzeichen zurückkommen.
+
 Was die Strömungsrechnung annimmt und nicht kann, steht im Theoriehandbuch
 (Abschnitt 2.1a): reibungsfreie Potentialströmung in einer Schnittebene,
 Wasserspiegel als feste Deckel, keine Wechselsprünge, keine Wellen.
@@ -7491,6 +7508,38 @@ einem älteren Programmstand erzeugt sind, wirken an Schalen weiter gegen den
 Wind; das Programm nennt sie beim Öffnen und im Status „möglicherweise
 betroffen“ – auch nach einem Neurechnen –, bis sie über *Lasten → Wind* neu
 erzeugt sind.
+
+**Freie Wände, Tafeln und Gebäudemaße** (seit 12.11.2026). Wind auf
+freistehende Wände und Anzeigetafeln wirkt immer in Windrichtung, gleich wie
+herum die Randlinien eingegeben sind: c_p,net nach Tabelle 7.9 und c_f = 1,8
+nach 7.4.3 gelten für die Wand als Ganzes in Windrichtung. Bis dahin wirkte die
+Last bei umgekehrt eingegebener Fläche gegen den Wind, und die Kontrollsumme
+zeigte denselben falschen Wert. Höhe h, Breite b und Tiefe d des Gebäudes, und
+damit e, h/d und die Zonen, kommen nur noch aus den Gebäudeflächen; freie Wände,
+Tafeln und Stäbe im selben Wind verändern sie nicht mehr (ein Quader
+10 × 10 × 10 m bekam mit einer freien Wand 30 m daneben b/d = 45/30 m), und jede
+freie Wand zählt ihre Zonen A bis D ab ihren eigenen Enden. Windlasten, die mit
+einem älteren Stand und freien Wänden, Tafeln oder Stäben erzeugt wurden, nennt
+das Programm beim Öffnen und im Ergebnisstatus; sie sind über Lasten › Wind neu
+zu erzeugen. Eine Flächenlast auf die Projektion mit linearem Verlauf trifft
+jetzt je Stelle die Seite, von der die Kraft kommt: Ein Verlauf von 0 auf
+−5 kN/m² global Z belastet das Dach und nicht die Unterseite. Verfahrensstand 33.
+
+**Freie Wand oder Tafel aus einem Volumen** (seit 12.11.2026). Ist eine
+freistehende Wand oder Anzeigetafel als Volumen modelliert und sind beide
+großen Seitenflächen als freie Wand bzw. Tafel gewählt, gelten die beiden
+gegenüberliegenden Seitenflächen desselben Volumens als eine Wand. Der
+Nettobeiwert c_p,net (Tabelle 7.9) bzw. c_f (7.4.3) erfasst Luv- und Leeseite
+schon zusammen; die Last wirkt darum nur einmal, auf der luvseitigen Fläche und
+in Windrichtung, und wechselt bei Anströmung von der Gegenseite mit. Das
+Protokoll der Lasterzeugung nennt die beiden Flächen, das Volumen und die
+Fläche, auf der die Last sitzt (im Bericht steht dieser Satz nicht). Bis dahin
+trug jede Seitenfläche die volle Nettolast: Eine Wand 10 × 0,3 × 3 m bekam
+53,5 statt 26,8 kN, dieselbe Wand als Schale 26,8 kN. Ältere so erzeugte
+Windlasten nennt das Programm beim Öffnen und im Ergebnisstatus; sie sind über
+Lasten › Wind neu zu erzeugen. Eine Schalenwand, ein Volumen mit nur einer
+gewählten Seitenfläche und Gebäude ohne freie Wand sind unverändert.
+Verfahrensstand 39; geprüft in `tests/test_wind_freie_wand_volumen.py`.
 
 **Numerischer Windkanal.** Mit *Verfahren → numerischer Windkanal* wird die
 Strömung um die gewählten Flächen und Stäbe in einem Schnitt gerechnet
@@ -7687,6 +7736,13 @@ unter ΔT = 50 K ein Moment von 1 500 Nm/m und eine Vergleichsspannung von
 90 N/mm², obwohl sie spannungsfrei ist. Verformungen und Lagerkräfte waren
 richtig. Die Wärmedehnzahl gilt für den ganzen Aufbau (die des Werkstoffs der
 Schale), nicht je Lage. Geprüft in `tests/test_laminat_temperatur.py`.
+
+**Randspannungen geschichteter Schalen** (seit 12.11.2026). Die Spannungen oben
+und unten sind die der äußersten Faser der obersten bzw. untersten Lage nach der
+Laminattheorie: [ε0; κ] = ABD⁻¹·[n; m], σ = Q̄·(ε0 + z·κ). Bis dahin wurden
+sie wie bei einer homogenen Schale mit n/t ± 6·m/t² gerechnet; der Zweischichter
+oben unter ΔT = 50 K, voll gehalten, zeigte −30/−210 statt −60/−180 N/mm².
+Verfahrensstand 36; geprüft in `tests/test_schale_beul_anschluss.py`.
 
 ## 5 Lager: Ausfall, Schlupf, Reibung, Bettung
 
@@ -9545,6 +9601,22 @@ einem Stab, dessen Elemente keine Kette bilden, steht als Zeile „WARNUNG: SAF:
 nicht geschrieben“ im Protokoll des Exports; im Blatt fehlt dann die Zeile, statt
 dass sie verfälscht erscheint.
 
+**Exporte seit dem 12.11.2026.** Im SAF-Export geht eine globale Stablast je
+Projektion in einer Achsrichtung mit Location „Projection“ hinaus, und der
+Import liest sie wieder als Last je Projektion; eine schräge Last je Projektion
+wird in die gleichwertige Last je wahrer Stablänge umgerechnet, und das
+Protokoll nennt das (bis dahin am Stab unter 45° 41 % zu viel). Lastfälle tragen
+Action type, Load type und eine Lastgruppe nach der SAF-Beschreibung, dazu die
+Statik3D-Spalte „Category“; bis dahin kam jeder Lastfall als Q zurück.
+Federsteifigkeiten der Knotenlager stehen in MN/m bzw. MNm/rad, wie SAF es
+vorschreibt; bis dahin kamen sie nach dem Rundlauf 10⁶-fach steifer zurück.
+SAF-Dateien, die Statik3D vorher mit gefederten Knotenlagern geschrieben hat,
+sind neu zu exportieren. Bei Nastran und Abaqus gehen Tetraeder mit Ordnung p
+(tetp2 bis tetp4) über ihre Eckknoten als lineare Tetraeder hinaus, mit einem
+Hinweis, dass sie dort steifer rechnen; ebene Elemente (ebene3 bis ebene8) nennt
+der Hinweis bei Nastran und IFC mit Art und Anzahl als fehlend, DXF schreibt sie
+als Flächen auf die Ebene EBENE. Bis dahin fehlten diese Elemente ohne ein Wort.
+
 Bis zum 06.10.2026 schrieb der SAF-Export von jeder Stablast nur ihren Wert q:
 ein Trapez und ein Abschnitt von a bis b gingen als volle Gleichlast hinaus, der
 Stab hieß „E1“ statt wie im Blatt der Stäbe, und der SAF-Import fand ihn nicht
@@ -10876,6 +10948,15 @@ S355 (355/510 N/mm²). Ältere Ergebnisse solcher Modelle tragen „Ergebnis
 möglicherweise betroffen – neu rechnen“. Geprüft in
 `tests/test_anschluss_festigkeit.py`.
 
+**Korrelationsbeiwert β_w** (seit 12.11.2026). β_w der Kehlnähte kommt aus der
+Stahlsorte des Werkstoffs (EN 1993-1-8, Tabelle 4.1). Fehlt die Sorte oder ist
+sie unbekannt, werden Kopfplatte und geschweißtes Knotenblech nicht
+nachgewiesen und nicht vorgeschlagen; eine Meldung nennt den Werkstoff. Bis
+dahin galt still S355 mit β_w = 0,9, und die Beschreibung nannte S355. Ein
+Laschenstoß ohne Naht braucht die Sorte nicht. Der Vorschlag des geschweißten
+Knotenblechs bemisst die Naht jetzt mit β_w der Sorte statt fest mit 0,9 (S460:
+151 statt 136 mm). Verfahrensstand 36.
+
 Dasselbe gilt seit dem 09.11.2026 für den **Anschlussvorschlag** (Kopfplatte,
 Lasche, Knotenblech) und für den **Nachweis eines Stabes mit Gewinde**. Fehlt
 im Werkstoff f_y oder f_u, gibt es keinen Vorschlag, sondern die Meldung mit
@@ -11105,6 +11186,13 @@ Nachweise gehen in den Status der Stelle ein.
 Was **nicht** enthalten ist: Kegel- und Kugelschalen, ringversteifte Schalen
 und die numerischen Verfahren (GMNIA) nach EN 1993-1-6, 8.7. Liegen die
 Elemente eines ebenen Feldes nicht in einer Ebene, sagt das Programm es.
+
+**Spannungen im Beulnachweis** (seit 12.11.2026). Der Beulnachweis dreht die
+Flächenspannungen aus den Flächenachsen in die Feldachsen. Vom 09.11. bis zum
+12.11.2026 wurden sie zusätzlich mit der ersten Elementkante gedreht: Ein Feld,
+dessen Elemente gegen die Flächenachsen verdreht waren, hatte falsche
+Beulspannungen, bei 90° waren Längs- und Querspannung vertauscht, an einem
+liegenden Rohr Meridian- und Umfangsspannung. Verfahrensstand 36.
 
 ### Volumennachweise
 
@@ -11395,8 +11483,8 @@ der Theorie III. Ordnung kondensiert die geometrische Steifigkeit an Gelenken
 und Federgelenken wie die Theorie II. Ordnung. Bis zum 09.11.2026 bekam sie
 die volle Balkenform; mit einer Pendelstütze als Balken mit Gelenken neben
 einem Kragstiel fand die Rechnung ab 5/6 der Knicklast kein Gleichgewicht.
-Der Versatz der Stabenden ist nach Theorie III. Ordnung **nicht**
-berücksichtigt.
+Den Versatz der Stabenden berücksichtigt Theorie III. Ordnung seit dem
+12.11.2026 (siehe unten).
 
 **Stablast am Gelenk nach Theorie III. Ordnung** (seit 12.11.2026). Die
 Stabendkräfte eines Balkens mit Gelenk oder Federgelenk nehmen die Stablast
@@ -11407,6 +11495,47 @@ eingespannten Einfeldträger in einem Element, am Stabanfang 15,0 statt
 22,5 kNm). Das Gleichgewicht der Knoten stimmte, nur die Stabendkräfte und
 das Feld nicht. Alle drei Punkte sind geprüft in
 `tests/test_theorie_nebenbefund16.py`.
+
+**Versatz der Stabenden nach Theorie III. Ordnung** (seit 12.11.2026). Der
+Versatz (Exzentrizität) wirkt als starrer Arm vom Knoten zum Stabende, der sich
+mit der Knotendrehung mitdreht; der Stab liegt zwischen seinen Stabenden. Bis
+dahin fiel der Versatz nach Theorie III. Ordnung ohne Hinweis weg: Ein Kragarm
+mit 0,1 m Versatz unter Zug in der Knotenlinie hob sich nach Theorie I. Ordnung
+um F·e·L²/(2·E·I), nach Theorie III. Ordnung gar nicht, und das Stabendmoment
+F·e fehlte. Bei kleinen Lasten stimmt Theorie III. Ordnung jetzt mit Theorie I./
+II. Ordnung überein, bei großen Verdrehungen (bis 32°) mit einem Modell aus
+starren Kurzstäben. Die interne Stabteilung teilt Stäbe mit Versatz nicht.
+Verfahrensstand 34; geprüft in `tests/test_theorie3_versatz.py`.
+
+**Verschiedener Versatz an Anfang und Ende in allen Rechenarten** (seit
+12.11.2026). Ein Stab, dessen Versatz am Anfang und am Ende verschieden ist,
+liegt jetzt auch nach Theorie I. und II. Ordnung zwischen seinen versetzten
+Stabenden; der Versatz wirkt als starrer Arm vom Knoten zum Stabende wie nach
+Theorie III. Ordnung. Länge, lokale Achsen, Stablasten (auch je Projektion),
+Eigengewicht, geometrische Steifigkeit, α_cr und die Schnittgrößen beziehen
+sich auf diese Stabachse; die Elementlänge in Tabellen und Bericht ist die
+Länge zwischen den versetzten Enden. Bis dahin lag ein solcher Stab auf der
+Knotenlinie, nur seine Enden waren versetzt, und das Momentengleichgewicht ging
+verloren: Ein Kragarm von 4 m mit 50 kN Zug durch die Einspannung und 0,1 m
+Versatz nur am Stabende ergab ein Einspannmoment von 5,0 kNm statt 0. Geprüft
+gegen die Handrechnung und gegen dasselbe System aus starren Kurzstäben ohne
+Versatz; ein linear geteilter Stab gleicht dem ungeteilten. Stäbe ohne Versatz
+oder mit gleichem Versatz an beiden Enden rechnen bitgleich wie bisher.
+Ergebnisse von Modellen mit verschiedenem Versatz an den Stabenden tragen den
+Status „möglicherweise betroffen – neu rechnen“. Verfahrensstand 38; geprüft in
+`tests/test_versatz_starrer_arm.py`.
+
+**Wölbkrafttorsion und Längsgelenk nach Theorie II. Ordnung** (seit
+12.11.2026). Balken mit Wölbkrafttorsion rechnen ihre Stabendkräfte jetzt mit
+der geometrischen Steifigkeit, (k + k_G)·u, und führen den Anteil N·w im Feld
+wie alle übrigen Balken; bis dahin wich das Stabendmoment eines Kragarms in
+einem Element um 8 % vom Lagermoment ab. Ein Stab mit Längsgelenk (ux frei oder
+Federgelenk ux mit k = 0) trägt keine Normalkraft und geht jetzt ohne
+Normalkraft in die geometrische Steifigkeit, in α_cr und in die Rechnung nach
+Theorie II. Ordnung ein; bis dahin stand er dort mit der Normalkraft aus der
+Längenänderung (Stütze unter Querlast 3,88 bzw. 2,69 statt q·L²/8 =
+3,125 kNm). Verfahrensstand 35; geprüft in
+`tests/test_theorie2_befunde_32_33.py`.
 
 **α_cr in Situationen** (seit 14.10.2026). Ein Stab, der in der Situation
 eines Lastfalls oder einer Kombination abgeschaltet ist oder als
@@ -12797,6 +12926,44 @@ PARDISO weg; sie gehörten nicht zur Lösung des Ersatzes. Am Ergebnis ändert
 das nichts, es ist nur die Angabe (Test
 `test_loeser_nachweis_nennt_das_ausweichen` in `tests/test_loeser.py`).
 
+### Lage der Schalenelemente (seit 12.11.2026)
+
+Die Lage eines Schalenelements, also die Folge seiner Knoten, aus der oben,
+unten und die lokale z-Achse folgen, ändert die Rechnung nicht mehr. Beim
+Vernetzen, beim Import, vor dem Erzeugen von Wind- und Wasserdrucklasten und
+vor jeder Rechnung richtet das Programm alle Schalenelemente einer Fläche zur
+Flächennormalen aus. Die Flächennormale ergibt sich aus dem Umlauf der
+Randlinien, wie in der Ansicht der Flächenachsen. Schalenelemente ohne Fläche,
+etwa aus einem Nastran- oder Abaqus-Netz, werden je zusammenhängendem Stück zum
+Element mit der kleinsten Nummer ausgerichtet. Was zur Fläche gehört (ihre
+Lasten, ihr Temperaturunterschied ΔT_z, ihr Schichtaufbau), ist zur
+Flächennormalen definiert und wirkt danach an jedem Element gleich. Was am
+einzelnen Element hängt (eine eigene Elementlast senkrecht zum Element, ein
+eigenes ΔT_z, ein eigener Schichtaufbau aus einem Import), dreht beim Ausrichten
+physikalisch gleich mit. Das Protokoll nennt Fläche und Elementnummern (ab 0)
+jedes umgedrehten Elements. Umgedreht wird durch Umkehr des Umlaufs mit
+festem Knoten 0; ein gespiegeltes Element bekommt so genau seine frühere
+Knotenfolge zurück, und die Diagonale, an der Lasten und Kontaktfacetten ein
+Viereck teilen, bleibt dieselbe. Ein Schichtaufbau, der über die Dicke der
+Fläche zugewiesen ist, gilt zur Flächennormalen und bleibt unverändert; nur ein
+Aufbau am einzelnen Element wird mit umgekehrter Lagenfolge und mit dem
+Faserwinkel zur neuen lokalen x-Achse gewendet. Eine Kontaktfuge an einer
+Schale findet ihre Gegenfläche auf der näheren Seite, gleich wie Schale und
+Fläche orientiert sind, und eine Schale als Gegenseite gilt von beiden Seiten
+(bis dahin wurde ein Blech, dessen Normale vom Block wegzeigte, an die 200 mm
+entfernte Unterseite gebunden). Die Flächenachsen in der Ansicht zeigen immer
+die Normale der Fläche aus ihrem Randumlauf. Beim Öffnen einer Datei wird nicht ausgerichtet:
+Ältere Ergebnisse eines Modells mit gegen ihre Fläche gedrehten Schalen tragen
+den Status „Ergebnis möglicherweise betroffen – neu rechnen“ (Verfahrensstand
+31). Bis dahin wirkten an einem gespiegelten Element die Flächenlast, ΔT_z, der
+Wasserdruck und der Wind verkehrt herum; an einer Platte mit einem von 64
+Elementen gespiegelt fehlten 3 % der Auflagerkraft, und die Anzeige von oben,
+unten, m_x, m_y und n_xy wechselte das Vorzeichen. Geprüft wird das in
+`tests/test_schalenlage_ausrichten.py` und unabhängig davon in
+`tests/test_schalenlage_invariant.py`, die jedes Prüfmodell einmal wie vernetzt
+und einmal mit gespiegelten Elementen rechnet und Verschiebungen, Lagerkräfte,
+Lastsummen, Schnittgrößen, Knotenmittel, Bericht und Beulnachweis vergleicht.
+
 ### Abnahme des Netzes vor dem Rechnen
 
 Vor jedem Lauf nimmt das Programm das Netz ab. Ein Bauteil ist vollständig
@@ -13629,6 +13796,19 @@ Ein fremder Knoten mitten auf einem Bogen steht mit Namen im Protokoll und als
 Warnung in der Abnahme; gekrümmte Linien werden nicht geteilt. Abhilfe ist,
 den Bogen dort von Hand in zwei Bögen zu teilen. Dieselbe Warnung erscheint für Netze von vor dem 09.11.2026; dann neu
 vernetzen. Geprüft in `tests/test_flaechen_teilen.py`.
+
+**Doppelte Randlinien und Lager beim Neuvernetzen** (seit 12.11.2026). Zwei
+Randlinien verschiedener Schalenflächen zwischen denselben Knoten, etwa eine
+Rippe mit eigener Linie auf dem Plattenrand, sind im Netz immer eine Linie mit
+gemeinsamen Netzknoten; das Protokoll nennt jede solche Stelle. Bis dahin waren
+sie nur an den Linienenden verbunden, außer wenn zufällig ein fremder Knoten auf
+der Linie lag (Platte 4 m aus zwei Flächen: 397,7 statt 149,6 mm). Ein
+Flächenlager mit Elementliste bleibt beim Neuvernetzen auf seinem Ort, in der
+Oberfläche, über die Befehlszeile und über die Web-Schnittstelle. Lag es auf
+einer ganzen Fläche oder einem ganzen Körper, folgt es deren neuem Netz, und das
+Protokoll nennt es; lag es nur auf einem Teil, meldet die Modellprüfung „Netz
+geändert – Lager prüfen“. Bis dahin konnte es in der Oberfläche still auf die
+Elemente einer Nachbarfläche rücken. Verfahrensstand 37.
 
 ### Abbruch der Kontakt-Iteration: die letzte Verformung bleibt sichtbar
 

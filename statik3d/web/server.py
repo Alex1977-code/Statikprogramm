@@ -1159,27 +1159,16 @@ def _op_move_node(st, m, d):
 
 
 def _remove_elements(m: Model, elems: set[int]):
-    keep = [i for i in range(len(m.elements)) if i not in elems]
-    new = {old: k for k, old in enumerate(keep)}
-    m.elements = [m.elements[i] for i in keep]
-    for lc in m.load_cases.values():
-        for attr in ("beam_loads", "face_loads", "temp_loads"):
-            kept = []
-            for l in getattr(lc, attr):
-                if l.elem in new:
-                    l.elem = new[l.elem]
-                    kept.append(l)
-            setattr(lc, attr, kept)
+    # Ueber Model.elemente_loeschen wie Oberflaeche und Vernetzer: bis zum
+    # 12.11.2026 nummerierte dieser Weg selbst um und liess Flaechen, Koerper
+    # und elementbezogene Flaechenlager stehen (Befund 11 der Pruefagenten)
+    m.elemente_loeschen(elems)
     for name in list(m.members):
-        mem = m.members[name]
-        mem.elements = [new[e] for e in mem.elements if e in new]
-        if not mem.elements:
+        if not m.members[name].elements:
             # ueber Model.stab_loeschen (Fehlerliste F28): seine Verweise gehen
             # mit; sperrt ein Nachweis das Loeschen, bleibt der Stab ohne
             # Element stehen wie in der Oberflaeche (check() meldet ihn)
             m.stab_loeschen(name, verteilen=False)
-    for p in m.contact_pairs:
-        p.master_elements = [new[e] for e in p.master_elements if e in new]
 
 
 def _remove_nodes(m: Model, nodes: set[int]):

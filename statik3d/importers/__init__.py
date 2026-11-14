@@ -416,6 +416,13 @@ def import_file(path: str, model: Model = None, log: list = None, **options) -> 
         C.say(log, "Entartete Volumenelemente umgewandelt ("
                    + ", ".join(f"{k}: {v}" for k, v in umgewandelt.items())
                    + ") - " + _dg.entartung_genauigkeit(umgewandelt))
+    # Schalenelemente einheitlich ausrichten (12.11.2026): je Flaeche zu ihrer
+    # Normalen, ohne Flaeche je zusammenhaengendem Stueck zum Element mit der
+    # kleinsten Nummer; Elementlasten in lokal z, dT_z und Schichtfolge drehen
+    # mit (statik3d.schalenlage). Die Knoten bleiben, wo sie sind.
+    from ..schalenlage import schalen_ausrichten
+    for z in schalen_ausrichten(model):
+        C.say(log, z)
     ext = os.path.splitext(path)[1].lower()
     if ext in _NO_MEMBER_INFO or kind == "cad":
         members = model.auto_members()

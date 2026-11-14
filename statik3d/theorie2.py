@@ -318,15 +318,15 @@ def ersatzlasten_vorkruemmung(model: Model, res, elastisch: bool = True,
         q = 8.0 * Nc * e0 / L ** 2
         for ie in mem.elements:
             el = model.elements[ie]
-            T3, Le = bm.local_axes(model.nodes[el.nodes[0]],
-                                   model.nodes[el.nodes[1]], el.roll)
+            # Achsen und Laenge des Stabs (mit verschiedenem Versatz zwischen
+            # den versetzten Enden, wie member_length; 12.11.2026)
+            T3, Le = asm.stab_achsen(model, el)
             ny = T3[1]                            # lokale y-Achse global
             fk = 0.5 * q * Le
             for nd in (int(el.nodes[0]), int(el.nodes[1])):
                 F[nd * NDOF:nd * NDOF + 3] += fk * ny
         ea = model.elements[mem.elements[0]]
-        T3a, _ = bm.local_axes(model.nodes[ea.nodes[0]], model.nodes[ea.nodes[1]],
-                               ea.roll)
+        T3a, _ = asm.stab_achsen(model, ea)
         na = int(ea.nodes[0])
         nb = int(model.elements[mem.elements[-1]].nodes[-1])
         V = 4.0 * Nc * e0 / L

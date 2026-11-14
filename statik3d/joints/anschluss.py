@@ -32,6 +32,7 @@ from dataclasses import dataclass, field, fields
 from ..model import Model, Joint
 from .bolts import Bolt
 from .templates import TEMPLATES
+from .welds import beta_w
 
 #: Felder der Vorlagen, die nicht zur Geometrie gehoeren
 NICHT_GEOMETRIE = {"name", "model", "elem", "end", "bolt", "grade", "fy", "fu",
@@ -96,7 +97,7 @@ def vorlage(model: Model, joint: Joint):
                          "kein Vorgabewert")
     t = TEMPLATES[joint.typ](
         name=joint.name, model=model, elem=int(joint.elem), end=int(joint.end),
-        grade=mat.grade or "S355",
+        grade=mat.grade or "",
         fy=fy,
         fu=fu,
         gamma_M0=ds.gamma_M0, gamma_M2=ds.gamma_M2, sec=sec)
@@ -106,6 +107,15 @@ def vorlage(model: Model, joint: Joint):
     for k, v in (joint.geometrie or {}).items():
         if hasattr(t, k):
             setattr(t, k, v)
+    # Kehlnaehte: beta_w kommt aus der Stahlsorte (EN 1993-1-8 Tab. 4.1). Ohne
+    # Sorte kein Nachweis und eine Meldung - bis zum 12.11.2026 rechnete der
+    # Anschluss still mit S355 (beta_w 0,9) und nannte S355 in der Beschreibung
+    # (Pruefbericht 11.11.2026, Befund 2: S460-Werte η 0,9950 statt 1,1055)
+    if t.hat_naehte:
+        try:
+            beta_w(t.grade)
+        except ValueError as ex:
+            raise ValueError(f"Werkstoff „{mat.name}“: {ex}") from None
     return t
 
 

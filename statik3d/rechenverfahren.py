@@ -225,6 +225,92 @@ def _projiziert_negativ_an_volumen(model) -> bool:
     return False
 
 
+def _projiziert_verlauf_vorzeichen(model) -> bool:
+    """Eine Flaechenlast „auf die Projektion“ mit Verlauf an einem Koerper oder
+    einer Koerperrandflaeche, deren Wert an einer Seite ein anderes Vorzeichen
+    hat als gl.p (der Wert bei A) - dort traf sie bis zum 12.11.2026 die der
+    Kraft abgewandte Seite (Befund 9 der Pruefagenten). Gezaehlt am Netz (die
+    Seitenmitten, wie die Last verteilt wird); Schalen sind nicht betroffen."""
+    flaechen = getattr(model, "flaechen", None) or {}
+    koerper = getattr(model, "koerper", None) or {}
+    for lc in (getattr(model, "load_cases", None) or {}).values():
+        for gl in getattr(lc, "geometrielasten", None) or []:
+            v = getattr(gl, "verlauf", None) or {}
+            if not getattr(gl, "projiziert", False) or v.get("art") != "linear":
+                continue
+            if not (getattr(gl, "richtung", None) or getattr(gl, "lastbezug", "") in ("global", "ks")):
+                continue
+            if getattr(gl, "art", "flaeche") == "flaeche":
+                ziele = [flaechen.get(str(gl.ziel))]
+            else:
+                k = koerper.get(str(gl.ziel))
+                ziele = [flaechen.get(n) for n in (getattr(k, "flaechen", None) or [])] if k is not None else []
+            negativ = float(getattr(gl, "p", 0.0) or 0.0) < 0.0
+            for f in ziele:
+                for e, seite in (getattr(f, "randseiten", None) or []) if f is not None else []:
+                    if not 0 <= int(e) < len(model.elements):
+                        continue
+                    wert = gl.wert(model._seitenmitte(int(e), int(seite)))
+                    if wert != 0.0 and (wert < 0.0) != negativ:
+                        return True
+    return False
+
+
+def _wind_netto_gegen_normale(model) -> bool:
+    """Eine Windlast des Generators auf einer freien Wand oder Anzeigetafel
+    (Normverfahren), an der die Last bis zum 12.11.2026 gegen den Wind wirkte:
+    ein Schalenelement mit der Normalen gegen die Windrichtung, eine
+    Volumenseite auf der Leeseite (Befund 8 der Pruefagenten)."""
+    from .elemente import SCHALEN_TYPEN
+    from .wind import ROLLEN_NETTO
+    flaechen = getattr(model, "flaechen", None) or {}
+    for lc in (getattr(model, "load_cases", None) or {}).values():
+        for gl in getattr(lc, "geometrielasten", None) or []:
+            v = getattr(gl, "verlauf", None) or {}
+            if v.get("art") != "wind" or v.get("rolle") not in ROLLEN_NETTO or v.get("feld"):
+                continue
+            r = v.get("netto") or (v.get("geometrie") or {}).get("richtung")
+            f = flaechen.get(str(gl.ziel))
+            if r is None or f is None:
+                continue
+            for e in f.elemente or []:
+                if 0 <= int(e) < len(model.elements) and model.elements[int(e)].typ in SCHALEN_TYPEN:
+                    n = model._seitennormale_oder_schale(int(e), 0)
+                    if n is not None and float(n @ r) < 0.0:
+                        return True
+            for e, seite in f.randseiten or []:
+                if 0 <= int(e) < len(model.elements):
+                    n = model._seitennormale(int(e), int(seite))
+                    if n is not None and float(n @ r) > 0.0:
+                        return True
+    return False
+
+
+def _wind_abmessungen_alt(model) -> bool:
+    """Windlasten des Generators mit Abmessungen eines aelteren Programmstands,
+    die sich heute anders ergeben (wind.alte_abmessungen, Befund 13)."""
+    from .wind import alte_abmessungen
+    return bool(alte_abmessungen(model))
+
+
+def _wind_freie_wand_volumen(model) -> bool:
+    """Windlasten des Generators, in denen zwei gegenueberliegende
+    Seitenflaechen desselben Volumens beide die Rolle freie Wand bzw. Tafel
+    tragen - die Nettolast wirkte doppelt (wind.doppelte_nettolasten)."""
+    from .wind import doppelte_nettolasten
+    return bool(doppelte_nettolasten(model))
+
+
+def _wind_freie_wand_volumen_im_ergebnis(model, _analyse) -> str:
+    from .wind import doppelte_nettolasten_text
+    return doppelte_nettolasten_text(model)
+
+
+def _wind_abmessungen_im_ergebnis(model, _analyse) -> str:
+    from .wind import alte_abmessungen_text
+    return alte_abmessungen_text(model)
+
+
 def _temperaturunterschied_schale(model) -> bool:
     """Ein Temperaturunterschied dT_z (oben − unten) auf einer Schale - als Last
     auf eine Flaeche mit Dicke oder als Elementlast auf ein Schalenelement. Bis
@@ -450,6 +536,23 @@ def _stab_mit_versatz(model) -> bool:
                for e in getattr(model, "elements", None) or [])
 
 
+def _stab_mit_ungleichem_versatz(model) -> bool:
+    """Ein Stabelement mit verschiedenem Versatz an Anfang und Ende - es lag
+    nach Theorie I. und II. Ordnung bis zum 12.11.2026 auf der Knotenlinie
+    statt zwischen seinen versetzten Enden. Gleicher Versatz an beiden Enden
+    rechnet wie bisher (bitgleich, tests/test_versatz_starrer_arm.py)."""
+    import numpy as np
+    from .elements import beam3d as bm
+    from . import assemble as asm
+    for e in getattr(model, "elements", None) or []:
+        if getattr(e, "typ", "") not in asm.LINE_TYPES:
+            continue
+        rr = bm.versatz_vektoren(getattr(e, "exzentrizitaet", None))
+        if rr is not None and not np.array_equal(rr[0], rr[1]):
+            return True
+    return False
+
+
 def _balken_mit_schubflaeche(model) -> bool:
     """Ein Balkenelement, dessen Querschnitt eine Schubflaeche hat - sein
     Feldanteil N w nach Theorie II. Ordnung liess bis zum 09.11.2026 die
@@ -471,6 +574,26 @@ def _flaechen_teilstellen(model) -> bool:
         return bool(mesher.flaechen_teilstellen(model))
     except Exception:                       # noqa: BLE001
         return False
+
+
+def _doppelte_randlinien(model) -> bool:
+    """Schalenflaechen mit eigenen Randlinien zwischen denselben Knoten (Befund 39)."""
+    try:
+        from . import mesher
+        return bool(mesher.doppelte_randlinien(model))
+    except Exception:                       # noqa: BLE001
+        return False
+
+
+def _elementbezogene_flaechenlager(model) -> bool:
+    """Ein Flaechenlager mit Elementliste (ohne Flaechenbezug), das auf Elementen
+    einer Flaeche oder eines Koerpers liegt - nur deren Netz wird neu vernetzt
+    (Befund 11)."""
+    netz = {int(e) for o in list((getattr(model, "flaechen", None) or {}).values())
+            + list((getattr(model, "koerper", None) or {}).values()) for e in (o.elemente or [])}
+    return any(ss.elements and not getattr(ss, "flaechen", None)
+               and any(int(e) in netz for e in ss.elements)
+               for ss in (getattr(model, "surface_supports", None) or []))
 
 
 def _trennflaechen_getrennt(model) -> bool:
@@ -528,6 +651,73 @@ def _anschluss_ohne_festigkeit(model) -> bool:
     return False
 
 
+def _anschluss_ohne_sorte(model) -> bool:
+    """Ein nachzuweisender Anschluss mit Kehlnaehten (Kopfplatte, geschweisstes
+    Knotenblech), dessen Werkstoff keine bekannte Stahlsorte nennt - dort rechnete
+    der Nachweis bis zum 12.11.2026 beta_w still mit S355 (0,9) bzw. bei
+    unbekannter Sorte mit 1,0; jetzt wird er nicht gefuehrt (Pruefbericht
+    11.11.2026, Befund 2)."""
+    from .joints.welds import beta_w
+    elemente = getattr(model, "elements", None) or []
+    for j in (getattr(model, "joints", None) or {}).values():
+        if not getattr(j, "design", True):
+            continue
+        typ = getattr(j, "typ", "")
+        if not (typ == "kopfplatte" or (typ == "diagonale" and (getattr(j, "geometrie", None) or {}).get("welded"))):
+            continue
+        i = int(getattr(j, "elem", -1))
+        if not 0 <= i < len(elemente):
+            continue
+        mat = (getattr(model, "materials", None) or {}).get(elemente[i].mat)
+        if mat is None:
+            continue
+        try:
+            beta_w(getattr(mat, "grade", ""))
+        except ValueError:
+            return True
+    return False
+
+
+def _laminat_schalen(model) -> bool:
+    """Ein Schalenelement mit geschichtetem Aufbau - seine Randspannungen standen
+    bis zum 12.11.2026 als n/t ± 6 m/t² da (Pruefbericht 11.11.2026, Befund 3)."""
+    schalen = getattr(model, "shells", None) or {}
+    for e in getattr(model, "elements", None) or []:
+        if str(getattr(e, "typ", "")).startswith("shell"):
+            p = schalen.get(getattr(e, "sec", None))
+            if p is not None and getattr(p, "lagen", None):
+                return True
+    return False
+
+
+def _beulfeld_achsen_verdreht(model) -> bool:
+    """Ein Beulfeld mit einem Element, dessen erste Kante gegen die Flaechenachse
+    x verdreht ist (nicht 0° oder 180°) - dort drehte der Beulnachweis die
+    Spannungen vom 09.11. bis 12.11.2026 ein zweites Mal (Nebenbefund Beulen)."""
+    import math
+    import numpy as np
+    felder = getattr(model, "beulfelder", None) or {}
+    if not felder:
+        return False
+    from .elements import shell as sh
+    from .solver import flaechen_bezugssystem
+    elemente = getattr(model, "elements", None) or []
+    for bf in felder.values():
+        for i in getattr(bf, "elemente", None) or []:
+            i = int(i)
+            if not 0 <= i < len(elemente):
+                continue
+            try:
+                X = np.asarray(model.nodes)[elemente[i].nodes]
+                T3e = sh.shell_frame(X[0], X[1], X[2])[0]
+                phi = sh.frame_winkel(T3e, flaechen_bezugssystem(T3e))
+            except Exception:                   # noqa: BLE001 - Pruefung, nie Abbruch
+                return True
+            if abs(math.sin(phi)) > 1e-9:
+                return True
+    return False
+
+
 def _kontakt_nur_koerper(model) -> bool:
     """Eine Kontaktbedingung, die nur Koerper nennt (geloest und Gegenkoerper, keine
     Flaechen) - sie blieb bis zum 09.11.2026 unausgefuehrt (Befund A17)."""
@@ -565,6 +755,41 @@ def _gelenk_feder_null(model) -> bool:
     return False
 
 
+def _wasserdruck_an_schalen(model) -> bool:
+    """Ein Wasserdruck des Generators auf einer Schalenflaeche ohne globale
+    Lastrichtung - er wirkte bis zum 12.11.2026 zum Wasser hin statt vom
+    Wasser weg (Maske „gegen die Normale“ an Schalen mit der Normale). Dazu
+    ein stroemungsnumerischer Wasserdruck, dessen Referenzflaeche des
+    Oberwassers Elemente gegen ihren Randumlauf hat: „Oberseite“ bezog sich
+    dort auf die Elemente, seitdem auf den Umlauf (wasserdruck.flaechennormale)."""
+    from . import elemente as _EL
+    from .wasserdruck import bezug_umgedreht
+    elemente = getattr(model, "elements", None) or []
+    flaechen = getattr(model, "flaechen", None) or {}
+    koerper = getattr(model, "koerper", None) or {}
+
+    def schale(name) -> bool:
+        f = flaechen.get(str(name))
+        return f is not None and any(0 <= int(e) < len(elemente) and elemente[int(e)].typ in _EL.SCHALEN_TYPEN
+                                     for e in (f.elemente or []))
+    for lc in (getattr(model, "load_cases", None) or {}).values():
+        for gl in getattr(lc, "geometrielasten", None) or []:
+            v = getattr(gl, "verlauf", None) or {}
+            if v.get("art") != "wasser":
+                continue
+            if getattr(gl, "art", "flaeche") == "flaeche":
+                ziele = [gl.ziel]
+            else:
+                k = koerper.get(str(gl.ziel))
+                ziele = list(getattr(k, "flaechen", None) or []) if k is not None else []
+            if not getattr(gl, "richtung", None) and any(schale(n) for n in ziele):
+                return True
+            ow = str((v.get("param") or {}).get("ow_flaeche") or "")
+            if v.get("feld") and ow and bezug_umgedreht(model, ow):
+                return True
+    return False
+
+
 def _theorie2_gerechnet_im_ergebnis(model, an) -> str:
     """Ergebnisse, die nach Theorie II. Ordnung gerechnet sind (nicht nur alpha_cr)."""
     th2 = getattr(an, "theorie2", None)
@@ -588,6 +813,29 @@ def _balken_teilbar(model) -> bool:
         return False
 
 
+def _balken_mit_woelb(model) -> bool:
+    """Ein Balken mit Woelbkrafttorsion (Haken „woelb“ und Iw > 0) - seine
+    Schnittgroessen nach Theorie II. Ordnung hatten bis zum 12.11.2026 keinen
+    Anteil k_G u und N w (Befund 32)."""
+    pruef = getattr(model, "stab_woelbt", None)
+    if pruef is None:
+        return False
+    try:
+        return any(pruef(e) for e in getattr(model, "elements", None) or [])
+    except Exception:                       # noqa: BLE001 - Pruefung, nie Abbruch
+        return False
+
+
+def _balken_mit_laengsgelenk(model) -> bool:
+    """Ein Stab mit Laengsgelenk (lokaler FHG ux am Anfang oder Ende frei,
+    auch Federgelenk mit k = 0) - seine geometrische Steifigkeit nahm bis zum
+    12.11.2026 eine Normalkraft aus den Knotenverschiebungen (Befund 33)."""
+    for e in getattr(model, "elements", None) or []:
+        if any(int(d) in (0, 6) for d in (getattr(e, "hinges", None) or [])):
+            return True
+    return False
+
+
 def _theorie2_oder_3_im_ergebnis(model, an) -> str:
     teile = [t for t in (_theorie2_gerechnet_im_ergebnis(model, an), _theorie3_im_ergebnis(model, an)) if t]
     return "; ".join(teile)
@@ -597,6 +845,14 @@ def _schalen(model) -> bool:
     """Ein Schalenelement - seine Komponenten sigma_x, n_x, m_x standen bis zum
     09.11.2026 in Elementachsen (Befund A20)."""
     return any(str(getattr(e, "typ", "")).startswith("shell") for e in getattr(model, "elements", None) or [])
+
+
+def _schalen_uneinheitlich(model) -> bool:
+    """Schalenelemente, die gegen ihre Flaeche oder ihr zusammenhaengendes
+    Stueck liegen (statik3d.schalenlage, Stand 31). Nach einer Rechnung mit
+    Stand 31 ist das Modell ausgerichtet und nicht mehr betroffen."""
+    from .schalenlage import uneinheitlich
+    return uneinheitlich(model)
 
 
 def _quader_teilung_ungleich(model) -> bool:
@@ -1231,6 +1487,53 @@ MERKMALE: list = [
         modellgrund="Windlasten mit einem älteren Programmstand erzeugt",
         vorschlag="Lasten › Wind: den Wind öffnen und die Windlasten neu erzeugen"),
     Merkmal(
+        # Befund 8 der Pruefagenten (11.11.2026): an freier Wand und Tafel wirkte die Last
+        # mit der Elementnormalen, je nach Umlauf der Linien gegen den Wind (Wand 10 x 3 m
+        # ΣF_x −26,01 statt +26,01 kN). Wirkt beim Neurechnen, auch fuer gespeicherte
+        # Lasten. Fehlerkorrektur
+        name="wind_netto_richtung", titel="Windlast auf freistehende Wand und Anzeigetafel",
+        texte={"alt": "Last in Richtung der Elementnormalen (je nach Umlauf gegen den Wind)",
+               "neu": "Last in Windrichtung (c_p,net, c_f), unabhängig vom Umlauf"},
+        wechsel=(Wechsel(stand=33, datum="12.11.2026", commit="fix/k2-wind", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Windlast auf einer freien Wand oder Tafel, deren Elementnormale gegen den Wind "
+                      "zeigt (Volumen: Leeseite gewählt)",
+        betrifft=_wind_netto_gegen_normale),
+    Merkmal(
+        # Befund 13 der Pruefagenten (11.11.2026): h, b, d des Gebaeudes enthielten freie
+        # Waende, Tafeln und Staebe; die Zonen einer freien Wand zaehlten ab den Enden aller
+        # Objekte. Die Abmessungen stehen im Verlauf der Last - wie bei wind_flaechen eine
+        # Korrektur am Modell, die erst das Neuerzeugen behebt
+        name="wind_abmessungen", titel="Abmessungen des Gebäudes für Wind",
+        texte={"alt": "h, b, d samt freier Wände, Tafeln und Stäbe",
+               "neu": "h, b, d nur aus den Gebäudeflächen, freie Wand und Tafel mit eigenen Abmessungen"},
+        wechsel=(Wechsel(stand=33, datum="12.11.2026", commit="fix/k2-wind", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Windlast des Generators mit Abmessungen eines älteren Programmstands, die sich "
+                      "heute anders ergeben",
+        betrifft=_wind_abmessungen_alt, import_korrektur=True, im_ergebnis=_wind_abmessungen_im_ergebnis,
+        modellgrund="Windlasten mit einem älteren Programmstand erzeugt",
+        vorschlag="Lasten › Wind: den Wind öffnen und die Windlasten neu erzeugen"),
+    Merkmal(
+        # Auftrag vom 12.11.2026 (fix/k3-wand): eine freistehende Wand aus einem Volumen mit
+        # beiden Seitenflaechen als freie Wand (oder Tafel) bekam die Nettolast auf jede Seite,
+        # also doppelt (Wand 10 x 0,3 x 3 m: ΣF_x 53,508 statt 26,754 kN). Entscheidung des
+        # Anwenders: gegenueberliegende Seiten desselben Volumens sind eine Wand, die Last wirkt
+        # einmal auf der Luvseite. Die Last steht im Modell - wie bei wind_abmessungen eine
+        # Korrektur am Modell, die erst das Neuerzeugen behebt. Fehlerkorrektur
+        name="wind_freie_wand_volumen", titel="Windlast auf freistehende Wand und Anzeigetafel aus einem Volumen",
+        texte={"alt": "Nettolast auf jeder gewählten Seitenfläche, bei beiden Seiten doppelt",
+               "neu": "gegenüberliegende Seitenflächen eines Volumens als eine Wand, Nettolast einmal "
+                      "auf der Luvseite in Windrichtung"},
+        wechsel=(Wechsel(stand=39, datum="12.11.2026", commit="fix/k3-wand", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Windlast des Generators, in der zwei gegenüberliegende Seitenflächen desselben "
+                      "Volumens beide als freie Wand bzw. beide als Anzeigetafel gewählt sind",
+        betrifft=_wind_freie_wand_volumen, import_korrektur=True,
+        im_ergebnis=_wind_freie_wand_volumen_im_ergebnis,
+        modellgrund="Windlasten mit einem älteren Programmstand erzeugt",
+        vorschlag="Lasten › Wind: den Wind öffnen und die Windlasten neu erzeugen"),
+    Merkmal(
         # Befund A3 der Pruefagenten (09.11.2026): der Windschatten der projizierten Last nahm
         # die Achse ohne das Vorzeichen von p - „global Z, p = −5 kN/m²“ traf am Block die
         # Unterseite statt das Dach. Summe gleich, Angriffspunkt falsch. Fehlerkorrektur
@@ -1241,6 +1544,20 @@ MERKMALE: list = [
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Flächenlast auf die Projektion mit negativem Wert an einem Körper",
         betrifft=_projiziert_negativ_an_volumen),
+    Merkmal(
+        # Befund 9 der Pruefagenten (11.11.2026): mit linearem Verlauf richtete sich der
+        # Windschatten weiter nach gl.p, dem Wert bei A - A = 0, B = −5 kN/m² global Z traf
+        # am Block die Unterseite statt das Dach. Jetzt nach dem Wert an der Seite.
+        # Fehlerkorrektur
+        name="projiziert_verlauf_vorzeichen",
+        titel="Projizierte Flächenlast mit Verlauf und Vorzeichenwechsel an Volumen",
+        texte={"alt": "Seite nach dem Vorzeichen des Werts bei A gewählt",
+               "neu": "Seite nach dem Vorzeichen des Werts an der Seite gewählt"},
+        wechsel=(Wechsel(stand=33, datum="12.11.2026", commit="fix/k2-wind", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Flächenlast auf die Projektion mit linearem Verlauf an einem Körper, deren Wert "
+                      "auf der Fläche ein anderes Vorzeichen hat als bei A",
+        betrifft=_projiziert_verlauf_vorzeichen),
     Merkmal(
         # Befund A4 der Pruefagenten (09.11.2026): die Schale trug nur den gleichmaessigen
         # Anteil ΔT, ΔT_z wurde still verworfen (Kragstreifen 0 statt 12 mm). Jetzt die
@@ -1460,6 +1777,153 @@ MERKMALE: list = [
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Balken mit Stabendgelenk oder Federgelenk, nach Theorie III. Ordnung gerechnet",
         betrifft=_balken_mit_gelenk, im_ergebnis=_theorie3_im_ergebnis),
+    # Pruefbericht 11.11.2026, Befund 2: ein Anschluss mit Kehlnaehten ohne
+    # Stahlsorte rechnete beta_w still mit S355 (0,9) und nannte S355 (S460-Werte:
+    # η 0,9950 statt 1,1055). Festlegung des Anwenders: ohne Werkstoffangabe kein
+    # Nachweis, Meldung. Fehlerkorrektur
+    Merkmal(
+        name="anschluss_beta_w", titel="Korrelationsbeiwert β_w im Anschlussnachweis",
+        texte={"alt": "β_w ohne Stahlsorte als S355 (0,9), mit unbekannter Sorte 1,0",
+               "neu": "β_w aus der Stahlsorte, ohne Sorte kein Nachweis der Naht, mit Meldung"},
+        wechsel=(Wechsel(stand=36, datum="12.11.2026", commit="fix/k2-schale-beul", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Anschluss mit Kehlnähten, Werkstoff ohne bekannte Stahlsorte",
+        betrifft=_anschluss_ohne_sorte),
+    # Pruefbericht 11.11.2026, Befund 3: Randspannungen geschichteter Schalen nach
+    # n/t ± 6 m/t² statt je Lage aus eps0 + z kappa (Zweischichter voll gehalten
+    # -30/-210 statt -60/-180 N/mm²). Fehlerkorrektur
+    Merkmal(
+        name="laminat_randspannung", titel="Randspannungen geschichteter Schalen",
+        texte={"alt": "σ oben/unten = n/t ± 6 m/t² wie bei homogener Schale",
+               "neu": "σ oben/unten der äußersten Faser der obersten/untersten Lage nach der Laminattheorie"},
+        wechsel=(Wechsel(stand=36, datum="12.11.2026", commit="fix/k2-schale-beul", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Schale mit Schichtaufbau", betrifft=_laminat_schalen),
+    # Nebenbefund Beulen (12.11.2026): feldspannungen/zylinderspannungen drehten die
+    # Spannungen, die seit A20 im Flaechensystem stehen, ein zweites Mal mit der
+    # ersten Elementkante (Feld 30°: σ_u 22,6 statt 25,9 N/mm²). Fehlerkorrektur
+    Merkmal(
+        name="beulen_flaechenachsen", titel="Spannungen im Beulnachweis",
+        texte={"alt": "Flächenspannungen zusätzlich mit der ersten Elementkante gedreht",
+               "neu": "Flächenspannungen aus dem Flächensystem in die Feldachsen gedreht"},
+        wechsel=(Wechsel(stand=36, datum="12.11.2026", commit="fix/k2-schale-beul", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Beulfeld mit Elementen, deren erste Kante gegen die Flächenachse x verdreht ist",
+        betrifft=_beulfeld_achsen_verdreht),
+    # Befund 32 des Pruefberichts vom 11.11.2026: Balken mit
+    # Woelbkrafttorsion bekamen nach Theorie II. Ordnung weder k_G u in den
+    # Stabendkraeften noch N w im Feld (Kragarm, Druck 0,6 N_cr, ein Element:
+    # Stab 23,997 gegen Lager 22,158 kNm). Fehlerkorrektur
+    Merkmal(
+        name="theorie2_woelb", titel="Schnittgrößen nach Theorie II. Ordnung an Balken mit Wölbkrafttorsion",
+        texte={"alt": "Stabendkräfte k u, Feld ohne N·w",
+               "neu": "Stabendkräfte (k + k_G) u, Feld mit N·w wie bei den übrigen Balken"},
+        wechsel=(Wechsel(stand=35, datum="12.11.2026", commit="fix/k2-th2neben", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Balken mit Wölbkrafttorsion, nach Theorie II. Ordnung gerechnet",
+        betrifft=_balken_mit_woelb, im_ergebnis=_theorie2_gerechnet_im_ergebnis),
+    # Befund 33 des Pruefberichts vom 11.11.2026: ein Stab mit Laengsgelenk
+    # (ux frei, Federgelenk k = 0) stand in der geometrischen Steifigkeit mit
+    # E A Δl/L, obwohl er keine Normalkraft traegt (Stuetze unter Querlast
+    # 3,88 statt 3,125 kNm, gezogen 2,69 kNm). Fehlerkorrektur
+    Merkmal(
+        name="theorie2_laengsgelenk", titel="Geometrische Steifigkeit an Stäben mit Längsgelenk",
+        texte={"alt": "K_G mit der Normalkraft E A Δl/L aus den Knotenverschiebungen",
+               "neu": "K_G ohne Normalkraft (das Längsgelenk lässt keine zu)"},
+        wechsel=(Wechsel(stand=35, datum="12.11.2026", commit="fix/k2-th2neben", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Stab mit Längsgelenk (ux frei oder Federgelenk ux mit k = 0), mit alpha_cr, "
+                      "Knicken oder Theorie II. Ordnung",
+        betrifft=_balken_mit_laengsgelenk, im_ergebnis=_alpha_cr_im_ergebnis),
+    # Nachstellung vom 12.11.2026: Theorie III. Ordnung liess den Versatz der
+    # Stabenden still weg (Kragarm mit Versatz 0,1 m unter Zug in der
+    # Knotenlinie: Theorie I. Ordnung hebt die Spitze um F e L²/(2 E I),
+    # Theorie III. Ordnung 0 mm, Stabendmoment 0 statt F e). Seither ein
+    # starrer, mitdrehender Arm. Fehlerkorrektur
+    Merkmal(
+        name="theorie3_versatz", titel="Versatz der Stabenden nach Theorie III. Ordnung",
+        texte={"alt": "Versatz (Exzentrizität) nicht berücksichtigt, Stab zwischen den Knoten",
+               "neu": "Versatz als starrer Arm, der mit dem Knoten mitdreht"},
+        wechsel=(Wechsel(stand=34, datum="12.11.2026", commit="fix/k2-th3versatz", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Stab mit Versatz der Stabenden (Exzentrizität), nach Theorie III. Ordnung gerechnet",
+        # dieselbe Pruefung wie theorie2_versatz (Stand 26)
+        betrifft=_stab_mit_versatz, im_ergebnis=_theorie3_im_ergebnis),
+    # Nachstellung vom 12.11.2026: nach Theorie I. und II. Ordnung lag ein Stab
+    # mit verschiedenem Versatz an Anfang und Ende auf der Knotenlinie (Laenge
+    # und Achsen von dort), nur seine Enden waren starr versetzt - das
+    # Momentengleichgewicht ging verloren (Kragarm 4 m, Zug 50 kN durch die
+    # Einspannung, Versatz 0,1 m quer nur am Ende: Einspannmoment 5,0 statt
+    # 0 kNm). Seither liegt der Stab zwischen seinen versetzten Enden, der
+    # Versatz ist ein starrer Arm am Knoten (wie Theorie III. Ordnung). Gleicher
+    # Versatz an beiden Enden ist nicht betroffen (bitgleich). Fehlerkorrektur
+    Merkmal(
+        name="versatz_starrer_arm", titel="Stab mit verschiedenem Versatz an Anfang und Ende",
+        texte={"alt": "Stab auf der Knotenlinie (Länge und Achsen von dort), nur die Enden starr versetzt",
+               "neu": "Stab zwischen den versetzten Enden (Länge und Achsen von dort), Versatz als starrer Arm"},
+        wechsel=(Wechsel(stand=38, datum="12.11.2026", commit="fix/k3-versatz", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Stab mit verschiedenem Versatz (Exzentrizität) an Anfang und Ende",
+        betrifft=_stab_mit_ungleichem_versatz),
+    # Befund vom 11.11.2026 (Pruefung der Testmodelle): der Wasserdruck an
+    # Schalen ohne globale Lastrichtung hatte das falsche Vorzeichen - „gegen
+    # die Normale (in den Körper)“ wirkte mit der Elementnormale, numerisch
+    # drueckte das Oberwasser die Schale zu sich hin. Wand 2 x 3 m, Oberwasser
+    # 2,5 m: ΣF −61,3 statt +61,3 kN. Die Seite des Wassers kommt seitdem aus
+    # Eingabe und Randumlauf der Flaeche, nicht aus der Knotenreihenfolge.
+    # Fehlerkorrektur
+    Merkmal(
+        name="wasserdruck_schale_seite", titel="Wasserdruck an Schalen ohne globale Lastrichtung",
+        texte={"alt": "Last zum Wasser hin (Seite der Maske an Schalen vertauscht, Bezug Elementnormale)",
+               "neu": "Last vom Wasser weg, benetzte Seite aus Eingabe und Randumlauf der Fläche"},
+        wechsel=(Wechsel(stand=32, datum="12.11.2026", commit="fix/k2-wasserdruck", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Wasserdruck des Generators auf einer Schalenfläche ohne globale Lastrichtung",
+        betrifft=_wasserdruck_an_schalen),
+    # Befund 11 der Pruefagenten (11.11.2026): das Neuvernetzen in der
+    # Oberflaeche (und das Loeschen ueber die Web-Schnittstelle) zog
+    # elementbezogene Flaechenlager nicht nach - nach dem Neuvernetzen der
+    # Nachbarflaeche lag die Bettung still auf deren Elementen. Jetzt ziehen
+    # alle Wege nach; ein Lager auf einer ganzen Flaeche folgt ihrem neuen Netz,
+    # sonst Meldung. Wirkt beim naechsten Neuvernetzen. Fehlerkorrektur
+    Merkmal(
+        name="flaechenlager_neuvernetzen", titel="Flächenlager mit Elementliste beim Neuvernetzen",
+        texte={"alt": "Elementnummern in der Oberfläche nicht nachgezogen (Lager konnte auf andere Elemente "
+                      "rücken)",
+               "neu": "Elementnummern nachgezogen; auf einer ganzen Fläche folgt das Lager dem neuen Netz, "
+                      "sonst Meldung „Netz geändert – Lager prüfen“"},
+        wechsel=(Wechsel(stand=37, datum="12.11.2026", commit="fix/k2-netz", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Flächenlager mit Elementliste auf vernetzten Flächen oder Körpern",
+        betrifft=_elementbezogene_flaechenlager),
+    # Befund 39 der Pruefagenten (11.11.2026): zwei Randlinien verschiedener
+    # Schalenflaechen zwischen denselben Knoten (Rippe mit eigener Linie auf
+    # dem Plattenrand) wurden nur verbunden, wenn ein fremder Knoten darauf lag
+    # - Platte 4 m aus zwei Flaechen mit doppelter Mittellinie 397,7 statt
+    # 149,6 mm. Wirkt erst nach dem Neuvernetzen. Fehlerkorrektur
+    Merkmal(
+        name="doppelte_randlinien", titel="Doppelte Randlinien zwischen denselben Knoten",
+        texte={"alt": "im Netz nur an den Linienenden verbunden (ohne fremden Knoten darauf)",
+               "neu": "im Netz eine Linie, gemeinsame Netzknoten; gilt nach dem Neuvernetzen"},
+        wechsel=(Wechsel(stand=37, datum="12.11.2026", commit="fix/k2-netz", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Schalenflächen mit eigenen Randlinien zwischen denselben Knoten",
+        betrifft=_doppelte_randlinien),
+    # Auftrag vom 12.11.2026 („die lage von schalenelementen sollte der user frei
+    # bestimmen können und sie dürfte grundsätzlich nicht an der berechnung
+    # ändern“): an einem gespiegelten Element wirkten Flaechenlast senkrecht zur
+    # Flaeche, dT_z, Wasserdruck und Wind verkehrt herum (Platte 8 x 8 shell4,
+    # ein Element gespiegelt: ΣR_z 9 687,5 statt 10 000 N), die Knotenmittel
+    # mischten Werte verschieden gerichteter Elemente. Vor jeder Rechnung werden
+    # die Schalen jetzt ausgerichtet (statik3d.schalenlage). Fehlerkorrektur
+    Merkmal(
+        name="schalenlage", titel="Lage der Schalenelemente",
+        texte={"alt": "jedes Schalenelement in der Lage seiner Knotenfolge gerechnet",
+               "neu": "Schalenelemente vor der Rechnung zur Fläche bzw. ihrem Stück ausgerichtet"},
+        wechsel=(Wechsel(stand=31, datum="12.11.2026", commit="fix/k2-schalenlage", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Schalenelemente, die gegen ihre Fläche oder ihr zusammenhängendes Stück liegen",
+        betrifft=_schalen_uneinheitlich),
     # Befund A19 (09.11.2026): Schalenflaechen, die sich ohne gemeinsame Linie
     # beruehren, waren im Netz nicht verbunden - Stoss mit ungeteilter Linie
     # 0,742 statt 0,143 mm, Rippe auf ungeteilter Platte 33,1 statt 0,52 mm.
@@ -1572,7 +2036,7 @@ MERKMALE: list = [
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 30
+VERFAHRENSSTAND = 39
 
 
 def merkmal(name: str) -> Optional[Merkmal]:
