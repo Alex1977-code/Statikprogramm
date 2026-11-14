@@ -22,10 +22,12 @@ Knoten des Modells zurueck (:func:`zurueck`). Die Schnittgroessen im Feld
 setzt solver.beam_station_forces aus den Teilstuecken zusammen
 (``Results.beam_teile``).
 
-Nicht geteilt werden Fachwerkstaebe und Seile (keine Biegung), Staebe mit
-Woelbkrafttorsion (eigener Freiheitsgrad) und Staebe mit Versatz der
-Stabenden (Exzentrizitaet) - fuer sie bleibt der Hinweis „Stabteilung zu
-grob“ (theorie2.stabteilung_grob).
+Nicht geteilt werden Fachwerkstaebe und Seile (keine Biegung) und Staebe mit
+Woelbkrafttorsion (eigener Freiheitsgrad) - fuer sie bleibt der Hinweis
+„Stabteilung zu grob“ (theorie2.stabteilung_grob). Staebe mit Versatz der
+Stabenden (Exzentrizitaet) werden seit dem 15.11.2026 geteilt
+(:func:`versatz_teile`, Verfahrensstand 62): die Zwischenknoten liegen auf
+der versetzten Stabachse, den Versatz behalten das erste und das letzte Teil.
 """
 from __future__ import annotations
 
@@ -60,14 +62,93 @@ def soll_teilung(model, faktor: int = 1) -> int:
 
 def teilbar(model, i: int) -> bool:
     """Wird das Element intern geteilt? Nur Balken (typ "beam") ohne
-    Woelbkrafttorsion und ohne Versatz der Stabenden, mit Laenge > 0."""
-    from .assemble import beam_versatz
+    Woelbkrafttorsion, mit Laenge > 0. Seit Verfahrensstand 62 (15.11.2026)
+    auch mit Versatz der Stabenden (:func:`versatz_teile`)."""
     e = model.elements[i]
     if e.typ != "beam" or getattr(e, "woelb", False) or len(e.nodes) != 2:
         return False
-    if beam_versatz(e) is not None:
-        return False
     return model.element_length(i) > 0.0
+
+
+#: Teile eines Stabs mit Versatz: Achsen und Laenge muessen bis auf diese
+#: Toleranz (Richtungskosinus bzw. relativ zur Laenge) denen des Stabs gleichen
+VERSATZ_TOL = 1e-9
+
+
+def versatz_teile(model, i: int, n: int):
+    """Die ``n`` Teile eines Stabelements mit Versatz der Stabenden
+    (Exzentrizitaet): [(Anfang, Ende, roll, exzentrizitaet)] je Teil, Anfang
+    zuerst, oder None, wenn das Element so nicht zu teilen ist. Ohne Versatz
+    ebenfalls None.
+
+    Behebung vom 15.11.2026 (Runde k7, Verfahrensstand 62, vom Anwender
+    freigegeben): bis dahin blieben Staebe mit Versatz ungeteilt, und Theorie
+    II. Ordnung, alpha_cr „auto“ und das Knicken rechneten sie mit einer
+    kubischen Biegelinie - am Zugband mit Arm 0,3 m und Sollkraft 70 kN
+    alpha_cr 801,6 statt 603,4 (Band von Hand in 10 Teilen).
+
+    Die Zwischenknoten liegen auf der versetzten Stabachse zwischen den
+    Stabenden P_i = x_i + a_i (assemble.stab_arme). Den Versatz behalten nur
+    das erste Teil (Arm a_0 am Knoten des Stabanfangs) und das letzte (Arm a_1
+    am Knoten des Stabendes); die Teile dazwischen haben keinen. Jedes Teil
+    bekommt seinen Drehwinkel so, dass seine Achsen die des Stabs sind
+    (assemble.stab_achsen; mit Arm die y-Achse seiner Knotenlinie, die
+    bm.stab_achsen_versetzt auf die Stabrichtung projiziert), und seinen
+    Versatz in den Achsen seiner Knotenlinie. Geprueft wird das Ergebnis auf
+    dem Weg der Rechnung (bm.versatz_arme, bm.stab_achsen_versetzt): weichen
+    Achsen, Arme oder Laenge ab (Arm laenger als ein Teil gegen die
+    Stabrichtung), bleibt das Element ungeteilt."""
+    from .assemble import stab_achsen
+    from .elements import beam3d as bm
+    e = model.elements[i]
+    n = int(n)
+    rr = bm.versatz_vektoren(getattr(e, "exzentrizitaet", None))
+    if rr is None or n < 2:
+        return None
+    X = np.asarray(model.nodes[e.nodes[:2]], float)
+    T3n, _Ln = bm.local_axes(X[0], X[1], e.roll)
+    arm = (T3n.T @ rr[0], T3n.T @ rr[1])
+    P0, P1 = X[0] + arm[0], X[1] + arm[1]
+    T3s, Ls = stab_achsen(model, e)
+    t, ys = T3s[0], T3s[1]
+    Q = [P0 + (P1 - P0) * (k / n) for k in range(n + 1)]
+    null = np.zeros(3)
+    aus = []
+    for k in range(n):
+        ra = arm[0] if k == 0 else null
+        rb = arm[1] if k == n - 1 else null
+        A = X[0] if k == 0 else Q[k]
+        B = X[1] if k == n - 1 else Q[k + 1]
+        d = B - A
+        lang = float(np.linalg.norm(d))
+        if lang <= VERSATZ_TOL * Ls:
+            return None
+        e_n = d / lang
+        mit_arm = bool(np.any(ra) or np.any(rb))
+        if mit_arm:
+            # y der Knotenlinie in der Ebene (t, y_Stab), senkrecht zu e_n
+            c = float(t @ e_n)
+            if c <= 1e-3:
+                return None
+            y_n = c * ys - float(ys @ e_n) * t
+        else:
+            y_n = ys
+        T0, _l = bm.local_axes(A, B, 0.0)
+        roll = math.atan2(float(y_n @ T0[2]), float(y_n @ T0[1]))
+        Tn, _l = bm.local_axes(A, B, roll)
+        exz = [[float(v) for v in Tn @ ra], [float(v) for v in Tn @ rb]] if mit_arm else []
+        # Gegenprobe auf dem Weg der Rechnung
+        arme = bm.versatz_arme(A, B, roll, exz) if exz else None
+        if mit_arm:
+            if arme is None or np.abs(arme - np.vstack([ra, rb])).max() > VERSATZ_TOL * max(Ls, 1.0):
+                return None
+            T3p, Lp = bm.stab_achsen_versetzt(A, B, roll, A + arme[0], B + arme[1])
+        else:
+            T3p, Lp = bm.local_axes(A, B, roll)
+        if np.abs(T3p - T3s).max() > VERSATZ_TOL or abs(Lp - Ls / n) > VERSATZ_TOL * Ls:
+            return None
+        aus.append((A, B, roll, exz))
+    return aus
 
 
 #: Geteilt wird nur ein Balken, dessen Normalkraft nach Theorie I. Ordnung
@@ -215,9 +296,18 @@ def teilzahlen(model, aktiv=None, faktor: int = 1, kraefte: dict = None) -> dict
         L = model.element_length(i)
         Lm = stab_L.get(i, 0.0) or L
         n = min(soll, max(1, math.ceil(L * soll / Lm - 1e-9)))
+        # Stab mit Versatz: nur, wenn die Teile seine Achsen treffen
+        if n > 1 and _hat_versatz(model.elements[i]) and versatz_teile(model, i, n) is None:
+            continue
         if n > 1:
             out[i] = n
     return out
+
+
+def _hat_versatz(e) -> bool:
+    """Hat das Element einen Versatz der Stabenden (Exzentrizitaet)?"""
+    from .elements import beam3d as bm
+    return bm.versatz_vektoren(getattr(e, "exzentrizitaet", None)) is not None
 
 
 #: Ein Stab mit Stablast in Stabrichtung (auch Eigengewicht am geneigten oder
@@ -401,8 +491,11 @@ def teilen(model, aktiv=None, zahlen: dict = None):
         n0, n1 = int(e.nodes[0]), int(e.nodes[1])
         X0, X1 = model.nodes[n0], model.nodes[n1]
         ids = [n0] + [nn + len(neue_knoten) + k for k in range(n - 1)] + [n1]
+        # Versatz der Stabenden: Zwischenknoten auf der versetzten Stabachse,
+        # der Versatz nur am ersten und letzten Teil (:func:`versatz_teile`)
+        vt = versatz_teile(model, i, n) if _hat_versatz(e) else None
         for k in range(1, n):
-            neue_knoten.append(X0 + (X1 - X0) * (k / n))
+            neue_knoten.append(vt[k][0] if vt is not None else X0 + (X1 - X0) * (k / n))
         anfang = [int(d) for d in (e.hinges or []) if int(d) < 6]
         # an beiden Enden frei (etwa die Torsion): das ungeteilte Element
         # uebertraegt dort nichts; die Kette bleibt am Ende angeschlossen,
@@ -416,6 +509,9 @@ def teilen(model, aktiv=None, zahlen: dict = None):
             t.nodes = [ids[k], ids[k + 1]]
             t.hinges = (anfang if k == 0 else []) + (ende if k == n - 1 else [])
             t.hinge_springs = (f_anfang if k == 0 else []) + (f_ende if k == n - 1 else [])
+            if vt is not None:
+                t.roll = float(vt[k][2])
+                t.exzentrizitaet = [list(x) for x in vt[k][3]]
             if k == 0:
                 elemente[i] = t
                 teile.append(i)

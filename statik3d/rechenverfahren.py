@@ -2057,6 +2057,45 @@ def _knicken_im_ergebnis(model, an) -> str:
     return ("Knicken: " + ", ".join(namen[:6]) + (" …" if len(namen) > 6 else "")) if namen else ""
 
 
+def _versatz_teilbar(model) -> bool:
+    """Ein Stab mit Versatz der Stabenden, den die interne Stabteilung teilt
+    (statik3d.stabteilung, seit Verfahrensstand 62) - bis dahin blieb er
+    ungeteilt."""
+    try:
+        from .stabteilung import teilzahlen, _hat_versatz
+        return any(_hat_versatz(model.elements[i]) for i in teilzahlen(model))
+    except Exception:                       # noqa: BLE001 - Pruefung, nie Abbruch
+        return False
+
+
+def _versatz_stabteilung_im_ergebnis(model, an) -> str:
+    """alpha_cr, Theorie II. Ordnung, Knicken oder Theorie III. Ordnung im
+    Ergebnis - Merkmal versatz_stabteilung."""
+    teile = [t for t in (_alpha_cr_im_ergebnis(model, an), _theorie3_im_ergebnis(model, an)) if t]
+    if getattr(an, "kind", "") == "buckling" and not teile:
+        teile.append("Knicken: " + str(getattr(an, "name", "") or "Knicken"))
+    return "; ".join(teile)
+
+
+def _knicken_ohne_positiven_im_ergebnis(model, an) -> str:
+    """Ein Knickergebnis (solve_buckling), dessen Faktoren alle negativ sind
+    - Merkmal knicken_positiver_faktor."""
+    import math
+    paare = list(_ergebnis_paare(an))
+    if getattr(an, "kind", "") == "buckling":
+        paare.append((str(getattr(an, "name", "") or "Knicken"), an))
+    namen = []
+    for n, r in paare:
+        f = getattr(r, "buckling_factors", None) if getattr(r, "kind", "") == "buckling" else None
+        if f is None:
+            continue
+        if not any(math.isfinite(float(x)) and float(x) > 0 for x in f):
+            namen.append(str(n))
+    namen = sorted(set(namen))
+    return ("Knicken ohne positiven Faktor: " + ", ".join(namen[:6]) + (" …" if len(namen) > 6 else "")
+            if namen else "")
+
+
 def _theorie3_im_ergebnis(model, an) -> str:
     th3 = getattr(an, "theorie3", None)
     namen = [str(n) for n in (getattr(th3, "kombinationen", None) or {})]
@@ -3585,10 +3624,42 @@ MERKMALE: list = [
         modellmerkmal="Knicken (oder α_cr mit Vorspannkraft) mit Stäben, die die interne Stabteilung teilen "
                       "würde (weniger Elemente je Stab als die Stabteilung)",
         betrifft=_balken_teilbar, im_ergebnis=_knicken_im_ergebnis),
+    # Runde k7, 15.11.2026 (vom Anwender freigegeben, „1 ja 2 ja“): Staebe mit
+    # Versatz der Stabenden blieben bei der internen Stabteilung ungeteilt und
+    # rechneten mit ihrer kubischen Biegelinie - Zugband mit Arm 0,3 m und
+    # Sollkraft 70 kN: alpha_cr „auto“ und Knicken 801,6 statt 603,4
+    # (Kurzstabmodell, Band in 10 Teilen); Theorie III. Ordnung am Kragarm mit
+    # Versatz quer 0,3 m am Ende seitliche Spitzenverschiebung 7,61 statt
+    # 8,23 mm (Kurzstabmodell). Seither
+    # geteilt, der Versatz am ersten und letzten Teil. Fehlerkorrektur
+    Merkmal(
+        name="versatz_stabteilung", titel="Interne Stabteilung an Stäben mit Versatz",
+        texte={"alt": "Stab mit Versatz der Stabenden ungeteilt (ein Element: kubische Biegelinie)",
+               "neu": "Stab mit Versatz intern geteilt, Zwischenknoten auf der versetzten Stabachse, Versatz "
+                      "nur am ersten und letzten Teil"},
+        wechsel=(Wechsel(stand=62, datum="15.11.2026", commit="fix/k7-versatzknick", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Stab mit Versatz der Stabenden (Exzentrizität), den die interne Stabteilung teilt, mit "
+                      "α_cr, Knicken oder Theorie II./III. Ordnung",
+        betrifft=_versatz_teilbar, im_ergebnis=_versatz_stabteilung_im_ergebnis),
+    # Runde k7, 15.11.2026 (vom Anwender freigegeben): das Knicken gab nur die
+    # angeforderten betragskleinsten Faktoren aus, auch wenn alle negativ
+    # waren - ein Fachwerk mit gezogenem Untergurt mit drei Formen nur
+    # -64,38 / -64,38 / -130,78, der kleinste positive Faktor 7765,80 ist der
+    # 35. nach Betrag. Seither werden Formen nachgefordert. Fehlerkorrektur
+    Merkmal(
+        name="knicken_positiver_faktor", titel="Knicken: mindestens ein positiver Faktor",
+        texte={"alt": "nur die angeforderten Formen, auch wenn alle Faktoren negativ sind",
+               "neu": "Formen nachgefordert, bis ein positiver Faktor dabei ist (oder Hinweis, dass es keinen "
+                      "gibt)"},
+        wechsel=(Wechsel(stand=62, datum="15.11.2026", commit="fix/k7-versatzknick", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Knickergebnis, dessen Faktoren alle negativ sind",
+        im_ergebnis=_knicken_ohne_positiven_im_ergebnis),
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 61
+VERFAHRENSSTAND = 62
 
 
 def merkmal(name: str) -> Optional[Merkmal]:
