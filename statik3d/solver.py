@@ -3661,7 +3661,7 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
                 # 14 FHG: Stabendkraefte und die Bimomente an beiden Enden
                 kl, T3, L = asm.beam_woelb_local(model, e)
                 ul = asm.transform14(T3) @ ue
-                A = asm.beam_versatz(e)
+                A = asm.stab_versatz(model, e)
                 if A is not None:
                     A14 = np.eye(14)
                     A14[:12, :12] = A
@@ -3691,7 +3691,7 @@ def _post_chunk(model: Model, idx: list[int], extra: dict) -> list:
                 continue
             kl, T3, T, L = asm.beam_local(model, e)
             ul = T @ ue
-            A = asm.beam_versatz(e)
+            A = asm.stab_versatz(model, e)
             if A is not None:
                 ul = A @ ul                     # Verschiebung des Stabendes hinter dem Versatz
             ul_knoten = ul                      # vor der Kondensation (fuer k_G, Befund 31)

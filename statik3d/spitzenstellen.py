@@ -889,10 +889,11 @@ def _stabkraft_am_knoten(model, e: int, fl: np.ndarray, knoten: int) -> np.ndarr
     """Endkraft (global) des Stabelements ``e`` am Knoten aus den lokalen
     Stabendkraeften ``fl`` (12,) - die Kraft, die der Knoten auf den Stab
     ausuebt."""
-    from .elements import beam3d as bm
+    from . import assemble as asm
     el = model.elements[int(e)]
-    X = model.nodes[el.nodes]
-    T3, _L = bm.local_axes(X[0], X[1], el.roll)
+    # die Achsen des Stabs (mit verschiedenem Versatz an den Enden zwischen
+    # den versetzten Enden, 12.11.2026), in denen fl steht
+    T3, _L = asm.stab_achsen(model, el)
     fl = np.asarray(fl, float)
     teil = fl[0:3] if int(el.nodes[0]) == int(knoten) else fl[6:9]
     return T3.T @ teil

@@ -254,6 +254,49 @@ def versatz_matrix(r1, r2) -> np.ndarray:
     return A
 
 
+def versatz_vektoren(ex):
+    """(r1, r2) aus ``Element.exzentrizitaet`` - je (3,), in den lokalen
+    Achsen der Knotenlinie - oder None ohne Versatz (leer, beide null oder
+    unlesbar; unlesbar heisst ohne, wie bisher in assemble.beam_versatz)."""
+    if not ex:
+        return None
+    r1 = np.zeros(3)
+    r2 = np.zeros(3)
+    try:
+        if len(ex) >= 1 and ex[0] is not None:
+            r1[:len(ex[0])] = np.asarray(ex[0], float)[:3]
+        if len(ex) >= 2 and ex[1] is not None:
+            r2[:len(ex[1])] = np.asarray(ex[1], float)[:3]
+    except (TypeError, ValueError):
+        return None
+    if not (np.any(r1) or np.any(r2)):
+        return None
+    return r1, r2
+
+
+def versatz_arme(p1, p2, roll, ex):
+    """Die starren Arme a_i (global, Feld (2, 3)) vom Knoten zum Stabende,
+    wenn der Versatz an Anfang und Ende **verschieden** ist - sonst None.
+
+    Der Versatz r_i steht in den lokalen Achsen der Knotenlinie (p1 -> p2,
+    Drehwinkel ``roll``): a_i = T3_Knotenlinie^T r_i. Der Stab liegt zwischen
+    seinen Stabenden P_i = p_i + a_i; Laenge und lokale Achsen kommen von dort
+    (assemble.stab_achsen). Gleicher Versatz an beiden Enden verschiebt den
+    Stab nur parallel - Achsen und Laenge sind die der Knotenlinie, und dafuer
+    bleibt alles beim bisherigen Weg (bitgleich).
+
+    Bis zum 12.11.2026 lag der Stab nach Theorie I. und II. Ordnung auch bei
+    verschiedenem Versatz auf der Knotenlinie, nur seine Enden waren starr
+    versetzt: das Momentengleichgewicht ging verloren (Kragarm 4 m, Zug 50 kN
+    durch die Einspannung, Versatz 0,1 m quer nur am Ende: Einspannmoment
+    5,0 statt 0 kNm; tests/test_versatz_starrer_arm.py)."""
+    rr = versatz_vektoren(ex)
+    if rr is None or np.array_equal(rr[0], rr[1]):
+        return None
+    T3n, _L = local_axes(p1, p2, roll)
+    return np.vstack([T3n.T @ rr[0], T3n.T @ rr[1]])
+
+
 # ==========================================================================
 # Woelbkrafttorsion (7. Freiheitsgrad: Verwoelbung omega = theta_x')
 # ==========================================================================
