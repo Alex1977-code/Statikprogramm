@@ -2392,6 +2392,99 @@ BETROFFEN = "Ergebnis möglicherweise betroffen – neu rechnen"
 #: „keine Reibung im Modell“ (16.10.2026): Wert des Reibverfahrens ohne Reibung
 KEINE_REIBUNG = "keine_reibung"
 
+
+def _wirksame_knoten_bis_64(model, aktiv):
+    """Die Knotenmaske der Lasten bis Verfahrensstand 64 (situationen.wirksame_knoten
+    vor dem 15.11.2026): Knoten mit wirksamem Element und die beiden Knoten jeder
+    Kopplung an einem solchen - eine Stufe, ohne Starrkoerper."""
+    from .situationen import aktive_knoten, kopplung_bleibt
+    kn = aktive_knoten(model, aktiv)
+    out = kn.copy()
+    for kp in (getattr(model, "kopplungen", None) or []):
+        if kopplung_bleibt(model, kp, kn):
+            out[int(kp.node_a)] = True
+            out[int(kp.node_b)] = True
+    return kn, out
+
+
+def _maske_kette_je_situation(model) -> dict:
+    """{Situation: (Knoten, Kopplungen)} - je Situation mit Elementmaske (auch
+    Stab „aus“ in der Grundstellung) die Knoten, die seit Stand 65 mittragen und
+    vorher nicht (situationen.wirksame_knoten), und die Kopplungen, die seither
+    bleiben und vorher entfielen (assemble.kopplungen). Situationen ohne
+    Unterschied fehlen."""
+    if not (getattr(model, "starrkoerper", None) or getattr(model, "kopplungen", None)
+            or getattr(model, "supports", None)):
+        return {}
+    import numpy as np
+    from .situationen import wirksame_knoten, kopplung_bleibt
+    out: dict = {}
+    for sit in [""] + list(getattr(model, "situationen", None) or {}):
+        try:
+            aktiv = model.aktive_elemente(sit)
+        except Exception:                               # noqa: BLE001
+            continue
+        if aktiv is None or bool(np.asarray(aktiv).all()):
+            continue
+        kn, alt = _wirksame_knoten_bis_64(model, aktiv)
+        neu = wirksame_knoten(model, aktiv)
+        knoten = {int(n) for n in np.flatnonzero(neu & ~alt)}
+        kopp = [i for i, kp in enumerate(getattr(model, "kopplungen", None) or [])
+                if kopplung_bleibt(model, kp, neu) and not kopplung_bleibt(model, kp, kn)]
+        if knoten or kopp:
+            out[sit] = (knoten, kopp)
+    return out
+
+
+def _maske_kette_lastfaelle(model, je_sit: Optional[dict] = None) -> set:
+    """Lastfaelle, deren Ergebnis die Maske der Ketten (Stand 65) aendern kann: in
+    einer Situation aus :func:`_maske_kette_je_situation`, mit einer Knotenlast
+    oder (bei Eigengewicht) einer Punktmasse an einem dort neu wirksamen Knoten -
+    oder in einer Situation, in der eine Kopplung neu bleibt."""
+    je_sit = _maske_kette_je_situation(model) if je_sit is None else je_sit
+    if not je_sit:
+        return set()
+    pm = {}
+    for p in getattr(model, "punktmassen", None) or []:
+        pm.setdefault(int(p.node), 0.0)
+        pm[int(p.node)] += abs(float(p.masse))
+    out = set()
+    for name, lc in (getattr(model, "load_cases", None) or {}).items():
+        sit = str(getattr(lc, "situation", "") or "")
+        if sit not in je_sit:
+            continue
+        knoten, kopp = je_sit[sit]
+        if kopp:
+            out.add(str(name))
+            continue
+        last = {int(l.node) for l in getattr(lc, "nodal_loads", None) or []
+                if any(float(x) for x in (l.F or []))}
+        if any(float(x) for x in (getattr(lc, "gravity", None) or [])):
+            last |= {n for n, m in pm.items() if m > 0}
+        if last & knoten:
+            out.add(str(name))
+    return out
+
+
+def _maske_starrkoerper_betroffen(model) -> bool:
+    """Modellmerkmal maske_starrkoerper_last: ein Lastfall, dessen Last oder
+    Steifigkeit unter seiner Elementmaske seit Stand 65 anders wirkt."""
+    return bool(_maske_kette_lastfaelle(model))
+
+
+def _maske_starrkoerper_im_ergebnis(model, an) -> str:
+    """Ergebnisse (Lastfaelle, Kombinationen, Knicken), deren Lastfaelle
+    :func:`_maske_kette_lastfaelle` nennt."""
+    lfs = _maske_kette_lastfaelle(model)
+    if not lfs:
+        return ""
+    paare = list(_ergebnis_paare(an))
+    if getattr(an, "kind", "") == "buckling":
+        paare.append((str(getattr(an, "name", "") or ""), an))
+    namen = sorted({str(n) for n, _r in paare if _lastfaelle_von(model, n) & lfs})
+    return ("Knotenlast über Starrkörper oder Kette bei abgeschalteten Elementen: " + ", ".join(namen[:6])
+            + (" …" if len(namen) > 6 else "")) if namen else ""
+
 #: Die Tabelle (Einstufung des Anwenders vom 16.10.2026). Stand 1: Abbruch der
 #: Plastizitaet (a1194ef, 13.10.2026 19:32); Stand 1.5: die Korrekturen dazwischen
 #: (13.10. 23:09 bis 15.10. 12:56) - eine Datei ohne Angabe erkennt sie nur an
@@ -3744,10 +3837,31 @@ MERKMALE: list = [
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Knickergebnis mit negativem ersten Faktor und positivem dahinter",
         im_ergebnis=_knicken_erster_nicht_positiv_im_ergebnis),
+    # Runde k9 (15.11.2026, vom Anwender freigegeben): bei einer Elementmaske
+    # (Situation mit abgeschaltetem Element, Stab „aus“) fiel die Knotenlast an
+    # einem Knoten ohne Element, der nur ueber einen Starrkoerper (RBE2/RBE3)
+    # oder eine Kette Knoten ohne Element - Starrkoerper/Kopplung - Element
+    # angebunden ist, still weg (situationen.wirksame_knoten kannte nur
+    # Kopplungen und nur eine Stufe): Kragarm 3 m, 1 kN per RBE2 am Ende,
+    # w = 0,0000 statt 0,5357 mm. Mit der Kette entfiel auch die Steifigkeit
+    # einer Kopplung hinter einem Knoten ohne Element. Stand 64 belegt auf
+    # fix/k8-th3 ein anderes Merkmal (theorie3_starrkoerper). Fehlerkorrektur
+    Merkmal(
+        name="maske_starrkoerper_last", titel="Knotenlast über Starrkörper bei abgeschalteten Elementen",
+        texte={"alt": "nur Knoten mit wirksamem Element und ihre Kopplungen (eine Stufe): Last an einem "
+                      "Knoten, der über einen Starrkörper oder eine Kette angebunden ist, entfiel",
+               "neu": "Hülle über Starrkörper und Kopplungen bis zum Fixpunkt: die Last wirkt, die Kopplungen "
+                      "der Kette bleiben"},
+        wechsel=(Wechsel(stand=65, datum="15.11.2026", commit="fix/k9-rbe2", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Elementmaske in einer Situation (oder Stab „aus“) und eine Knotenlast oder Punktmasse "
+                      "an einem Knoten ohne Element, der über einen Starrkörper oder eine Kette (Starrkörper, "
+                      "Kopplung) an einem wirksamen Element hängt",
+        betrifft=_maske_starrkoerper_betroffen, im_ergebnis=_maske_starrkoerper_im_ergebnis),
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 63
+VERFAHRENSSTAND = 65
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

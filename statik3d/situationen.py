@@ -68,8 +68,9 @@ def aktive_knoten(model: Model, aktiv) -> np.ndarray:
 
 
 def kopplung_bleibt(model: Model, kp, kn: np.ndarray) -> bool:
-    """Ob die Kopplung ``kp`` bei der Knotenmaske ``kn`` (:func:`aktive_knoten`)
-    wirkt: sobald einer ihrer Knoten wirksam ist. Weggelassen wird sie nur,
+    """Ob die Kopplung ``kp`` bei der Knotenmaske ``kn`` (seit 15.11.2026
+    :func:`wirksame_knoten`, bis dahin :func:`aktive_knoten`) wirkt: sobald
+    einer ihrer Knoten wirksam ist. Weggelassen wird sie nur,
     wenn an beiden Seiten kein wirksames Element haengt - dann verbaende sie
     zwei Knoten, die nichts tragen.
 
@@ -99,16 +100,86 @@ def _stabende_gruppe() -> str:
 
 
 def wirksame_knoten(model: Model, aktiv) -> np.ndarray:
-    """Maske (nn,): Knoten, die in der Rechnung mit ``aktiv`` mittragen - an
-    ihnen haengt ein wirksames Element oder eine Kopplung, die bleibt
-    (:func:`kopplung_bleibt`). Nur dort wirken Knotenlasten und Punktmassen
-    (assemble.load_vector)."""
+    """Maske (nn,): Knoten, die in der Rechnung mit ``aktiv`` mittragen. Nur
+    dort wirken Knotenlasten und Punktmassen (assemble.load_vector), und nur
+    Kopplungen an ihnen bleiben (assemble.kopplungen).
+
+    Ausgangspunkt sind die Knoten mit einem wirksamen Element
+    (:func:`aktive_knoten`) und die Lagerknoten, an denen im ganzen Modell
+    kein Element haengt - sie tragen selbst. Von dort die Huelle ueber
+    Kopplungen und Starrkoerper bis zum Fixpunkt:
+
+    * eine Kopplung, die bleibt (:func:`kopplung_bleibt`): beide Knoten;
+    * ein Starrkoerper RBE2 mit einem wirksamen Knoten (Master oder Slave):
+      alle seine Knoten - sie folgen einander starr;
+    * ein Starrkoerper RBE3 (auch die verteilende Kopplung eines Stabendes,
+      stabeinleitung.ist_verteilkopplung) mit einem wirksamen Slave: der
+      Master, der den Slaves folgt. Die Slaves selbst nicht - die RBE3
+      versteift sie nicht, ein Slave ohne eigenes Element haette nur die
+      Strafsteifigkeit der sechs Zeilen.
+
+    Ein Starrkoerper oder eine Kopplung, deren ganze Kette an keinem
+    wirksamen Element und keinem solchen Lagerknoten haengt (ein ganz
+    abgeschalteter Nebenarm), bleibt unwirksam wie bisher.
+
+    Bis zum 15.11.2026 (Verfahrensstand 64) zaehlten nur die Kopplungen und
+    nur eine Stufe: Eine Last an einem Knoten ohne Element, der ueber einen
+    Starrkoerper (oder eine Kette Knoten ohne Element - Starrkoerper -
+    Kopplung - Element) angebunden ist, fiel bei jeder Elementmaske still weg
+    (Situation mit abgeschaltetem Element, Stab „aus“): Kragarm 3 m, Last
+    1 kN per RBE2 am Ende, w = 0,0000 statt 0,5357 mm."""
     kn = aktive_knoten(model, aktiv)
     if aktiv is None:
         return kn
     out = kn.copy()
-    for kp in (getattr(model, "kopplungen", None) or []):
-        if kopplung_bleibt(model, kp, kn):
-            out[int(kp.node_a)] = True
-            out[int(kp.node_b)] = True
+    nn = len(out)
+    out |= _lagerknoten_ohne_element(model, nn)
+    kopp = list(getattr(model, "kopplungen", None) or [])
+    # kopplung_bleibt fuer alle Kopplungen auf einmal (am Drehlager Tausende,
+    # je Lastfall ein Aufruf): Stabende nur ueber node_b, sonst eine Seite
+    ka = np.fromiter((int(kp.node_a) for kp in kopp), dtype=np.int64, count=len(kopp))
+    kb = np.fromiter((int(kp.node_b) for kp in kopp), dtype=np.int64, count=len(kopp))
+    gruppe = _stabende_gruppe()
+    nur_b = np.fromiter((str(getattr(kp, "gruppe", "") or "").startswith(gruppe) for kp in kopp),
+                        dtype=bool, count=len(kopp))
+    sk_liste = []
+    from .stabeinleitung import ist_verteilkopplung
+    for sk in (getattr(model, "starrkoerper", None) or []):
+        master = int(sk.master)
+        slaves = [int(x) for x in (sk.slaves or []) if 0 <= int(x) < nn and int(x) != master]
+        if not slaves or not 0 <= master < nn:
+            continue
+        rbe2 = str(getattr(sk, "art", "RBE2")).upper() == "RBE2" and not ist_verteilkopplung(sk)
+        sk_liste.append((master, slaves, rbe2))
+    while True:
+        vorher = int(out.sum())
+        if len(kopp):
+            bleibt = np.where(nur_b, out[kb], out[ka] | out[kb])
+            out[ka[bleibt]] = True
+            out[kb[bleibt]] = True
+        for master, slaves, rbe2 in sk_liste:
+            if rbe2:
+                if out[master] or out[slaves].any():
+                    out[master] = True
+                    out[slaves] = True
+            elif out[slaves].any():
+                out[master] = True
+        if int(out.sum()) == vorher:
+            return out
+
+
+def _lagerknoten_ohne_element(model: Model, nn: int) -> np.ndarray:
+    """Maske (nn,): Knoten mit Lager, an denen im ganzen Modell kein Element
+    haengt (Lager ueber einen Starrkoerper oder eine Kopplung angebunden).
+    Ein Lagerknoten eines abgeschalteten Elements zaehlt nicht."""
+    out = np.zeros(nn, dtype=bool)
+    lager = {int(s.node) for s in (getattr(model, "supports", None) or [])
+             if 0 <= int(getattr(s, "node", -1)) < nn}
+    if not lager:
+        return out
+    mit_element = set()
+    for e in model.elements:
+        mit_element.update(int(n) for n in e.nodes)
+    for n in lager - mit_element:
+        out[n] = True
     return out
