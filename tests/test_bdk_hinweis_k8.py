@@ -243,6 +243,13 @@ def test_ersatzstab():
     an, z = _rechnen(_ipe(), design=True)
     mc = (an.design.members.get("T1") if an.design is not None else None)
     lt = mc is not None and not mc.fehler and "6.3.2" in repr(mc.stability)
+    # Wert aus der Klaerung (1), Handrechnung 0,9755 (M_cr 90,38 kNm, C1 = 1)
+    eta = None
+    if lt:
+        eta = float(mc.stability[0]["checks"]["Biegedrillknicken (6.3.2)"][0])
+    nahe_eta = eta is not None and abs(eta - 0.9735) <= 1e-3
+    check("IPE 300 Beispiel A nach Theorie II. Ordnung: M_Ed/M_b,Rd (6.3.2) = 0,9735 "
+          "(Hand mit C1 = 1: 0,9755)", nahe_eta, eta)
     check("IPE 300 mit EC3-Nachweis und Biegedrillknicken, Rechnung mit Nachweisen "
           "(χ_LT im Ersatzstab geführt): kein Hinweis",
           lt and _kein(an, z), f"χ_LT geführt {lt} | " + " | ".join(_h(z))[:200])

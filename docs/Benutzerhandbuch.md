@@ -11611,8 +11611,9 @@ und RBE3) und keine starren Knotenkopplungen. Bis dahin ließ sie Starrkörper
 still weg (Kragstütze mit RBE2-Arm 0 mm statt 8,23 mm) und rechnete starre
 Kopplungen nur als Feder von 10 000 N/m (zwei gekoppelte Kragarme 0,533 statt
 0,268 mm). Jetzt weist das Programm einen solchen Lastfall bzw. eine solche
-Kombination mit Klartext ab, auch schon in der Modellprüfung; das Ergebnis ist
-das nach Theorie I. Ordnung, so gekennzeichnet. Es zählen die Starrkörper und
+Kombination mit Klartext ab, auch schon in der Modellprüfung. CLI und Web
+brechen bei diesem Fehler ab; die Oberfläche bietet „trotzdem rechnen“ an und
+zeigt dann das Ergebnis nach Theorie I. Ordnung, so gekennzeichnet. Es zählen die Starrkörper und
 Kopplungen, die in der gerechneten Situation mittragen, auch über Ketten aus
 Knoten ohne Element und an Lagerknoten ohne Element. Abhilfe: Balken mit
 Querschnitt STARR, Versatz der Stabenden oder Theorie II. Ordnung; federnde
@@ -11757,8 +11758,10 @@ Namen, beim Knicken „Die Knickfaktoren enthalten …“. Ein Stab mit den Hake
 gilt nur als erfasst, wenn sein Nachweis in derselben Rechnung geführt wird;
 ohne Nachweise oder mit „nicht geführt“ (Werkstoff ohne f_y) steht er im
 Hinweis, nach nachträglich gestarteten Nachweisen fällt er wieder heraus.
-Hohlprofile und Querschnitte ohne starke Achse sind nach EN 1993-1-1,
-6.3.2.1(2) ausgenommen. Geprüft in `tests/test_bdk_hinweis_k8.py`.
+Quadratische und runde Hohlprofile sowie Querschnitte ohne starke Achse sind
+nach EN 1993-1-1, 6.3.2.1(2) ausgenommen; Rechteckhohlprofile nimmt das
+Programm als Annahme ebenfalls aus (große Torsionssteifigkeit). Geprüft in
+`tests/test_bdk_hinweis_k8.py`.
 
 **Wölbkrafttorsion und Längsgelenk nach Theorie II. Ordnung** (seit
 12.11.2026). Balken mit Wölbkrafttorsion rechnen ihre Stabendkräfte jetzt mit
