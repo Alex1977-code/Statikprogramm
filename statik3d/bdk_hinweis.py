@@ -22,7 +22,12 @@ Kriterium (je Stab bzw. gerader Kette von Balken ohne Stab):
 2. Erfasst: Stab vom Querschnittstyp I mit Nachweis nach EC3 und Haken
    „Biegedrillknicken“ - der Ersatzstabnachweis 6.3.2/6.3.3 fuehrt chi_LT
    auch mit Schnittgroessen nach Theorie II. Ordnung (ec3.design.
-   check_member, ec3.stability.member_stability).
+   check_member, ec3.stability.member_stability). Nach Theorie II. Ordnung
+   und alpha_cr gilt das nur, wenn in derselben Rechnung der Nachweis fuer
+   diesen Stab auch gefuehrt wird (solver._bdk_hinweise_sammeln nach
+   check_members): ohne Nachweise (CLI ohne --nachweise, Haken „Nachweise“
+   ab) oder mit „nicht gefuehrt“ (Werkstoff ohne f_y) erfassen die Haken
+   allein nichts (Gegenpruefung k8, 15.11.2026).
 3. Nicht gefaehrdet: Hohlprofile (RHS, CHS) und Querschnitte ohne starke
    Achse (I_y = I_z, etwa Kreis, Quadrat) - DIN EN 1993-1-1, 6.3.2.1(2)
    (quadratische und runde Hohlprofile, Kastenquerschnitte) und 6.3.1.4(1)
@@ -102,20 +107,23 @@ def bdk_text(namen: list, wo: str = TH2_WO) -> str:
             "Biegedrillknicken mit χ_LT nachweisen oder Theorie III. Ordnung rechnen.")
 
 
-def _erfasst(model, name: str, sec) -> bool:
+def _erfasst(model, name: str, sec, ec3: bool = True) -> bool:
     """Biegedrillknicken anderweitig erfasst oder nicht maßgebend (Punkte 2
-    und 3 des Kriteriums)?"""
+    und 3 des Kriteriums)? ``ec3=False``: die Haken EC3/Biegedrillknicken
+    zaehlen nicht (Punkt 2 entscheidet dann der Aufrufer nach dem Nachweis)."""
     typ = getattr(sec, "typ", "")
     if typ in GESCHLOSSEN:
         return True
     Iy, Iz = float(sec.Iy or 0.0), float(sec.Iz or 0.0)
     if max(Iy, Iz) <= 0 or min(Iy, Iz) >= OHNE_STARKE_ACHSE * max(Iy, Iz):
         return True
+    if not ec3:
+        return False
     mem = (getattr(model, "members", None) or {}).get(name) if name else None
     return bool(mem is not None and typ == "I" and mem.design and mem.lt_check)
 
 
-def kandidaten(model, aktiv=None) -> list:
+def kandidaten(model, aktiv=None, ec3: bool = True) -> list:
     """[(Anzeige, Name, [Balken], Querschnitt, Werkstoff)] der Staebe (und
     geraden Ketten von Balken ohne Stab: Name "", Anzeige "Element n" ab 0),
     deren Biegedrillknicken nicht anderweitig erfasst ist - ohne Rechnung."""
@@ -128,7 +136,7 @@ def kandidaten(model, aktiv=None) -> list:
         e0 = model.elements[balken[0]]
         sec = model.sections.get(e0.sec)
         mat = model.materials.get(e0.mat)
-        if sec is None or mat is None or _erfasst(model, name, sec):
+        if sec is None or mat is None or _erfasst(model, name, sec, ec3):
             continue
         out.append((name or f"Element {min(balken)}", name, balken, sec, mat))
     return out
@@ -177,14 +185,14 @@ def _stab_bewerten(model, name: str, balken: list, sec, mat, kraefte) -> bool:
     return gek < GRENZE_FAKTOR and gek < (1.0 - GRENZE_ABFALL) * ohne
 
 
-def bdk_staebe(model, aktiv=None, res=None, u=None, feq=None, q=None) -> list:
+def bdk_staebe(model, aktiv=None, res=None, u=None, feq=None, q=None, ec3: bool = True) -> list:
     """Die Namen der Staebe mit Druck und Biegung, deren Biegedrillknicken
     die Rechnung mit K_G nicht enthaelt (Kriterium oben). Grundzustand:
     ``res`` (Results mit beam_end/beam_q) oder ``u`` mit den Stablasten
     ``feq`` und den Abschnittslasten ``q`` (solver.case_loads). Ein Hinweis
     sperrt nie eine Rechnung: bei einem Fehler die leere Liste."""
     try:
-        kand = kandidaten(model, aktiv)
+        kand = kandidaten(model, aktiv, ec3)
         if not kand:
             return []
         from .solver import beam_station_forces
@@ -217,9 +225,28 @@ def hinweis(model, aktiv=None, wo: str = TH2_WO, **grund) -> tuple:
     return (bdk_text(namen, wo) if namen else ""), namen
 
 
-def merken(info, text: str, namen: list) -> None:
+def hinweis_th2(model, aktiv=None, **grund) -> tuple:
+    """(Text oder "", Namen, Namen mit Haken EC3/Biegedrillknicken) fuer
+    Theorie II. Ordnung und alpha_cr. Die dritte Liste nennt die Staebe, die
+    das Kriterium erfuellen, aber als durch den Ersatzstabnachweis erfasst
+    gelten - ob der Nachweis in dieser Rechnung gefuehrt wird, entscheidet
+    solver._bdk_hinweise_sammeln nach check_members (Gegenpruefung k8)."""
+    alle = bdk_staebe(model, aktiv, ec3=False, **grund)
+    if not alle:
+        return "", [], []
+    ohne_ec3 = {k[0] for k in kandidaten(model, aktiv, True)}
+    namen = [n for n in alle if n in ohne_ec3]
+    ec3 = [n for n in alle if n not in ohne_ec3]
+    return (bdk_text(namen) if namen else ""), namen, ec3
+
+
+def merken(info, text: str, namen: list, ec3: list = ()) -> None:
     """Den Hinweis an Th2Info haengen; die Namen fuer die eine Zeile je
-    Rechnung (solver._bdk_hinweise_sammeln)."""
+    Rechnung (solver._bdk_hinweise_sammeln). ``ec3``: Staebe, die nur mit
+    gefuehrtem EC3-Nachweis erfasst sind (:func:`hinweis_th2`)."""
+    if ec3:
+        alt = list(getattr(info, "bdk_ec3_staebe", None) or [])
+        info.bdk_ec3_staebe = alt + [n for n in ec3 if n not in alt]
     if not text:
         return
     if text not in info.hinweise:

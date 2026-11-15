@@ -11241,8 +11241,24 @@ def _bdk_hinweise_sammeln(an, progress=None) -> None:
     Biegedrillknicken“ (statik3d.bdk_hinweis, Runde k8, 15.11.2026): eine
     Zeile je Rechnung ueber alle Lastfaelle und Kombinationen nach Theorie II.
     Ordnung und alpha_cr - die Staebe aller Kombinationen zusammen, ins
-    Protokoll und nach an.info["bdk_hinweis"] und damit in die Zusammenfassung."""
+    Protokoll und nach an.info["bdk_hinweis"] und damit in die Zusammenfassung.
+
+    Laeuft nach den Nachweisen: Ein Stab mit den Haken EC3 und
+    Biegedrillknicken gilt nur als erfasst, wenn sein Nachweis in dieser
+    Rechnung gefuehrt wurde (an.design, ohne „nicht gefuehrt“); sonst kommt er
+    in den Hinweis der Kombination (Th2Info.hinweise, Theoriekapitel) und in
+    die Zeile (Gegenpruefung k8, 15.11.2026)."""
     from .bdk_hinweis import BDK_KENNUNG, bdk_text
+    gefuehrt = set()
+    if getattr(an, "design", None) is not None:
+        gefuehrt = {k for k, mc in an.design.members.items() if not getattr(mc, "fehler", "")}
+    for info in (getattr(an.theorie2, "kombinationen", None) or {}).values():
+        offen = [n for n in getattr(info, "bdk_ec3_staebe", None) or [] if n not in gefuehrt]
+        if not offen:
+            continue
+        alt = list(getattr(info, "bdk_staebe", None) or [])
+        info.bdk_staebe = alt + [n for n in offen if n not in alt]
+        info.hinweise[:] = [h for h in info.hinweise if BDK_KENNUNG not in h] + [bdk_text(info.bdk_staebe)]
     namen, texte = [], []
     for info in (getattr(an.theorie2, "kombinationen", None) or {}).values():
         for n in getattr(info, "bdk_staebe", None) or []:
@@ -11378,7 +11394,6 @@ def _solve_all_rumpf(model: Model, an: Analysis, systeme: dict, workers, progres
             an.theorie3.kombinationen.update(t3.kombinationen)
             an.theorie3.settings.update(t3.settings)
     _laengslast_hinweise_sammeln(an, progress)
-    _bdk_hinweise_sammeln(an, progress)
     if ek_rechnen and ek_hoeher:
         # Nach II./III. Ordnung Gerechnetes kommt aus an.alternativen, alles
         # andere aus den linearen Lastfaellen - nie aus einem Gemisch
@@ -11453,6 +11468,9 @@ def _solve_all_rumpf(model: Model, an: Analysis, systeme: dict, workers, progres
     if design and model.volumenbereiche:
         from .ec3.volumen import check_volumen
         an.volumen = check_volumen(model, an, progress=progress)
+    # nach den Nachweisen: ob der Ersatzstabnachweis das Biegedrillknicken
+    # erfasst, steht erst in an.design (Gegenpruefung k8)
+    _bdk_hinweise_sammeln(an, progress)
     an.info.update({"time": time.time() - t0, "parallel": parallel.describe(),
                     "solver": system.backend, "ndof": model.ndof,
                     "nfree": len(system.fi)})

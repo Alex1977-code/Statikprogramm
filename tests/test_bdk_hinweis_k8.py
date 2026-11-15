@@ -108,11 +108,11 @@ def _ipe(lt=True, design=True):
     return m
 
 
-def _rechnen(m):
+def _rechnen(m, design=False):
     from statik3d import solver
     zeilen = []
     with contextlib.redirect_stdout(io.StringIO()):
-        an = solver.solve_all(m, workers=1, design=False, progress=lambda t, *a: zeilen.append(str(t)))
+        an = solver.solve_all(m, workers=1, design=design, progress=lambda t, *a: zeilen.append(str(t)))
     return an, zeilen
 
 
@@ -240,9 +240,32 @@ def test_knicken():
 
 
 def test_ersatzstab():
-    an, z = _rechnen(_ipe())
-    check("IPE 300 mit EC3-Nachweis und Biegedrillknicken (χ_LT im Ersatzstab): kein Hinweis",
-          _kein(an, z), " | ".join(_h(z))[:200])
+    an, z = _rechnen(_ipe(), design=True)
+    mc = (an.design.members.get("T1") if an.design is not None else None)
+    lt = mc is not None and not mc.fehler and "6.3.2" in repr(mc.stability)
+    check("IPE 300 mit EC3-Nachweis und Biegedrillknicken, Rechnung mit Nachweisen "
+          "(χ_LT im Ersatzstab geführt): kein Hinweis",
+          lt and _kein(an, z), f"χ_LT geführt {lt} | " + " | ".join(_h(z))[:200])
+    # Gegenpruefung k8: die Haken allein erfassen nichts - ohne Nachweise in
+    # dieser Rechnung (CLI ohne --nachweise, Haken „Nachweise“ ab) laeuft kein χ_LT
+    an, z = _rechnen(_ipe(), design=False)
+    check("IPE 300 mit Haken EC3 und Biegedrillknicken, Rechnung ohne Nachweise: Hinweis nennt T1",
+          any("1 Stab mit Druck und Biegung: T1." in x for x in _h(z))
+          and any("T1" in x for x in an.info.get("bdk_hinweis") or [])
+          and any("T1" in h for i in _infos(an) for h in i.hinweise), " | ".join(_h(z))[:200])
+    # ... und ein Nachweis, der nicht gefuehrt wird (Werkstoff ohne f_y), erfasst auch nichts
+    from statik3d.model import Material
+    m = _ipe()
+    m.add_material(Material("OHNEFY", E=210e9, nu=0.3, rho=0.0))
+    for e in m.elements:
+        e.mat = "OHNEFY"
+    an, z = _rechnen(m, design=True)
+    mc = (an.design.members.get("T1") if an.design is not None else None)
+    check("IPE 300 mit Haken, EC3-Nachweis nicht geführt (Werkstoff ohne f_y): Hinweis nennt T1",
+          mc is not None and bool(mc.fehler)
+          and any("1 Stab mit Druck und Biegung: T1." in x for x in _h(z))
+          and any("T1" in h for i in _infos(an) for h in i.hinweise),
+          f"fehler {getattr(mc, 'fehler', None)!r} | " + " | ".join(_h(z))[:200])
     an, z = _rechnen(_ipe(lt=False))
     check("IPE 300, Biegedrillknicken am Stab ausgeschaltet: Hinweis nennt T1",
           any("1 Stab mit Druck und Biegung: T1." in x for x in _h(z)), " | ".join(_h(z))[:200])
