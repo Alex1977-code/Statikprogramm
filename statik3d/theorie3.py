@@ -490,7 +490,7 @@ def _nur_staebe(model: Model, aktiv) -> bool:
                    for i, e in enumerate(model.elements))
 
 
-def _wirksame_knoten_th3(model: Model, aktiv) -> np.ndarray:
+def _wirksame_knoten_th3(model: Model, aktiv, bis_70: bool = False) -> np.ndarray:
     """Maske (nn,): Knoten, die in der Rechnung mit ``aktiv`` mittragen: an
     ihnen haengt ein wirksames Element (ohne Maske: irgendein Element), oder
     sie haengen ueber Starrkoerper und Kopplungen - auch ueber Knoten ohne
@@ -511,7 +511,11 @@ def _wirksame_knoten_th3(model: Model, aktiv) -> np.ndarray:
     keiner ihrer Slaves Knoten eines abgeschalteten Elements ist (seit Runde
     k10, 15.11.2026; bis dahin nie: Master am Kragarmende, einziger Slave Q
     ohne Element, Last an Q - die Sperre schwieg, auch ohne Maske, und die
-    Last an Q blieb ohne Bauteil); bei Kopplungen situationen.kopplung_bleibt."""
+    Last an Q blieb ohne Bauteil); bei Kopplungen situationen.kopplung_bleibt
+    mit den Knoten abgeschalteter Elemente (seit Runde k10c, 15.11.2026: die
+    Kopplung eines Stabendes an einem Koerperknoten ohne jedes Element loest
+    auch ueber den Stabknoten aus, wie situationen.huelle; ``bis_70``: die
+    Regel davor, fuer das Merkmal maske_stabende_kopplung)."""
     from .situationen import aktive_knoten, kopplung_bleibt, abgeschaltete_knoten
     from . import stabeinleitung as _se
     maske = np.ones(len(model.elements), dtype=bool) if aktiv is None else np.asarray(aktiv, bool)
@@ -550,7 +554,7 @@ def _wirksame_knoten_th3(model: Model, aktiv) -> np.ndarray:
                 geaendert = True
         for kp in kopp:
             a, b = int(kp.node_a), int(kp.node_b)
-            if not (kn[a] and kn[b]) and kopplung_bleibt(model, kp, kn):
+            if not (kn[a] and kn[b]) and kopplung_bleibt(model, kp, kn, None if bis_70 else tot):
                 kn[a] = kn[b] = True
                 geaendert = True
     return kn
@@ -615,13 +619,14 @@ def starre_kopplung_sperre(model: Model, aktiv=None) -> str:
     kopp = getattr(model, "kopplungen", None) or []
     if not kopp:
         return ""
-    from .situationen import kopplung_bleibt
+    from .situationen import kopplung_bleibt, abgeschaltete_knoten
     kn = _wirksame_knoten_th3(model, aktiv)
+    tot = abgeschaltete_knoten(model, aktiv, len(kn))
     starr, gruppen = 0, []
     for kp in kopp:
         if not any(not np.isfinite(w) for _r, w in kp.paare()):
             continue
-        if not kopplung_bleibt(model, kp, kn):
+        if not kopplung_bleibt(model, kp, kn, tot):
             continue
         starr += 1
         g = str(getattr(kp, "gruppe", "") or "").strip()

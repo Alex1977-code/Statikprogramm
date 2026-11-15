@@ -1696,13 +1696,16 @@ def kopplungen(model: Model, K: sparse.spmatrix = None, aktiv=None) -> sparse.sp
         # Starrkoerper oder eine zweite Kopplung an einem wirksamen Element
         # haengt, bleibt - dieselbe Maske wie fuer die Knotenlasten
         # (load_vector); bis dahin zaehlten nur Knoten mit Element
-        from .situationen import wirksame_knoten, kopplung_bleibt
+        from .situationen import wirksame_knoten, kopplung_bleibt, abgeschaltete_knoten
         kn_aktiv = wirksame_knoten(model, aktiv)
+        # Knoten abgeschalteter Elemente: die Kopplung eines Stabendes an einem
+        # Koerperknoten ohne jedes Element bleibt ueber den Stabknoten (Stand 71)
+        tot = abgeschaltete_knoten(model, aktiv, len(kn_aktiv))
     from .fugen import STABENDE_GRUPPE, STARR_GRUPPE
     scheiben: dict = {}                   # Gruppe -> [Kopplung]
     enden: dict = {}                      # Stabknoten -> [Kopplung]
     for kp in kopp:
-        if kn_aktiv is not None and not kopplung_bleibt(model, kp, kn_aktiv):
+        if kn_aktiv is not None and not kopplung_bleibt(model, kp, kn_aktiv, tot):
             continue                      # an beiden Seiten kein wirksames Element (14.10.2026)
         if DREHANTEIL:
             g = str(getattr(kp, "gruppe", "") or "")
