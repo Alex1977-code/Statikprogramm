@@ -351,9 +351,86 @@ def test_knicken_web():
               f"{st.job.status} {st.job.error} | {getattr(rb, 'info', {}).get('bdk_hinweis')}")
 
 
+def _web_job(st, fn, *a):
+    with contextlib.redirect_stdout(io.StringIO()):
+        fn(st, *a)
+        st.job.thread.join(600)
+    return st.job.status, st.job.error
+
+
+def _lt_aus(st):
+    from statik3d.web import server
+    with contextlib.redirect_stdout(io.StringIO()):
+        return server.apply_op(st, {"op": "set_member", "name": "T1", "fields": {"lt_check": False}})
+
+
+def _mcr(an, name="T1"):
+    mc = an.design.members[name]
+    return [(s.get("combo"), (s.get("details") or {}).get("M_cr")) for s in mc.stability]
+
+
+def test_ohne_chi_lt():
+    """Nachbesserung k10b (Gegenpruefung, 15.11.2026): Ein Stabilitaets-
+    eintrag zaehlte als gefuehrter chi_LT-Nachweis, obwohl chi_LT nicht lief.
+    ec3.design.check_member legt ihn schon bei N_Ed > 0 an, auch ohne Haken
+    Biegedrillknicken (details: M_cr = inf, chi_LT = 1). Nach set_member
+    lt_check aus (nur invalidate("design")) bleiben Knickergebnis bzw.
+    Analyse stehen; start_design liess dann den Hinweis still fallen."""
+    import math
+    from statik3d import solver
+    from statik3d.web import server
+    # W2: Web, nur Lastfall, Knicken, lt_check aus, Nachweise
+    m = _ipe()
+    st = server.State(m)
+    st.analysis, _z = _rechnen(m, design=False)
+    s1 = _web_job(st, server.start_solve, {"kind": "buckling", "nmodes": 2})
+    r_vor = st.results
+    vorher = _knick_t1(r_vor)
+    _lt_aus(st)
+    s2 = _web_job(st, server.start_design)
+    eint = _mcr(st.analysis)
+    ohne = bool(eint) and all(not math.isfinite(float(x)) for _c, x in eint)
+    check("Web: Knicken LF1, set_member lt_check aus, Nachweise (χ_LT lief nicht, M_cr = inf): "
+          "Hinweis nennt T1 weiter",
+          s1[0] == "fertig" and s2[0] == "fertig" and vorher and st.results is r_vor and ohne
+          and _knick_t1(st.results),
+          f"{s1} {s2} vorher {vorher} Einträge {eint} | {st.results.info.get('bdk_hinweis')}")
+    # dasselbe nach Theorie II. Ordnung (vorbestehend aus Runde k10)
+    m = _ipe(lf_theorie="II")
+    st = server.State(m)
+    st.analysis, _z = _rechnen(m, design=False)
+    vorher = _zeile_t1(st.analysis)
+    _lt_aus(st)
+    s2 = _web_job(st, server.start_design)
+    check("Web: LF1 nach Th. II, set_member lt_check aus, Nachweise ohne χ_LT: Zeile nennt T1 weiter",
+          vorher and s2[0] == "fertig" and _zeile_t1(st.analysis) and _t1(_bdk(st.analysis, m.active_case)),
+          f"vorher {vorher} {s2} | {st.analysis.info.get('bdk_hinweis')}")
+    # Solverweg: Knicken K1 mit Haken, Analyse mit Nachweisen ohne Haken
+    m = _ipe()
+    m.add_combination("K1", {m.active_case: 1.0}, "ULS")
+    r1, _ = _knicken(m, combination="K1")
+    m.members["T1"].lt_check = False
+    an, _z = _rechnen(m)
+    solver._bdk_nach_nachweisen(an, r1)
+    check("Knicken K1 mit Haken, Nachweis K1 danach ohne Haken (Eintrag K1 mit M_cr = inf): nennt T1",
+          any(c == "K1" for c, _x in _mcr(an)) and _knick_t1(r1),
+          f"{_mcr(an)} | {r1.info.get('bdk_hinweis')}")
+    # Schutz: chi_LT lief (M_cr endlich) -> erfasst, kein Hinweis
+    m = _ipe()
+    st = server.State(m)
+    st.analysis, _z = _rechnen(m, design=False)
+    _web_job(st, server.start_solve, {"kind": "buckling", "nmodes": 2})
+    _web_job(st, server.start_design)
+    eint = _mcr(st.analysis)
+    check("Schutz: ohne Umschalten läuft χ_LT (M_cr endlich): Knick-Hinweis fällt weg",
+          bool(eint) and all(math.isfinite(float(x)) and float(x) > 0 for _c, x in eint)
+          and _knick_kein(st.results), f"{eint} | {st.results.info.get('bdk_hinweis')}")
+
+
 def main():
     for t in (test_gzg, test_lastfall_neben_kombination, test_ausgewaehlt, test_nachtraeglich,
-              test_abbruch, test_ergebniskombination, test_alle_gzt, test_knicken, test_knicken_web):
+              test_abbruch, test_ergebniskombination, test_alle_gzt, test_knicken, test_knicken_web,
+              test_ohne_chi_lt):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

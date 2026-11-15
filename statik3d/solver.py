@@ -11248,7 +11248,16 @@ def _bdk_chi_lt_gefuehrt(design) -> dict:
     Eintrag ``combo``; am I-Stab mit Haken Biegedrillknicken samt chi_LT,
     ec3.stability.member_stability). Ein zusammengefasster Eintrag „EK1 [1] =
     EK2 [1]“ gilt fuer alle seine Namen (DesignResults.gleiche). Ein Stab mit
-    „nicht gefuehrt“ (MemberCheck.fehler) fehlt. Ohne Nachweise: leer."""
+    „nicht gefuehrt“ (MemberCheck.fehler) fehlt. Ohne Nachweise: leer.
+
+    Es zaehlt nur ein Eintrag, an dem chi_LT tatsaechlich gelaufen ist
+    (:func:`_bdk_chi_lt_gelaufen`: endliches positives details["M_cr"]).
+    ec3.design.check_member legt einen Stabilitaetseintrag schon bei N_Ed > 0
+    an, auch ohne Haken Biegedrillknicken oder ohne Biegemoment; dort steht
+    M_cr = inf und chi_LT = 1 ohne Rechnung. Bis zur Nachbesserung der Runde
+    k10b (15.11.2026) zaehlte jeder Eintrag, der Hinweis fehlte dann still
+    (Web: Knicken bzw. Theorie II. Ordnung, set_member lt_check aus,
+    start_design)."""
     if design is None:
         return {}
     gleiche = getattr(design, "gleiche", None) or {}
@@ -11259,10 +11268,25 @@ def _bdk_chi_lt_gefuehrt(design) -> dict:
         namen = set()
         for st in getattr(mc, "stability", None) or []:
             c = st.get("combo") if isinstance(st, dict) else None
-            if c:
+            if c and _bdk_chi_lt_gelaufen(st):
                 namen.update(gleiche.get(c) or [c])
         out[k] = namen
     return out
+
+
+def _bdk_chi_lt_gelaufen(st) -> bool:
+    """True, wenn am Stabilitaetseintrag ``st`` (ec3.stability.member_stability)
+    chi_LT nach 6.3.2 gerechnet wurde: details["M_cr"] endlich und positiv
+    (dann auch details["curve_LT"]). Ohne Haken oder ohne Moment steht dort
+    M_cr = inf, bei M_cr <= 0 setzt lateral_torsional chi_LT = 1 ohne Linie."""
+    d = st.get("details") if isinstance(st, dict) else None
+    if not isinstance(d, dict) or "curve_LT" not in d:
+        return False
+    try:
+        mcr = float(d.get("M_cr"))
+    except (TypeError, ValueError):
+        return False
+    return bool(np.isfinite(mcr) and mcr > 0)
 
 
 def _bdk_hinweise_sammeln(an, progress=None) -> None:
