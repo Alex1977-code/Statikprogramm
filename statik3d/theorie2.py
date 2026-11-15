@@ -832,6 +832,10 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
 
     info = Th2Info(kombination=name, u_max_I=float(np.abs(u1).max()))
     info.hinweise.extend(ll_hinweise)
+    # Stab mit Druck und Biegung, Biegedrillknicken nicht anderweitig erfasst:
+    # K_G hat kein Momentenglied - Hinweis, kein geaenderter Wert (Runde k8)
+    from .bdk_hinweis import hinweis as bdk_hinweis, merken as bdk_merken
+    bdk_merken(info, *bdk_hinweis(model, aktiv, res=res1))
     ac = alpha_cr(model, system, u1, n_anfang=n_anf, feq=feq)
     info.alpha_cr = ac["alpha_cr"]
     info.stab_aus(ac)
@@ -1159,6 +1163,9 @@ def check_theorie2(model: Model, analysis, combos: list = None, system=None,
                 info.hinweise.append(ac["hinweis_teilung"])
             info.hinweise.extend(ll_hinweise)
             if ac["alpha_cr"] >= grenze:
+                # nur alpha_cr: Hinweis Biegedrillknicken wie in solve_theorie2 (Runde k8)
+                from .bdk_hinweis import hinweis as bdk_hinweis, merken as bdk_merken
+                bdk_merken(info, *bdk_hinweis(m_a, getattr(s_a, "aktiv", None), u=u1, feq=_feq, q=_q))
                 out.kombinationen[zeile] = info
                 if schluessel is not None:
                     gemerkt[schluessel] = (None, info)
