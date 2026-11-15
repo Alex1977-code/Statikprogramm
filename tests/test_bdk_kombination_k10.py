@@ -231,9 +231,129 @@ def test_alle_gzt():
           an.info.get("bdk_hinweis"))
 
 
+KNICK_T1 = ("Die Knickfaktoren enthalten kein Biegedrillknicken (Momentenglied der geometrischen "
+            "Steifigkeit fehlt): 1 Stab mit Druck und Biegung: T1.")
+
+
+def _knicken(m, **kw):
+    from statik3d import solver
+    zeilen = []
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = solver.solve_buckling(m, 2, lambda t, *a: zeilen.append(str(t)), **kw)
+    return r, zeilen
+
+
+def _knick_t1(r):
+    z = r.info.get("bdk_hinweis") or []
+    return len(z) == 1 and KNICK_T1 in z[0] and r.summary().count(KENNUNG) == 1
+
+
+def _knick_kein(r):
+    return not r.info.get("bdk_hinweis") and KENNUNG not in r.summary()
+
+
+def test_knicken():
+    """Runde k10b: Die Knickfaktoren (solve_buckling) zaehlten einen I-Stab
+    mit den Haken EC3 und Biegedrillknicken als erfasst, ohne dass ein
+    Nachweis lief (bdk_hinweis.hinweis mit ec3=True) - der Hinweis fehlte
+    still. Jetzt dieselbe Regel wie nach Theorie II. Ordnung: erfasst nur,
+    wo der chi_LT-Nachweis den Grundzustand des Knickens gefuehrt hat."""
+    from statik3d import solver
+    m = _ipe()
+    r, z = _knicken(m, case=m.active_case)
+    check("Knicken allein (kein Nachweis gelaufen), T1 mit Haken EC3/BDK: Hinweis nennt T1 "
+          "in res.info, Zusammenfassung und Protokoll",
+          _knick_t1(r) and sum(KNICK_T1 in x for x in z) == 1,
+          f"{r.info.get('bdk_hinweis')} | " + " | ".join(x for x in z if KENNUNG in x)[:160])
+    # Grundzustand GZT-Kombination K1; die Analyse mit Nachweisen fuehrt K1
+    m = _ipe()
+    lf = m.active_case
+    m.add_combination("K1", {lf: 1.0}, "ULS")
+    m.add_combination("K2", {lf: 1.0}, "SLS")
+    an, _z = _rechnen(m)
+    r1, _ = _knicken(m, combination="K1")
+    r2, _ = _knicken(m, combination="K2")
+    ra, _ = _knicken(m, case="all")
+    check("Knicken K1 und K2 vor dem Zuordnen der Nachweise: beide nennen T1",
+          _knick_t1(r1) and _knick_t1(r2), f"{r1.info.get('bdk_hinweis')} | {r2.info.get('bdk_hinweis')}")
+    for r in (r1, r2, ra):
+        solver._bdk_nach_nachweisen(an, r)
+    check("Nachweise mit χ_LT in K1 geführt: Knicken K1 ohne Hinweis",
+          _chi_lt(an, "K1") and _knick_kein(r1), r1.info.get("bdk_hinweis"))
+    check("GZG K2 (kein Nachweis): Knicken K2 nennt T1 weiterhin (einmal)",
+          not _chi_lt(an, "K2") and _knick_t1(r2), r2.info.get("bdk_hinweis"))
+    check("Grundzustand „alle Lastfälle“ (kein Nachweis dieses Zustands): nennt T1", _knick_t1(ra),
+          ra.info.get("bdk_hinweis"))
+    an.design = None
+    solver._bdk_nach_nachweisen(an, r1)
+    check("Nachweise wieder entfernt: Knicken K1 nennt T1 wieder, genau einmal", _knick_t1(r1),
+          r1.info.get("bdk_hinweis"))
+    # Lastfall neben Kombinationen: der Nachweis fuehrt den Lastfall nicht
+    an2, _z = _rechnen(m)
+    rl, _ = _knicken(m, case=lf)
+    solver._bdk_nach_nachweisen(an2, rl)
+    check("Knicken Lastfall neben Kombinationen: der Nachweis führt ihn nicht, Hinweis nennt T1",
+          _knick_t1(rl), rl.info.get("bdk_hinweis"))
+    # Nachweis nicht gefuehrt (Werkstoff ohne f_y): erfasst nichts
+    from statik3d.model import Material
+    m = _ipe()
+    m.add_material(Material("OHNEFY", E=210e9, nu=0.3, rho=0.0))
+    for e in m.elements:
+        e.mat = "OHNEFY"
+    m.add_combination("K1", {m.active_case: 1.0}, "ULS")
+    an3, _z = _rechnen(m)
+    r3, _ = _knicken(m, combination="K1")
+    solver._bdk_nach_nachweisen(an3, r3)
+    check("Knicken K1, EC3-Nachweis nicht geführt (Werkstoff ohne f_y): Hinweis nennt T1",
+          bool(an3.design.members["T1"].fehler) and _knick_t1(r3), r3.info.get("bdk_hinweis"))
+    # Schutz: Knickfaktoren unveraendert, nur der Hinweis
+    m = _ipe()
+    r, _ = _knicken(m, case=m.active_case)
+    import numpy as np
+    check("Schutz: Knickfaktoren am IPE 300 positiv und endlich (nur der Hinweis ändert sich)",
+          bool(np.all(np.isfinite(r.buckling_factors))) and float(min(abs(r.buckling_factors))) > 0,
+          [round(float(x), 4) for x in r.buckling_factors])
+
+
+def test_knicken_web():
+    """Web: Nachweise nach dem Knicken (start_design) und Knicken nach den
+    Nachweisen (start_solve kind=buckling) bilden den Hinweis neu."""
+    from statik3d.web import server
+    m = _ipe()
+    m.add_combination("K1", {m.active_case: 1.0}, "ULS")
+    st = server.State(m)
+    an, _z = _rechnen(m, design=False)
+    st.analysis = an
+    r, _ = _knicken(m, combination="K1")
+    st.results = r
+    vorher = _knick_t1(r)
+    with contextlib.redirect_stdout(io.StringIO()):
+        server.start_design(st)
+        st.job.thread.join(300)
+    check("Web: Knicken K1, dann Nachweise gestartet: Hinweis zu T1 verschwindet",
+          vorher and st.job.status == "fertig" and _knick_kein(st.results),
+          f"vorher {vorher} {st.job.status} {st.job.error} | {st.results.info.get('bdk_hinweis')}")
+    # ohne Kombination fuehrt der Nachweis den Lastfall: Knicken danach ohne Hinweis,
+    # mit Kombination daneben nennt das Knicken des Lastfalls T1
+    for kombi, soll in ((False, False), (True, True)):
+        m = _ipe()
+        if kombi:
+            m.add_combination("K1", {m.active_case: 1.0}, "ULS")
+        st = server.State(m)
+        st.analysis, _z = _rechnen(m)
+        with contextlib.redirect_stdout(io.StringIO()):
+            server.start_solve(st, {"kind": "buckling", "nmodes": 2})
+            st.job.thread.join(300)
+        rb = st.results
+        ok = st.job.status == "fertig" and rb is not None and (_knick_t1(rb) if soll else _knick_kein(rb))
+        check("Web: Knicken nach den Nachweisen, " + ("Lastfall neben K1: Hinweis nennt T1" if kombi else
+              "nur Lastfall (Nachweis führt ihn): kein Hinweis"), ok,
+              f"{st.job.status} {st.job.error} | {getattr(rb, 'info', {}).get('bdk_hinweis')}")
+
+
 def main():
     for t in (test_gzg, test_lastfall_neben_kombination, test_ausgewaehlt, test_nachtraeglich,
-              test_abbruch, test_ergebniskombination, test_alle_gzt):
+              test_abbruch, test_ergebniskombination, test_alle_gzt, test_knicken, test_knicken_web):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

@@ -25536,10 +25536,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _design_done(self, res):
         self.analysis.design = res
-        # Hinweis Biegedrillknicken nach den Nachweisen neu bilden (Runde k8)
+        # Hinweis Biegedrillknicken nach den Nachweisen neu bilden (Runde k8),
+        # auch den eines daneben stehenden Knickergebnisses (Runde k10b): die
+        # Analyse und self.results verwirft jede Modellaenderung gemeinsam
         try:
             from .. import solver as _slv
-            _slv._bdk_hinweise_sammeln(self.analysis)
+            _slv._bdk_nach_nachweisen(self.analysis, self.results)
         except Exception:                      # noqa: BLE001 - ein Hinweis sperrt nie
             pass
         self.info(res.summary())
@@ -27156,6 +27158,16 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.analysis.envelopes["CASES"] = solver.Envelope(self.model, self.analysis.cases,
                                                                    bg.umhuellende_kurz("CASES"))
                 self.results = None
+            elif (kind == "buckling" and self.analysis is not None
+                  and getattr(self.analysis, "design", None) is not None
+                  and not getattr(self._ergebnis_stand, "veraendert", False)):
+                # Knicken nach den Nachweisen: ein Haken-Stab gilt als erfasst,
+                # wenn sein chi_LT-Nachweis den Grundzustand gefuehrt hat (k10b)
+                try:
+                    if self._analyse_passt() == "passt":
+                        solver._bdk_knick_hinweis_bilden(r, self.analysis.design)
+                except Exception:              # noqa: BLE001 - ein Hinweis sperrt nie
+                    pass
             text = r.summary()
         self.log.appendPlainText(text)
         # welche Elemente gerechnet wurden (25.09.2026: „nach der Berechnung

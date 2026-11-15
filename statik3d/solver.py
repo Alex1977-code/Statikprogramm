@@ -11323,6 +11323,55 @@ def _bdk_hinweise_sammeln(an, progress=None) -> None:
         an.info.pop("bdk_hinweis", None)
 
 
+def _bdk_knick_hinweis_bilden(res, design=None) -> None:
+    """Der Hinweis „Die Knickfaktoren enthalten kein Biegedrillknicken“ eines
+    Knickergebnisses (solve_buckling) nach derselben Regel wie nach Theorie
+    II. Ordnung (:func:`_bdk_hinweise_sammeln`, Runden k8 und k10): ein Stab
+    mit den Haken EC3 und Biegedrillknicken gilt nur als erfasst, wenn ein
+    Nachweis (``design``, DesignResults) seinen chi_LT-Nachweis genau am
+    Grundzustand des Knickens gefuehrt hat - der Kombination bzw. dem
+    Lastfall; „alle Lastfaelle“ fuehrt kein Nachweis. solve_buckling selbst
+    fuehrt keinen Nachweis (``design`` None): dort nennt der Hinweis die
+    Haken-Staebe immer. Bis zur Runde k10b (15.11.2026) zaehlten die Haken
+    allein als erfasst (bdk_hinweis.hinweis mit ec3=True), der Hinweis
+    fehlte dann still.
+
+    Wiederholbar: nach nachtraeglich gestarteten Nachweisen oder einem
+    Knicken nach den Nachweisen (Oberflaeche, Web, :func:`_bdk_nach_nachweisen`)
+    bildet sich die Zeile aus ``res.info["bdk_knick"]`` neu. Ohne diesen
+    Eintrag (kein Knickergebnis, Ergebnis von vor k10b): nichts."""
+    d = (getattr(res, "info", None) or {}).get("bdk_knick") if res is not None else None
+    if not isinstance(d, dict):
+        return
+    zeile = _bdk_knick_text(d, design)
+    if zeile:
+        res.info["bdk_hinweis"] = [zeile]
+    else:
+        res.info.pop("bdk_hinweis", None)
+
+
+def _bdk_knick_text(d: dict, design=None) -> str:
+    """Die Zeile zu ``d`` = {"alle", "ec3", "grund"} aus solve_buckling (siehe
+    :func:`_bdk_knick_hinweis_bilden`), "" ohne Stab."""
+    from .bdk_hinweis import bdk_text, KNICK_WO
+    grund = d.get("grund")
+    ec3 = set(d.get("ec3") or [])
+    gefuehrt = _bdk_chi_lt_gefuehrt(design) if grund else {}
+    namen = [n for n in d.get("alle") or []
+             if n not in ec3 or grund not in gefuehrt.get(n, ())]
+    return bdk_text(namen, KNICK_WO) if namen else ""
+
+
+def _bdk_nach_nachweisen(an, res=None) -> None:
+    """Nach nachtraeglich gestarteten Nachweisen (Oberflaeche _design_done,
+    Web start_design): die Hinweise Biegedrillknicken der Analyse
+    (:func:`_bdk_hinweise_sammeln`) und eines daneben stehenden
+    Knickergebnisses ``res`` (:func:`_bdk_knick_hinweis_bilden`) neu bilden."""
+    if an is not None:
+        _bdk_hinweise_sammeln(an)
+    _bdk_knick_hinweis_bilden(res, getattr(an, "design", None) if an is not None else None)
+
+
 def _solve_all_rumpf(model: Model, an: Analysis, systeme: dict, workers, progress, combinations,
                      envelopes, design, fatigue, t0) -> Analysis:
     """Der eigentliche Lauf - ``an`` und ``systeme`` fuellen sich unterwegs,
@@ -11936,9 +11985,19 @@ def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = Non
     # (samt interner Teilung, wie Theorie II. Ordnung): Hinweis (Runde k7)
     ll_hinweise = laengslast_hinweise(model, faktoren, system.aktiv, 1, kraefte=kraefte)
     # Stab mit Druck und Biegung, Biegedrillknicken nicht anderweitig erfasst:
-    # K_G hat kein Momentenglied (Runde k8, 15.11.2026) - am Grundzustand des Modells
-    from .bdk_hinweis import hinweis as bdk_hinweis, KNICK_WO
-    bdk_zeile, _bdk_namen = bdk_hinweis(model, system.aktiv, KNICK_WO, res=static)
+    # K_G hat kein Momentenglied (Runde k8, 15.11.2026) - am Grundzustand des Modells.
+    # Die Haken EC3/Biegedrillknicken allein erfassen nichts: hier laeuft kein
+    # Nachweis (Runde k10b, wie Theorie II. Ordnung); erst ein Nachweis, der
+    # diesen Grundzustand mit chi_LT gefuehrt hat, nimmt den Stab heraus
+    # (_bdk_knick_hinweis_bilden, Oberflaeche und Web nach den Nachweisen)
+    from .bdk_hinweis import aufteilen as bdk_aufteilen
+    _bdk_alle, _bdk_ec3 = bdk_aufteilen(model, system.aktiv, res=static)
+    if combination:
+        _bdk_grund = combination
+    else:
+        _bdk_grund = None if case == "all" else _lastfall_faktoren(model, case)[1]
+    _bdk_knick = {"alle": list(_bdk_alle), "ec3": list(_bdk_ec3), "grund": _bdk_grund}
+    bdk_zeile = _bdk_knick_text(_bdk_knick)
     if fein is not None:
         modell_grob = model
         model, system, abb = fein
@@ -12008,6 +12067,9 @@ def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = Non
         res.info["laengslast_teilung"] = list(ll_hinweise)
     if bdk_zeile:
         res.info["bdk_hinweis"] = [bdk_zeile]
+    if _bdk_alle:
+        # fuer das Neubilden nach den Nachweisen (_bdk_knick_hinweis_bilden, k10b)
+        res.info["bdk_knick"] = _bdk_knick
     if knick_hinweis:
         res.info["knickfaktor_hinweis"] = knick_hinweis
         _melde(progress, "Hinweis: " + knick_hinweis)
