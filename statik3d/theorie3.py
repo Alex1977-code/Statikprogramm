@@ -490,6 +490,12 @@ def _nur_staebe(model: Model, aktiv) -> bool:
                    for i, e in enumerate(model.elements))
 
 
+# Relativer Rest, bis zu dem sich die Lastbeitraege an einem Knoten als
+# aufgehoben gelten (Rundung der Faktoren, z. B. 0,1 und 0,3). Ein solcher Rest
+# bleibt mit der Straffeder 1e4 N/m weit unter 0,001 mm.
+_LAST_REST = 1e-9
+
+
 def _lastknoten(model: Model, nn: int, factors: dict = None) -> np.ndarray:
     """Maske (nn,) der Knoten, an die assemble.load_vector in der Rechnung mit
     ``factors`` ({Lastfall: Faktor}) eine Last legt, ohne dass dort ein
@@ -507,7 +513,13 @@ def _lastknoten(model: Model, nn: int, factors: dict = None) -> np.ndarray:
     „Stabende“ b-Q starr, Q ohne Element, g = 9,81 m/s²) - Theorie I.
     Ordnung w(Q) = 0,5357 mm, Theorie III. Ordnung still 100,5357 mm; und LF1
     ohne Last an Q wurde abgewiesen, weil LF2 nach Theorie I. Ordnung dort
-    Last hat (richtig 0,5357 mm wie Theorie I. Ordnung und Hand)."""
+    Last hat (richtig 0,5357 mm wie Theorie I. Ordnung und Hand).
+
+    Ein Knoten zaehlt nur, wenn die Summe in einer Komponente groesser ist als
+    _LAST_REST mal die Betragssumme der Beitraege. Bis zur Gegenpruefung
+    zu k10b wurde exakt mit null verglichen: LK1 = LF1 + 0,1 LF2 + 0,3 LF3 mit
+    -3 N an Q in LF2 und +1 N in LF3 (Rest -5,55e-17 N) wurde abgewiesen,
+    obwohl Theorie I. Ordnung w(b) = 0,535714 mm = Hand ergibt."""
     lcs = getattr(model, "load_cases", None) or {}
     pm = [p for p in (getattr(model, "punktmassen", None) or [])
           if 0 <= int(p.node) < nn and float(p.masse) != 0.0]
@@ -518,16 +530,23 @@ def _lastknoten(model: Model, nn: int, factors: dict = None) -> np.ndarray:
     out = np.zeros(nn, dtype=bool)
     for gruppe in gruppen:
         S = np.zeros((nn, 6))
+        A = np.zeros((nn, 6))               # Betragssumme der Beitraege
         for lc, f in gruppe:
             for ld in (getattr(lc, "nodal_loads", None) or []):
                 n = int(ld.node)
                 if 0 <= n < nn:
-                    S[n] += f * np.asarray(ld.F, float)[:6]
+                    beitrag = f * np.asarray(ld.F, float)[:6]
+                    S[n] += beitrag
+                    A[n] += np.abs(beitrag)
             g = f * np.asarray(getattr(lc, "gravity", None) or [0.0, 0.0, 0.0], float)
             if np.any(g):
                 for p in pm:
-                    S[int(p.node), :3] += float(p.masse) * g
-        out |= np.any(S != 0.0, axis=1)
+                    beitrag = float(p.masse) * g
+                    S[int(p.node), :3] += beitrag
+                    A[int(p.node), :3] += np.abs(beitrag)
+        # Heben sich die Beitraege einer Kombination bis auf Rundung auf
+        # (0,1 * (-3 N) + 0,3 * 1 N = -5,55e-17 N), traegt der Knoten nichts.
+        out |= np.any(np.abs(S) > _LAST_REST * A, axis=1)
     return out
 
 

@@ -19,6 +19,11 @@ Stabendes (theorie3._ankerknoten, _th3_wirkung) zwei Luecken:
   Kombination mit ihren Lastfaellen und Faktoren (bei einer
   Ergebniskombination je Alternative), in der Rechnung wie in der
   Modellpruefung und im Merkmal.
+* Gegenpruefung zu k10b: Die Summe an Q wurde exakt mit null verglichen.
+  LK1 = LF1 + 0,1 LF2 + 0,3 LF3 mit -3 N an Q in LF2 und +1 N in LF3 (bzw.
+  Punktmasse 1 kg mit g = -3 und +1 m/s²) laesst den Rundungsrest
+  -5,55e-17 und wurde abgewiesen, obwohl Theorie I. Ordnung w(b) = 0,535714
+  mm = Hand ergibt. Jetzt zaehlt der Knoten erst ab 1e-9 der Betragssumme.
 
 Aufruf:  python -m tests.test_th3_anker_lastfall_k10
 """
@@ -263,9 +268,69 @@ def test_sperre_je_faktoren():
           and T.TEXT_KP in kopplung_sperre(m, None, factors={"LF2": 1.0}))
 
 
+# --------------------------------------------------------------------------
+# Lasten, die sich in einer Kombination nur bis auf Rundung aufheben
+# --------------------------------------------------------------------------
+def rest_modell(art="last", theorie="III"):
+    """Kopplung „Stabende“ b-Q starr, Q ohne Element; LF1: Last F an b;
+    LK1 = LF1 + 0,1 LF2 + 0,3 LF3, an Q -3 N in LF2 und +1 N in LF3
+    (art "last") bzw. Punktmasse 1 kg an Q mit g = -3 und +1 m/s² in z
+    (art "masse"). Die Summe an Q ist 0,1 (-3) + 0,3 = -5,55e-17, also
+    null bis auf Rundung: Q traegt in LK1 nichts."""
+    m, a, b = T.basis()
+    q = _kopplung_q(m, b)
+    m.add_load_case("LF2")
+    m.add_load_case("LF3")
+    m.load_node(b, Fz=-F, case="LF1")
+    if art == "last":
+        m.load_node(q, Fz=-3.0, case="LF2")
+        m.load_node(q, Fz=1.0, case="LF3")
+    else:
+        m.add_punktmasse(q, 1.0)
+        m.load_cases["LF2"].gravity = [0.0, 0.0, -3.0]
+        m.load_cases["LF3"].gravity = [0.0, 0.0, 1.0]
+    c = m.add_combination("LK1", {"LF1": 1.0, "LF2": 0.1, "LF3": 0.3}, "ULS")
+    c.theorie = theorie
+    return m, b, q
+
+
+def test_rundungsrest():
+    from statik3d import solver
+    rest = 0.1 * (-3.0) + 0.3 * 1.0
+    check("Vorbedingung: 0,1 (-3) + 0,3 ist in Gleitkomma nicht genau null", rest != 0.0, f"{rest:.20f}")
+    for art, wie in (("last", "Knotenlasten -3 N und +1 N"), ("masse", "Punktmasse, g = -3 und +1 m/s²")):
+        m, b, q = rest_modell(art, "I")
+        an1 = T._still(solver.solve_all, m, workers=1, design=False)
+        r1 = an1.combinations.get("LK1")
+        w1 = -np.asarray(r1.u).reshape(-1, 6)[b, 2] if r1 is not None else float("nan")
+        check(f"LK1 mit Rundungsrest an Q ({wie}), Theorie I. Ordnung: w(b) = F L³/(3 E I)",
+              abs(w1 - HAND) <= 1e-4 * HAND, f"{w1 * 1e3:.6f} mm, Hand {HAND * 1e3:.6f} mm")
+        m, b, q = rest_modell(art)
+        pr = _fehler_zeilen(m)
+        an = T._still(solver.solve_all, m, workers=1, design=False)
+        th3 = an.theorie3.kombinationen
+        r = an.combinations.get("LK1")
+        w3 = -np.asarray(r.u).reshape(-1, 6)[b, 2] if r is not None else float("nan")
+        check(f"… Theorie III. Ordnung: LK1 gerechnet statt abgewiesen, keine Meldung",
+              not th3["LK1"].fehler and not pr, f"{(th3['LK1'].fehler or '')[:100]!r} {pr}")
+        check(f"… w(b) = Theorie I. Ordnung = F L³/(3 E I) (Abweichung höchstens 0,001 mm)",
+              abs(w3 - w1) <= 1e-6 and abs(w3 - HAND) <= 1e-4 * HAND,
+              f"III {w3 * 1e3:.6f} mm, I {w1 * 1e3:.6f} mm, Hand {HAND * 1e3:.6f} mm")
+        mk = _merkmal()
+        m, b, q = rest_modell(art)
+        check(f"… Merkmal betrifft nicht", mk is not None and not mk.betrifft(m), mk and mk.betrifft(m))
+    # Gegenprobe: ein echter kleiner Rest an Q wird weiter erkannt
+    from statik3d.theorie3 import kopplung_sperre
+    m, b, q = rest_modell("last")
+    t = kopplung_sperre(m, None, factors={"LF1": 1.0, "LF2": 0.1, "LF3": 0.3001})
+    check("… Gegenprobe: echter Rest 0,0001 N an Q (0,3001 statt 0,3) wird abgewiesen",
+          T.TEXT_KP in t, t[:80])
+
+
 def main():
     for t in (test_punktmasse_kopplung, test_punktmasse_rbe3, test_punktmasse_ohne_eigengewicht,
-              test_last_anderer_lastfall, test_kombinationen, test_ergebniskombination, test_sperre_je_faktoren):
+              test_last_anderer_lastfall, test_kombinationen, test_ergebniskombination, test_sperre_je_faktoren,
+              test_rundungsrest):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
