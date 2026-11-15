@@ -49,6 +49,24 @@ Nachbesserung nach der Gegenpruefung (15.11.2026):
 5. Knoten heissen wie in der Oberflaeche „Knoten K3“; die Kopfzeile nennt
    die Nummern aufsteigend.
 
+Runde k10c nach der zweiten Gegenpruefung (15.11.2026):
+
+6. Rang und Richtungen je Knoten an einer nicht orthonormierten Basis: am
+   schwimmenden Stab (nur RBE3-Slave) stimmte die Zahl 6, die Richtungen
+   waren falsch, der Master fehlte. Jetzt erst in der Metrik Verschiebung m,
+   Drehung mal Modellgroesse orthonormiert. Sollwert Hand und dicht
+   orthonormiert (zweiter Weg _raenge_metrisch).
+7. „Ohne Steifigkeit“ hing an der Strafsteifigkeit: Kreisring-RBE3 mit
+   Bolzen vor einer Kette aus 100 bis 27 000 Staeben meldete 191/192 statt
+   186 und nannte Master und Kette „frei“; am gesunden Ring Knoten mit
+   wirksamen Staeben. Jetzt Nullraum an der Matrix mit kleiner Strafe
+   (gleicher exakter Nullraum) und Pruefung jeder Bewegung ohne Straffedern
+   ueber die Wurzel der Elementsteifigkeiten; was an der Rechengenauigkeit
+   liegt, heisst „nicht sicher bestimmbar“. Sollwert Hand 186, zweiter Weg
+   dicht mit verkleinertem Strafanteil P = K - K_e.
+8. Kein „nahezu singulär … Splitterelemente“ samt Kennzahl neben „ohne
+   Steifigkeit“; Fortschritt je Runde der Suche.
+
 Aufruf:  python -m tests.test_singulaer_meldung_k10
 """
 import contextlib
@@ -176,12 +194,29 @@ def _dicht(m, sy):
     voll[sy.fi] = Z
     if Z.shape[1] == 0:
         return 0, [], {}, voll
-    W = voll[:6 * m.nn].reshape(m.nn, 6, -1)
-    W = W / np.abs(W).max()
-    gr = np.abs(W).max(axis=(1, 2))
-    kn = [int(k) for k in np.flatnonzero(gr > 1e-3)]
-    rang = {k: int((np.linalg.svd(W[k, :3, :], compute_uv=False) > 1e-3).sum()) for k in kn}
-    return Z.shape[1], kn, rang, voll
+    je = _raenge_metrisch(m, voll)
+    return Z.shape[1], sorted(je), {k: rt for k, (rt, _rr) in je.items()}, voll
+
+
+def _raenge_metrisch(m, voll):
+    """Zweiter Weg fuer Rang und Richtungen je Knoten (Runde k10c): die Basis
+    erst in einer gemeinsamen Metrik orthonormieren (Verschiebung in m,
+    Drehung mal Modellgroesse), dann je Knoten die Singulaerwerte der
+    Verschiebungs- und der Drehanteile. Unabhaengig von der zufaelligen Basis.
+    Rueckgabe {Knoten: (Verschiebungsrang, Drehrang)} fuer die beteiligten Knoten."""
+    W = np.array(voll[:6 * m.nn], float).reshape(m.nn, 6, -1)
+    lc = float(np.ptp(np.asarray(m.nodes, float).reshape(-1, 3), axis=0).max())
+    W[:, 3:, :] *= lc
+    U, s, _ = np.linalg.svd(W.reshape(6 * m.nn, -1), full_matrices=False)
+    U = U[:, s > 1e-9 * s[0]].reshape(m.nn, 6, -1)
+    gr = np.linalg.norm(U.reshape(m.nn, -1), axis=1)
+    grenze = 1e-3 * np.abs(U).max()
+    out = {}
+    for k in np.flatnonzero(gr >= 1e-3 * gr.max()):
+        rt = int((np.linalg.svd(U[k, :3, :], compute_uv=False) > grenze).sum())
+        rr = int((np.linalg.svd(U[k, 3:, :], compute_uv=False) > grenze).sum())
+        out[int(k)] = (rt, rr)
+    return out
 
 
 def test_matrixdiagnose_rechnet():
@@ -399,6 +434,173 @@ def test_kreisring():
           text[-300:])
 
 
+def schwimmend():
+    """Befund 1 der zweiten Gegenpruefung: Kragarm a-b (eingespannt) und ein
+    schwimmender Stab e-f (L, 2..3, 0) ohne Lager; RBE3-Master P (L, 1, 0) mit
+    den Slaves b, e, f, Last an P. Knoten: a 0, b 1, e 2, f 3, P 4.
+
+    Hand: der Stab e-f hat seine 6 Starrkoerperbewegungen, P folgt ihnen
+    (b steht). e und f verschieben sich in allen drei Richtungen und drehen um
+    alle Achsen; P verschiebt sich in allen drei Richtungen und dreht um x und
+    z - die Slaves liegen auf einer Geraden in y, ihre Verschiebungen
+    bestimmen keine Drehung um y."""
+    m, a, b, c, d = basis(arm=False)
+    e = m.add_node(L, 2, 0)
+    f = m.add_node(L, 3, 0)
+    m.add_element("beam", [e, f], "ST", "Q")
+    p = m.add_node(L, 1, 0)
+    m.add_starrkoerper(p, [b, e, f], "RBE3", name="S")
+    m.load_node(p, Fz=-F, case="LF1")
+    return m
+
+
+def test_schwimmender_stab():
+    """Befund 1 (mittel): Rang und Richtungen je Knoten an einer nicht
+    orthonormierten Basis - am schwimmenden Stab waren die Richtungen falsch,
+    der Master K4 fehlte. Befund 3 (niedrig): zugleich „Ohne Steifigkeit
+    beweglich … 6 Bewegungen“ und „nahezu singulär … Splitterelemente“ mit
+    der Kennzahl „1/2 800 000 000 000 000 000 000 der mittleren Steifigkeit“."""
+    from statik3d import singular as sg
+    m = schwimmend()
+    text = _meldung(m)
+    check("schwimmender Stab: K2 und K3 in allen drei Richtungen verschieblich, um alle Achsen drehbar",
+          "Knoten K2 und K3 in allen drei Richtungen frei verschieblich, um alle Achsen frei drehbar" in text,
+          text[-700:])
+    check("schwimmender Stab: Master K4 genannt, verschieblich und um x und z drehbar",
+          "Knoten K4 in allen drei Richtungen frei verschieblich, um x und z frei drehbar" in text, text[-700:])
+    check("schwimmender Stab: „Das sind 6 unabhängige Bewegungen“", "Das sind 6 unabhängige Bewegungen" in text,
+          text[-400:])
+    check("schwimmender Stab: kein „nahezu singulär … Splitterelemente“ neben „ohne Steifigkeit“",
+          "nahezu singulär" not in text and "Splitterelemente" not in text, text[-400:])
+    check("schwimmender Stab: keine Kennzahl „… der mittleren Steifigkeit dieses Elements“",
+          "der mittleren Steifigkeit" not in text, text[-300:])
+    # zweiter Weg: dichter Nullraum, metrisch orthonormiert, gegen die Hand
+    sy = _system(m)
+    rang, _kn, _je, voll = _dicht(m, sy)
+    je = _raenge_metrisch(m, voll)
+    hand = {2: (3, 3), 3: (3, 3), 4: (3, 2)}
+    check("schwimmender Stab, zweiter Weg: dicht 6 Bewegungen, je Knoten (Verschiebung, Drehung) = Hand",
+          rang == 6 and je == hand, f"dicht {rang}, {je}, Hand {hand}")
+    try:
+        mo = sg.weichster_modus(sy.K, m, sy.fi, aktiv=sy.aktiv)
+        ok = getattr(mo[0], "nullrang", None) == 6
+    except Exception as ex:                      # noqa: BLE001
+        ok, mo = False, [f"{type(ex).__name__}: {ex}"]
+    check("schwimmender Stab: Nullrang der Diagnose = 6", ok, str(getattr(mo[0], "nullrang", mo[0])))
+    # dieselbe Funktion an der dichten Basis: derselbe Text (unabhaengig von der Basis)
+    t_dicht = sg.knotenbefund(m, voll, sy.aktiv)[0]
+    t_diag = getattr(mo[0], "knotentext", "") if ok else ""
+    check("knotenbefund an dichter und an Programmbasis: gleiche Aussage",
+          bool(t_dicht) and t_dicht in t_diag, f"dicht: {t_dicht[:200]} | Programm: {t_diag[:200]}")
+
+
+def kreisring_kette(n, ring=64, r=0.1, speichen_aus=True):
+    """Befund 2 der zweiten Gegenpruefung: eingespannte Kette aus n Staeben
+    (x = 0..L), am Ende b ein Kreisring-RBE3 mit 64 Slaves (Speichen an b, in
+    der Situation abgeschaltet), Master P (L + 0,5; 0; 0) ueber einen
+    Bolzenstab an b, Last an P. Knoten: Kette 0..n, Ring n + 1 .. n + 64, P n + 65.
+    Hand: P und die Kette sind ueber Staebe gehalten; 3 · 64 - 6 = 186
+    Bewegungen, nur die Ringknoten."""
+    from statik3d.model import Model, Material, Section, Situation
+    m = Model("ring")
+    m.add_material(Material("ST", E=E, nu=0.3, rho=0.0, fy=355e6))
+    m.add_section(Section("Q", A=1e-2, Iy=I, Iz=I, It=1e-5, zmax=0.1, ymax=0.1))
+    m.design.imperfektionen = False
+    m.netz.stabteilung = 1
+    kn = [m.add_node(i * L / n, 0, 0) for i in range(n + 1)]
+    for i in range(n):
+        m.add_element("beam", [kn[i], kn[i + 1]], "ST", "Q")
+    m.fix(kn[0], "all")
+    b = kn[-1]
+    rk, sp = [], []
+    for i in range(ring):
+        t = 2 * np.pi * i / ring
+        k = m.add_node(L, r * np.cos(t), r * np.sin(t))
+        sp.append(len(m.elements))
+        m.add_element("beam", [b, k], "ST", "Q")
+        rk.append(k)
+    p = m.add_node(L + 0.5, 0, 0)
+    m.add_element("beam", [b, p], "ST", "Q")
+    m.add_starrkoerper(p, rk, "RBE3", name="Ring")
+    m.add_load_case("LF1", "G")
+    m.load_cases["LF1"].gravity = [0.0, 0.0, 0.0]
+    m.load_node(p, Fz=-F, case="LF1")
+    if speichen_aus:
+        m.situationen["s"] = Situation("s", "", sp)
+        m.load_cases["LF1"].situation = "s"
+    return m, p, rk
+
+
+def _dichter_nullrang_ohne_strafe(m, sy):
+    """Zweiter Weg zu Befund 2, unabhaengig von der Strafsteifigkeit: die
+    Straf- und Kopplungsanteile P = K - K_e (K_e nur Elemente) auf die groesste
+    Elementdiagonale verkleinert (gleicher exakter Nullraum), dicht skaliert,
+    Eigenwerte unter 1e-12 (numpy.linalg.eigvalsh)."""
+    from statik3d import assemble as asm
+    Ke = asm._assemble_triplets(m, asm._matrix_chunk, 1, asm.aktive_indizes(m, sy.aktiv)).tocsc()
+    K = sy.K.tocsc()
+    Pm = (K - Ke)[sy.fi][:, sy.fi].toarray()
+    Kf = Ke[sy.fi][:, sy.fi].toarray()
+    A = Kf + (np.abs(np.diag(Kf)).max() / np.abs(np.diag(Pm)).max()) * Pm
+    dg = np.sqrt(np.abs(np.diag(A)))
+    dg[dg == 0] = 1.0
+    w = np.linalg.eigvalsh(0.5 * (A + A.T) / dg[:, None] / dg[None, :])
+    return int((np.abs(w) <= 1e-12).sum())
+
+
+def test_kreisring_kette():
+    """Befund 2 (mittel): das Kriterium „bezogene Energie unter einem
+    Billionstel der Diagonale“ hielt Knoten mit grosser RBE3-Strafsteifigkeit
+    fuer frei - Kreisring mit Kette aus 100 bis 27 000 Staeben: 191 und 192
+    statt 186 Bewegungen, Master und eingespannte Kettenknoten „frei“."""
+    for n in (100, 500, 2000):
+        m, p, rk = kreisring_kette(n)
+        text = _meldung(m)
+        check(f"Kreisring mit Kette n = {n}: nur die Ringknoten frei, „Das sind 186 unabhängige Bewegungen“",
+              f"Ohne Steifigkeit beweglich: Knoten K{rk[0]}, K{rk[1]}, K{rk[2]} und 61 weitere in allen drei "
+              "Richtungen frei verschieblich. Sie hängen" in text and "Das sind 186 unabhängige Bewegungen" in text,
+              text[-700:])
+        genannt = {int(x) for x in re.findall(r"\bK(\d+)\b", text)}
+        fremd = sorted(k for k in genannt if k not in set(rk))
+        check(f"Kreisring mit Kette n = {n}: Master K{p} und Kettenknoten werden nicht genannt",
+              not fremd, f"genannt außer Ring: {fremd[:10]}")
+        if n <= 500:
+            sy = _system(m)
+            dicht = _dichter_nullrang_ohne_strafe(m, sy)
+            check(f"Kreisring mit Kette n = {n}, zweiter Weg: dicht ohne Straf-Skalierung 186 = Hand",
+                  dicht == 186, f"dicht {dicht}")
+
+
+def test_gesunder_kreisring():
+    """Befund 2, zweiter Teil: ein gesunder Kreisring (Speichen wirken, Master
+    am Bolzenstab) bricht vorbestehend „numerisch singulär“ ab (Strafsteifigkeit
+    rund 50 Millionen Mal die groesste Elementdiagonale, Gruppe G). Die
+    Meldung nannte dabei Knoten mit wirksamen Staeben „frei verschieblich“.
+    Jetzt: kein Knoten „frei“, die Ursache „nicht sicher bestimmbar“."""
+    m, p, rk = kreisring_kette(1, speichen_aus=False)
+    text = _meldung(m)
+    if not text:
+        check("gesunder Kreisring rechnet (Strafsteifigkeit behoben): keine Meldung zu prüfen", True)
+        return
+    check("gesunder Kreisring: kein Knoten „ohne Steifigkeit beweglich“ oder „frei verschieblich“",
+          "Ohne Steifigkeit beweglich" not in text and "frei verschieblich" not in text, text[-600:])
+    check("gesunder Kreisring: „die Ursache ist nicht sicher bestimmbar“, kein „meist Splitterelemente“",
+          "nicht sicher bestimmbar" in text and "Splitterelemente" not in text, text[-600:])
+
+
+def test_fortschritt():
+    """Befund 3 (niedrig): bei grossem Nullraum meldet die Suche je Runde
+    ihren Fortschritt (an 54 198 FHG dauerte sie 56 s ohne ein Wort)."""
+    from statik3d import singular as sg
+    m, p, lose = viele(60)
+    sy = _system(m)
+    zeilen = []
+    sg.weichster_modus(sy.K, m, sy.fi, aktiv=sy.aktiv, melden=zeilen.append)
+    runden = [z for z in zeilen if "Runde" in z]
+    check("Nullraum 180: Fortschritt je Runde („Runde …, bisher … gefunden“), mindestens drei Zeilen",
+          len(runden) >= 3 and "bisher" in runden[-1], " | ".join(runden[-3:])[:300])
+
+
 def test_grenze_sagt_mindestens():
     """An der Grenze der Suche (hier kuenstlich 12 Vektoren) sagt die Meldung
     „mindestens“ und dass weitere Knoten moeglich sind; ueber der Groesse fuer
@@ -499,6 +701,7 @@ def test_schutz():
 def main():
     for t in (test_matrixdiagnose_rechnet, test_fall1_nennt_knoten, test_m2_richtung, test_zweiter_weg,
               test_kuerzen, test_bewegungsbefund_knoten, test_grosser_nullraum, test_kreisring,
+              test_schwimmender_stab, test_kreisring_kette, test_gesunder_kreisring, test_fortschritt,
               test_grenze_sagt_mindestens, test_vorpruefung_ohne_block, test_schutz):
         print(f"\n--- {t.__name__} ---")
         try:

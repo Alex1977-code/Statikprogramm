@@ -5247,7 +5247,8 @@ def _matrixbefund(model, system) -> tuple:
         # abgeschaltetes Element ist nie der Traeger der Bewegung (15.11.2026)
         moden = weichster_modus(getattr(system, "K", None), model,
                                 getattr(system, "fi", None), melden=melden,
-                                aktiv=getattr(system, "aktiv", None))
+                                aktiv=getattr(system, "aktiv", None),
+                                workers=getattr(system, "workers", None))
     except MatrixdiagnoseUnmoeglich as ex:
         return [], str(ex)
     except Exception as ex:               # noqa: BLE001
