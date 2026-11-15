@@ -53,8 +53,17 @@ Vier Behebungen, die der Anwender nach der zweiten Prüfrunde freigegeben hat; d
 * **Knicken mit interner Stabteilung (Stand 61).** Wie Theorie II. Ordnung; gelenkige Stütze aus einem Element bisher 21,6 % zu hoch.
 * **Stäbe mit Versatz und positiver Knickfaktor (Stand 62).** Die interne Stabteilung teilt auch Stäbe mit Versatz (Zugband: 603,41 statt 801,59, Kurzstabmodell 603,44). Liefern die angeforderten Knickfiguren nur negative Faktoren, rechnet das Programm weiter bis zum ersten positiven (Fachwerk: 7 765,80) oder meldet, dass es keinen gibt.
 
+## Fünfter Teil: Knickfaktor, Starrkörper, Biegedrillknicken (Stände 63 und 64)
+
+Drei Punkte aus der Klärung „starrer Arm“ vom 15.11.2026, vom Anwender freigegeben; der Verfahrensstand steigt auf 64. Jede Zahl ist auf zwei Wegen geprüft, jede Behebung von einem zweiten Agenten gegengeprüft.
+
+* **Maßgebend der kleinste positive Knickfaktor (Stand 63).** Bericht, Knicklängen, Ergebnismaske und Web nahmen den ersten Faktor der Liste, auch einen negativen; dann fehlte der Hinweis „α_cr < 10“ (zwei Kragstützen −3 / 6 / −12).
+* **Theorie III. Ordnung mit Starrkörpern (Stand 64).** RBE2/RBE3 fielen still weg (8,23 mm wurden 0 mm), starre Kopplungen wirkten als Feder von 10 000 N/m. Jetzt Abweisung mit Klartext und in der Modellprüfung; federnde Kopplungen bleiben erlaubt.
+* **Hinweis Biegedrillknicken (ohne Stand).** Theorie II. Ordnung, α_cr und Knicken enthalten das Momentenglied der geometrischen Steifigkeit nicht. Der EC3-Ersatzstabnachweis führt χ_LT auch nach Theorie II. Ordnung (IPE 300: 0,9735 gegen Hand 0,9755); für andere gefährdete Stäbe mit Druck und Biegung, und für I-Stäbe ohne geführten Nachweis, kommt ein Hinweis je Rechnung.
+
 ## Nicht enthalten
 
 * Nebenbefunde der Agenten, je eine Zeile in der Befundliste und in den Berichten, unter anderem: Schubbeulen von Zylindern mit den Bereichen des Meridiandrucks, Beulnachweise ohne Werkstoff fallen auf 235 zurück, Sonderregeln der Anzeigetafel nach 7.4.3, Feldanteil ohne Gelenk mit der Kraft am Stabanfang, Eckausbildung der freien Wand, Stellungsmaske zählt Knoten ab 1.
 * Vorschlag an den Anwender offen: beim Neuvernetzen einer Fläche die Knoten der Nachbarn wiederverwenden, damit zusammenhängende Konstruktionen nicht ganz neu vernetzt werden.
-* Offen aus Stand 62: Ein starrer Arm als Balken STARR quer zur Kraft und der Versatz desselben Arms geben nach Theorie II. Ordnung und beim Knicken verschiedene Werte (Knicken etwa 3 %, Durchbiegung etwa 0,1 %); vorgeschlagen ist ein Vergleich mit echter starrer Kopplung. Der HTML-Bericht nimmt für den Hinweis „α_cr < 10“ den ersten Faktor der Liste, auch einen negativen.
+* Offen aus Stand 62: Ein starrer Arm als Balken STARR quer zur Kraft und der Versatz desselben Arms geben nach Theorie II. Ordnung und beim Knicken verschiedene Werte (Knicken etwa 3 %, Durchbiegung etwa 0,1 %); vorgeschlagen ist ein Vergleich mit echter starrer Kopplung. (Der Hinweis „α_cr < 10“ mit negativem ersten Faktor ist seit Stand 63 behoben.)
+* Offen aus Stand 64: das Momentenglied der geometrischen Steifigkeit (Biegedrillknicken in Theorie II. Ordnung und α_cr) als eigenes Vorhaben; Theorie III. Ordnung in einer Situation mit abgeschalteter Schale bricht mit einer Ausnahme ab; die interne Kopplungsgruppe „Stabende“ an einem Knoten ohne Element wird von der Sperre nicht erfasst (kaum erreichbar); ein Stab mit geführtem EC3-Nachweis gilt auch in einer GZG-Kombination nach Theorie II. Ordnung als erfasst.

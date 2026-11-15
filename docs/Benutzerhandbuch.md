@@ -11605,6 +11605,23 @@ starren Kurzstäben. Seit 15.11.2026 teilt die interne Stabteilung auch Stäbe
 mit Versatz (Stand 62).
 Verfahrensstand 34; geprüft in `tests/test_theorie3_versatz.py`.
 
+**Starrkörper und starre Kopplungen nach Theorie III. Ordnung** (seit
+15.11.2026, Stand 64). Theorie III. Ordnung rechnet keine Starrkörper (RBE2
+und RBE3) und keine starren Knotenkopplungen. Bis dahin ließ sie Starrkörper
+still weg (Kragstütze mit RBE2-Arm 0 mm statt 8,23 mm) und rechnete starre
+Kopplungen nur als Feder von 10 000 N/m (zwei gekoppelte Kragarme 0,533 statt
+0,268 mm). Jetzt weist das Programm einen solchen Lastfall bzw. eine solche
+Kombination mit Klartext ab, auch schon in der Modellprüfung; das Ergebnis ist
+das nach Theorie I. Ordnung, so gekennzeichnet. Es zählen die Starrkörper und
+Kopplungen, die in der gerechneten Situation mittragen, auch über Ketten aus
+Knoten ohne Element und an Lagerknoten ohne Element. Abhilfe: Balken mit
+Querschnitt STARR, Versatz der Stabenden oder Theorie II. Ordnung; federnde
+Kopplungen rechnet Theorie III. Ordnung weiter richtig mit. Modelle mit
+Flächen, Volumen oder Federelementen weist Theorie III. Ordnung wie bisher mit
+„nur für Stabtragwerke“ ab. Gespeicherte Ergebnisse nach Theorie III. Ordnung
+mit Starrkörpern tragen den Status „Ergebnis möglicherweise betroffen – neu
+rechnen“. Geprüft in `tests/test_th3_starrkoerper_k8.py`.
+
 **Verschiedener Versatz an Anfang und Ende in allen Rechenarten** (seit
 12.11.2026). Ein Stab, dessen Versatz am Anfang und am Ende verschieden ist,
 liegt jetzt auch nach Theorie I. und II. Ordnung zwischen seinen versetzten
@@ -11711,6 +11728,37 @@ Untergurt, drei Figuren angefordert: bisher nur −64,38, −64,38 und −130,78
 jetzt bis zum ersten positiven Faktor 7 765,80. Fälle, die schon einen
 positiven Faktor liefern, bleiben unverändert. Geprüft in
 `tests/test_versatz_stabteilung_k7.py`.
+
+**Maßgebend ist der kleinste positive Knickfaktor** (seit 15.11.2026, Stand
+63). Die Knickfaktoren stehen nach Betrag geordnet, mit beiden Vorzeichen; vor
+dem ersten positiven können negative stehen (das System knickt dort nur unter
+umgekehrter Last). Bericht, Knicklängen aus der Knickfigur, die Vorauswahl der
+Ergebnismaske und die Web-Ergebnisseite nehmen jetzt den kleinsten positiven
+Faktor als maßgebend; eine ausdrücklich gewählte Knickform bleibt. Bis dahin
+galt der erste Faktor der Liste: zwei Kragstützen mit −3 / 6 / −12 bekamen
+keinen Hinweis „α_cr < 10“, und die Knicklängen standen auf „α_cr ≤ 0“ statt
+β = 2. Die Zusammenfassung nennt den maßgebenden Faktor eigens, wenn er nicht
+der erste ist. Geprüft in `tests/test_knickfaktor_positiv_k8.py` und
+`tests/test_th3_starrkoerper_k8.py` (Web).
+
+**Theorie II. Ordnung, α_cr und Knicken ohne Biegedrillknicken** (Hinweis
+seit 15.11.2026, kein Wert geändert). Die geometrische Steifigkeit der Balken
+enthält nur die Normalkraft, nicht das Momentenglied, das Biegung, seitliches
+Ausweichen und Verdrillen koppelt; das gilt auch mit Wölbkrafttorsion. Theorie
+III. Ordnung enthält diese Kopplung. Bei Stäben vom Typ I mit Nachweis nach EC3
+und Haken „Biegedrillknicken“ führt der Ersatzstabnachweis 6.3.2 das
+Biegedrillknicken mit χ_LT, auch mit Schnittgrößen nach Theorie II. Ordnung
+(IPE 300, 6 m, 200 kN und 60 kNm: Programm 0,9735, Handrechnung 0,9755). Für
+andere biegesteife Stäbe mit Druck und Biegung, deren gekoppelter
+Verzweigungsfaktor unter 25 und mindestens 2 % unter dem ohne Momentenglied
+liegt, meldet das Programm einmal je Rechnung „Theorie II. Ordnung und α_cr
+enthalten kein Biegedrillknicken …“ mit der Zahl der Stäbe und den ersten
+Namen, beim Knicken „Die Knickfaktoren enthalten …“. Ein Stab mit den Haken
+gilt nur als erfasst, wenn sein Nachweis in derselben Rechnung geführt wird;
+ohne Nachweise oder mit „nicht geführt“ (Werkstoff ohne f_y) steht er im
+Hinweis, nach nachträglich gestarteten Nachweisen fällt er wieder heraus.
+Hohlprofile und Querschnitte ohne starke Achse sind nach EN 1993-1-1,
+6.3.2.1(2) ausgenommen. Geprüft in `tests/test_bdk_hinweis_k8.py`.
 
 **Wölbkrafttorsion und Längsgelenk nach Theorie II. Ordnung** (seit
 12.11.2026). Balken mit Wölbkrafttorsion rechnen ihre Stabendkräfte jetzt mit
