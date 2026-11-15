@@ -490,6 +490,44 @@ def _nur_staebe(model: Model, aktiv) -> bool:
                    for i, e in enumerate(model.elements))
 
 
+def _ankerknoten(model: Model, nn: int) -> np.ndarray:
+    """Maske (nn,) der Knoten, an denen ein Anschluss eines Stabendes etwas
+    halten oder tragen muss, auch wenn dort kein Element wirkt: Lagerknoten
+    (Knoten-, Linien- und Flaechenlager, starr oder federnd, wie
+    supports.expand sie an die Knoten verteilt) und Knoten mit einer
+    Knotenlast in irgendeinem Lastfall (Runde k10, Nachbesserung)."""
+    out = np.zeros(nn, dtype=bool)
+    for sp in (getattr(model, "supports", None) or []):
+        n = int(getattr(sp, "node", -1))
+        if 0 <= n < nn:
+            out[n] = True
+    try:
+        from . import supports as _sup
+        for e in _sup.expand(model):
+            if 0 <= int(e.node) < nn:
+                out[int(e.node)] = True
+    except Exception:                       # noqa: BLE001 - nicht verteilbar: grob ueber die Knotenlisten
+        for ls in (getattr(model, "line_supports", None) or []):
+            knoten = list(getattr(ls, "nodes", None) or [])
+            if not knoten and getattr(ls, "line", None) in (getattr(model, "lines", None) or {}):
+                knoten = list(model.lines[ls.line].nodes)
+            for n in knoten:
+                if 0 <= int(n) < nn:
+                    out[int(n)] = True
+        for ss in (getattr(model, "surface_supports", None) or []):
+            for i in (getattr(ss, "elements", None) or []):
+                if 0 <= int(i) < len(model.elements):
+                    for n in model.elements[int(i)].nodes:
+                        if 0 <= int(n) < nn:
+                            out[int(n)] = True
+    for lc in (getattr(model, "load_cases", None) or {}).values():
+        for ld in (getattr(lc, "nodal_loads", None) or []):
+            n = int(ld.node)
+            if 0 <= n < nn and np.any(np.asarray(ld.F, float) != 0.0):
+                out[n] = True
+    return out
+
+
 def _th3_wirkung(model: Model, aktiv, alt: bool = False) -> tuple:
     """(kn, sk_zaehlt, kp_zaehlt): Knotenmaske (nn,) der Knoten, die in der
     Rechnung mit ``aktiv`` mittragen, und je Starrkoerper bzw. Knotenkopplung
@@ -515,9 +553,25 @@ def _th3_wirkung(model: Model, aktiv, alt: bool = False) -> tuple:
     (verteilende Kopplung, stabeinleitung.ist_verteilkopplung, und die
     Kopplungen der Gruppe fugen.STABENDE_GRUPPE): Ist der Koerper
     abgeschaltet, lebt er ueber den Stab nicht wieder auf - sie wirken, wenn
-    ein Koerperknoten mittraegt, oder wenn das Stabende mittraegt und ein
-    Koerperknoten nicht nur an abgeschalteten Elementen haengt (Knoten ohne
-    jedes Element) oder gelagert ist.
+    ein Koerperknoten mittraegt, oder wenn das Stabende mittraegt und die
+    Koerperseite etwas haelt oder belastet: Von den Koerperknoten aus wird
+    ueber alle anderen Starrkoerper und Kopplungen (Theorie I. Ordnung baut
+    die Starrkoerper immer ein) ein Ankerknoten erreicht - ein mittragender
+    Knoten, ein Lagerknoten (Knoten-, Linien- oder Flaechenlager, starr oder
+    federnd, wie supports.expand sie verteilt) oder ein Knoten mit
+    Knotenlast in irgendeinem Lastfall (:func:`_ankerknoten`). Die
+    Stabknoten selbst zaehlen dabei nicht, dort endet der Weg.
+
+    Nachbesserung derselben Runde (Gegenpruefung 15.11.2026): Der erste
+    Entwurf kannte als gelagert nur Knotenlager direkt am Koerperknoten und
+    liess jeden Knoten ohne Element binden. RBE3 „Stabende“ an einer
+    abgeschalteten Schale mit Flaechenlager, an abgeschalteten Staeben mit
+    Linienlager oder ueber einen RBE2 an einem gelagerten Knoten: Theorie I.
+    Ordnung (und, wo loesbar, die Gegenrechnung mit geloeschten Elementen)
+    w(b) = 0,0000 mm, Theorie III. Ordnung still 0,5357 mm. Eine starre
+    Kopplung „Stabende“ an einem Knoten Q ohne Element, ohne Last und ohne
+    Lager traegt nichts (Theorie I. und III. Ordnung 0,5357 mm) und wurde
+    trotzdem abgewiesen.
 
     Bis Runde k10 (15.11.2026) brauchte der Anschluss in jedem Fall einen
     mittragenden Koerperknoten (``alt=True``, wie situationen.kopplung_bleibt).
@@ -550,9 +604,6 @@ def _th3_wirkung(model: Model, aktiv, alt: bool = False) -> tuple:
         if 0 <= n < nn:
             gelagert[n] = True
     kn |= gelagert & ~ueberhaupt
-    # Koerperknoten, an die ein mittragendes Stabende den Stab bindet: nicht
-    # nur an abgeschalteten Elementen, oder gelagert (Runde k10)
-    bindet = ~(ueberhaupt & ~kn) | gelagert
     sk_liste = list(getattr(model, "starrkoerper", None) or [])
     kopp = list(getattr(model, "kopplungen", None) or [])
     # je Starrkoerper/Kopplung: (Stabende-Seite, Koerperseite, alle Knoten) -
@@ -579,7 +630,47 @@ def _th3_wirkung(model: Model, aktiv, alt: bool = False) -> tuple:
             ab = [a, b]
             teile.append((ab, ab, ab))
 
-    def wirkt(t) -> bool:
+    anker_cache: list = []               # Lager- und Lastknoten, einmal je Aufruf
+    erreicht_cache: dict = {}            # je Anschluss: von der Koerperseite erreichte Knoten
+    glieder_je_knoten: dict = {}
+
+    def anker() -> np.ndarray:
+        if not anker_cache:
+            anker_cache.append(_ankerknoten(model, nn))
+        return anker_cache[0]
+
+    def erreicht(j: int) -> np.ndarray:
+        """Knoten, die von der Koerperseite des Anschlusses ``j`` aus ueber
+        alle anderen Starrkoerper und Kopplungen erreicht werden; an den
+        Stabknoten endet der Weg."""
+        if j in erreicht_cache:
+            return erreicht_cache[j]
+        if not glieder_je_knoten:
+            for g, tg in enumerate(teile):
+                if tg is not None:
+                    for x in tg[2]:
+                        glieder_je_knoten.setdefault(x, []).append(g)
+        stab, koerper, _alle = teile[j]
+        sperre = set(stab)
+        gesehen = set(koerper) - sperre
+        offen = list(gesehen)
+        benutzt = {j}
+        while offen:
+            x = offen.pop()
+            for g in glieder_je_knoten.get(x, ()):
+                if g in benutzt:
+                    continue
+                benutzt.add(g)
+                for y in teile[g][2]:
+                    if y not in gesehen and y not in sperre:
+                        gesehen.add(y)
+                        offen.append(y)
+        r = np.fromiter(gesehen, dtype=np.int64, count=len(gesehen))
+        erreicht_cache[j] = r
+        return r
+
+    def wirkt(j: int) -> bool:
+        t = teile[j]
         if t is None:
             return False
         stab, koerper, _alle = t
@@ -587,16 +678,19 @@ def _th3_wirkung(model: Model, aktiv, alt: bool = False) -> tuple:
             return True
         if stab is koerper or alt:
             return stab is koerper and any(kn[x] for x in stab)
-        return any(kn[x] for x in stab) and any(bindet[x] for x in koerper)
+        if not any(kn[x] for x in stab):
+            return False
+        r = erreicht(j)
+        return bool(len(r)) and bool(kn[r].any() or anker()[r].any())
 
     geaendert = True
     while geaendert:
         geaendert = False
-        for t in teile:
-            if t is not None and not all(kn[x] for x in t[2]) and wirkt(t):
+        for j, t in enumerate(teile):
+            if t is not None and not all(kn[x] for x in t[2]) and wirkt(j):
                 kn[t[2]] = True
                 geaendert = True
-    zaehlt = [wirkt(t) for t in teile]
+    zaehlt = [wirkt(j) for j in range(len(teile))]
     return kn, zaehlt[:len(sk_liste)], zaehlt[len(sk_liste):]
 
 

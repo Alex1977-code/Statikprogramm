@@ -119,7 +119,8 @@ def wirksame_knoten(model: Model, aktiv, kn: np.ndarray = None) -> np.ndarray:
       abgeschaltet, lebt er ueber den Stab nicht wieder auf. Die Abweisung
       nach Theorie III. Ordnung (theorie3._th3_wirkung) zaehlt den Anschluss
       eines Stabendes seit Runde k10 auch, wenn nur das Stabende mittraegt und
-      ein Koerperknoten kein Element hat oder gelagert ist.
+      die Koerperseite ueber Starrkoerper und Kopplungen einen Lager- oder
+      Lastknoten oder ein zweites Stabende erreicht.
 
     Ein Starrkoerper oder eine Kopplung, deren ganze Kette an keinem
     wirksamen Element und keinem solchen Lagerknoten haengt (ein ganz

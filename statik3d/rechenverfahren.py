@@ -2189,11 +2189,13 @@ def _theorie3_anschluss_neu(model) -> list:
     """Lastfaelle und Kombinationen nach Theorie III. Ordnung, die seit Stand
     66 (Runde k10) abgewiesen werden und davor gerechnet wurden: der Anschluss
     eines Stabendes an einen Koerper (Kopplung „Stabende“ oder verteilende
-    Kopplung) wirkt, obwohl kein Koerperknoten mittraegt - Koerperknoten ohne
-    jedes Element (ohne Situation wirkten diese Kopplungen in Theorie I.
-    Ordnung immer) oder gelagerter Knoten eines abgeschalteten Koerpers.
-    Vergleich der Abweisung heute und mit der Regel bis Runde k10
-    (theorie3.kopplung_sperre_modell, ``alt``)."""
+    Kopplung) wirkt, obwohl kein Koerperknoten mittraegt - die Koerperseite
+    erreicht ueber Starrkoerper und Kopplungen einen Lager- oder Lastknoten
+    (Knoten-, Linien-, Flaechenlager; ohne Situation wirkten diese
+    Kopplungen in Theorie I. Ordnung immer, die Starrkoerper immer) oder
+    einen mittragenden Knoten (zweites Stabende). Vergleich der Abweisung
+    heute und mit der Regel bis Runde k10 (theorie3.kopplung_sperre_modell,
+    ``alt``); nur das Ob zaehlt, nicht der Text."""
     if not (getattr(model, "starrkoerper", None) or getattr(model, "kopplungen", None)):
         return []
     from .theorie3 import kopplung_sperre_modell
@@ -2201,7 +2203,9 @@ def _theorie3_anschluss_neu(model) -> list:
     if not neu:
         return []
     alt = {n: t for t, namen in kopplung_sperre_modell(model, alt=True).items() for n in namen}
-    return sorted(n for n, t in neu.items() if alt.get(n) != t)
+    # nur, was vorher gar nicht abgewiesen wurde - ein anderer Text der
+    # Abweisung (eine zweite Kopplung kommt dazu) aendert kein Ergebnis
+    return sorted(n for n in neu if n not in alt)
 
 
 def _theorie3_anschluss_betrifft(model) -> bool:
@@ -4086,18 +4090,23 @@ MERKMALE: list = [
     # Ordnung still 0,0000 mm (Summe Rz 0); Last direkt an Q: 100,5357 statt
     # 0,5357 mm; RBE3 „Stabende“ an einem gelagerten, abgeschalteten Koerper:
     # Theorie I. Ordnung und Gegenrechnung 0,0000 mm, Theorie III. Ordnung
-    # 0,5357 mm (theorie3._th3_wirkung). Seither mit Klartext abgewiesen.
+    # 0,5357 mm (theorie3._th3_wirkung); ebenso mit Linien- oder Flaechenlager,
+    # ueber einen RBE2 an einem gelagerten Knoten (Kette) und mit zwei
+    # Stabenden am selben abgeschalteten Koerper (Theorie I. Ordnung und
+    # Gegenrechnung 0,4377/0,0980 mm, Theorie III. Ordnung 0,5357/0,0000 mm).
+    # Seither mit Klartext abgewiesen.
     Merkmal(
         name="theorie3_stabende_anschluss", titel="Anschluss eines Stabendes nach Theorie III. Ordnung",
         texte={"alt": "Anschluss eines Stabendes (Kopplung „Stabende“, RBE3) nur mit mittragendem "
-                      "Körperknoten erkannt: an einem Knoten ohne Element oder einem gelagerten Knoten "
-                      "eines abgeschalteten Körpers still als weiche Feder oder weggelassen",
+                      "Körperknoten erkannt: hielt oder belastete die Körperseite über Lager, Last, weitere "
+                      "Starrkörper oder ein zweites Stabende, still als weiche Feder oder weggelassen",
                "neu": "auch dort erkannt und mit Klartext abgewiesen"},
         wechsel=(Wechsel(stand=66, datum="15.11.2026", commit="fix/k10-th3", alt="alt", neu="neu",
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Lastfall oder Kombination nach Theorie III. Ordnung mit einer Kopplung „Stabende“ "
-                      "oder einer verteilenden Kopplung eines Stabendes, deren Körperknoten kein Element "
-                      "hat oder ein gelagerter Knoten eines abgeschalteten Körpers ist",
+                      "oder einer verteilenden Kopplung eines Stabendes, deren Körperseite nicht mitträgt, "
+                      "aber über Starrkörper oder Kopplungen einen Lager- oder Lastknoten (Knoten-, Linien-, "
+                      "Flächenlager) oder ein zweites Stabende erreicht",
         betrifft=_theorie3_anschluss_betrifft, im_ergebnis=_theorie3_anschluss_im_ergebnis),
 ]
 
