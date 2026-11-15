@@ -490,11 +490,16 @@ def _nur_staebe(model: Model, aktiv) -> bool:
                    for i, e in enumerate(model.elements))
 
 
-def _wirksame_knoten_th3(model: Model, aktiv) -> np.ndarray:
-    """Maske (nn,): Knoten, die in der Rechnung mit ``aktiv`` mittragen: an
-    ihnen haengt ein wirksames Element (ohne Maske: irgendein Element), oder
-    sie haengen ueber Starrkoerper und Kopplungen - auch ueber Knoten ohne
-    Element hinweg - an einem solchen Knoten (Huelle bis zum Fixpunkt).
+def _th3_wirkung(model: Model, aktiv, alt: bool = False) -> tuple:
+    """(kn, sk_zaehlt, kp_zaehlt): Knotenmaske (nn,) der Knoten, die in der
+    Rechnung mit ``aktiv`` mittragen, und je Starrkoerper bzw. Knotenkopplung
+    des Modells, ob er bzw. sie in dieser Rechnung wirkt (Listen in der
+    Reihenfolge von Model.starrkoerper und Model.kopplungen).
+
+    Mittragend ist ein Knoten mit wirksamem Element (ohne Maske: irgendein
+    Element) und ein Lagerknoten, an dem im ganzen Modell kein Element haengt;
+    von dort die Huelle ueber die wirkenden Starrkoerper und Kopplungen - auch
+    ueber Knoten ohne Element hinweg - bis zum Fixpunkt.
 
     Bis zur Gegenpruefung vom 15.11.2026 zaehlten nur Knoten mit Element.
     Ein Starrkoerper oder eine starre Kopplung zwischen zwei Knoten ohne
@@ -505,13 +510,32 @@ def _wirksame_knoten_th3(model: Model, aktiv) -> np.ndarray:
     deren ganze Kette an keinem wirksamen Element haengt, traegt nichts und
     bleibt weiter ungezaehlt (Situation mit abgeschaltetem Nebenarm).
 
-    Ausloeser wie bisher: beim Starrkoerper Master oder ein Slave, bei der
-    verteilenden Kopplung eines Stabendes nur ein Slave
-    (stabeinleitung.ist_verteilkopplung); bei Kopplungen
-    situationen.kopplung_bleibt."""
-    from .situationen import aktive_knoten, kopplung_bleibt
+    Ein Starrkoerper und eine Kopplung wirken, sobald einer ihrer Knoten
+    mittraegt. Ausnahme sind die Anschluesse eines Stabendes an einen Koerper
+    (verteilende Kopplung, stabeinleitung.ist_verteilkopplung, und die
+    Kopplungen der Gruppe fugen.STABENDE_GRUPPE): Ist der Koerper
+    abgeschaltet, lebt er ueber den Stab nicht wieder auf - sie wirken, wenn
+    ein Koerperknoten mittraegt, oder wenn das Stabende mittraegt und ein
+    Koerperknoten nicht nur an abgeschalteten Elementen haengt (Knoten ohne
+    jedes Element) oder gelagert ist.
+
+    Bis Runde k10 (15.11.2026) brauchte der Anschluss in jedem Fall einen
+    mittragenden Koerperknoten (``alt=True``, wie situationen.kopplung_bleibt).
+    Zwei Luecken: (a) Kopplung „Stabende“ Kragarmende b - Knoten Q ohne
+    Element, daran per RBE2 der Lastknoten P, ohne Situation: Theorie I.
+    Ordnung (alle Kopplungen wirken) w(b) = 0,5357 mm, Theorie III. Ordnung
+    still 0,0000 mm und Summe Rz 0 statt 1000 N; Last 1 kN direkt an Q:
+    w(Q) = 100,5357 statt 0,5357 mm. (b) RBE3 „Stabende“ an einer gelagerten
+    Platte, die Platte in der Situation abgeschaltet: Theorie I. Ordnung und
+    die Gegenrechnung mit geloeschter Platte w(b) = 0,0000 mm (die
+    Starrkoerper baut assemble.starrkoerper immer ein), Theorie III. Ordnung
+    0,5357 mm (bis Runde k10 brach sie dort mit KeyError ab, mit einem
+    abgeschalteten Stab statt der Platte rechnete sie still)."""
+    from .situationen import aktive_knoten
     from . import stabeinleitung as _se
-    maske = np.ones(len(model.elements), dtype=bool) if aktiv is None else np.asarray(aktiv, bool)
+    from .fugen import STABENDE_GRUPPE
+    ne = len(model.elements)
+    maske = np.ones(ne, dtype=bool) if aktiv is None else np.asarray(aktiv, bool)
     kn = np.array(aktive_knoten(model, maske), dtype=bool, copy=True)
     nn = len(kn)
     # Ein Lagerknoten, an dem ueberhaupt kein Element haengt, traegt selbst:
@@ -519,34 +543,66 @@ def _wirksame_knoten_th3(model: Model, aktiv) -> np.ndarray:
     # Theorie III. Ordnung verlor die Last an P still (Summe Rz 1000 statt
     # 2000 N, Restluecke R1 der Gegenpruefung vom 15.11.2026). Ein Knoten mit
     # abgeschalteten Elementen zaehlt dagegen nicht (Situation).
-    ueberhaupt = np.asarray(aktive_knoten(model, np.ones(len(model.elements), dtype=bool)), bool)
+    ueberhaupt = np.asarray(aktive_knoten(model, np.ones(ne, dtype=bool)), bool)
+    gelagert = np.zeros(nn, dtype=bool)
     for sp in (getattr(model, "supports", None) or []):
         n = int(sp.node)
-        if 0 <= n < nn and not ueberhaupt[n]:
-            kn[n] = True
-    gruppen = []                         # (Ausloeser, alle Knoten) je Starrkoerper
-    for sk in (getattr(model, "starrkoerper", None) or []):
+        if 0 <= n < nn:
+            gelagert[n] = True
+    kn |= gelagert & ~ueberhaupt
+    # Koerperknoten, an die ein mittragendes Stabende den Stab bindet: nicht
+    # nur an abgeschalteten Elementen, oder gelagert (Runde k10)
+    bindet = ~(ueberhaupt & ~kn) | gelagert
+    sk_liste = list(getattr(model, "starrkoerper", None) or [])
+    kopp = list(getattr(model, "kopplungen", None) or [])
+    # je Starrkoerper/Kopplung: (Stabende-Seite, Koerperseite, alle Knoten) -
+    # beim Anschluss eines Stabendes getrennt, sonst alle Knoten auf beiden Seiten
+    teile = []
+    for sk in sk_liste:
         master = int(sk.master)
         slaves = [int(x) for x in (sk.slaves or []) if 0 <= int(x) < nn and int(x) != master]
         if not slaves:
+            teile.append(None)
             continue
         alle = slaves + ([master] if 0 <= master < nn else [])
-        gruppen.append((slaves if _se.ist_verteilkopplung(sk) else alle, alle))
-    kopp = [kp for kp in (getattr(model, "kopplungen", None) or [])
-            if 0 <= int(kp.node_a) < nn and 0 <= int(kp.node_b) < nn]
+        if _se.ist_verteilkopplung(sk):
+            teile.append(([master] if 0 <= master < nn else [], slaves, alle))
+        else:
+            teile.append((alle, alle, alle))
+    for kp in kopp:
+        a, b = int(kp.node_a), int(kp.node_b)
+        if not (0 <= a < nn and 0 <= b < nn):
+            teile.append(None)
+        elif str(getattr(kp, "gruppe", "") or "").startswith(STABENDE_GRUPPE):
+            teile.append(([a], [b], [a, b]))
+        else:
+            ab = [a, b]
+            teile.append((ab, ab, ab))
+
+    def wirkt(t) -> bool:
+        if t is None:
+            return False
+        stab, koerper, _alle = t
+        if any(kn[x] for x in koerper):
+            return True
+        if stab is koerper or alt:
+            return stab is koerper and any(kn[x] for x in stab)
+        return any(kn[x] for x in stab) and any(bindet[x] for x in koerper)
+
     geaendert = True
     while geaendert:
         geaendert = False
-        for ausloeser, alle in gruppen:
-            if not all(kn[x] for x in alle) and any(kn[x] for x in ausloeser):
-                kn[alle] = True
+        for t in teile:
+            if t is not None and not all(kn[x] for x in t[2]) and wirkt(t):
+                kn[t[2]] = True
                 geaendert = True
-        for kp in kopp:
-            a, b = int(kp.node_a), int(kp.node_b)
-            if not (kn[a] and kn[b]) and kopplung_bleibt(model, kp, kn):
-                kn[a] = kn[b] = True
-                geaendert = True
-    return kn
+    zaehlt = [wirkt(t) for t in teile]
+    return kn, zaehlt[:len(sk_liste)], zaehlt[len(sk_liste):]
+
+
+def _wirksame_knoten_th3(model: Model, aktiv) -> np.ndarray:
+    """Maske (nn,) der mittragenden Knoten (:func:`_th3_wirkung`)."""
+    return _th3_wirkung(model, aktiv)[0]
 
 
 def _namen_liste(namen: list, n_max: int = 4) -> str:
@@ -554,7 +610,7 @@ def _namen_liste(namen: list, n_max: int = 4) -> str:
     return teil + (f" und {len(namen) - n_max} weitere" if len(namen) > n_max else "")
 
 
-def starrkoerper_sperre(model: Model, aktiv=None) -> str:
+def starrkoerper_sperre(model: Model, aktiv=None, alt: bool = False) -> str:
     """Leer - oder der Grund, warum Theorie III. Ordnung nicht rechnet: ein
     wirksamer Starrkoerper (Model.starrkoerper, RBE2 oder RBE3).
 
@@ -566,26 +622,13 @@ def starrkoerper_sperre(model: Model, aktiv=None) -> str:
     oder als Versatz 8,23 mm. Entscheidung des Anwenders (Runde k8): mit
     Klartext abweisen wie die Woelbkrafttorsion (:func:`woelb_sperre`).
 
-    Es zaehlen nur Starrkoerper, an deren Knoten ein in der Rechnung
-    wirksames Element haengt (Master oder ein Slave; bei der verteilenden
-    Kopplung eines Stabendes ein Slave, wie situationen.kopplung_bleibt)."""
+    Es zaehlen nur Starrkoerper, die in der Rechnung wirken
+    (:func:`_th3_wirkung`; ``alt``: die Regel bis Runde k10)."""
     sk_liste = getattr(model, "starrkoerper", None) or []
     if not sk_liste:
         return ""
-    from . import stabeinleitung as _se
-    kn = _wirksame_knoten_th3(model, aktiv)
-    nn = len(kn)
-    namen = []
-    for sk in sk_liste:
-        slaves = [int(x) for x in (sk.slaves or []) if 0 <= int(x) < nn and int(x) != int(sk.master)]
-        if not slaves:
-            continue
-        master = int(sk.master)
-        wirksam = any(kn[s] for s in slaves)
-        if not _se.ist_verteilkopplung(sk) and 0 <= master < nn:
-            wirksam = wirksam or bool(kn[master])
-        if wirksam:
-            namen.append(str(sk.name or "ohne Namen"))
+    _kn, sk_zaehlt, _kp = _th3_wirkung(model, aktiv, alt)
+    namen = [str(sk.name or "ohne Namen") for sk, z in zip(sk_liste, sk_zaehlt) if z]
     if not namen:
         return ""
     return (f"Theorie III. Ordnung rechnet keine Starrkörper (RBE2/RBE3: {_namen_liste(namen)}). "
@@ -593,7 +636,7 @@ def starrkoerper_sperre(model: Model, aktiv=None) -> str:
             "oder Theorie II. Ordnung wählen.")
 
 
-def starre_kopplung_sperre(model: Model, aktiv=None) -> str:
+def starre_kopplung_sperre(model: Model, aktiv=None, alt: bool = False) -> str:
     """Leer - oder der Grund, warum Theorie III. Ordnung nicht rechnet: eine
     wirksame starre Knotenkopplung (Model.kopplungen mit Steifigkeit ``inf``).
 
@@ -604,17 +647,15 @@ def starre_kopplung_sperre(model: Model, aktiv=None) -> str:
     Hand 0,2679 mm, Theorie III. Ordnung bis zum 15.11.2026 0,5329 mm (nur
     ein Kragarm traegt). Kopplungen mit endlicher Federsteifigkeit rechnet sie
     richtig (wie Theorie I. Ordnung und Hand); sie bleiben. Es zaehlen nur
-    Kopplungen, die in der Rechnung wirken (situationen.kopplung_bleibt)."""
+    Kopplungen, die in der Rechnung wirken (:func:`_th3_wirkung`; ``alt``:
+    die Regel bis Runde k10)."""
     kopp = getattr(model, "kopplungen", None) or []
     if not kopp:
         return ""
-    from .situationen import kopplung_bleibt
-    kn = _wirksame_knoten_th3(model, aktiv)
+    _kn, _sk, kp_zaehlt = _th3_wirkung(model, aktiv, alt)
     starr, gruppen = 0, []
-    for kp in kopp:
-        if not any(not np.isfinite(w) for _r, w in kp.paare()):
-            continue
-        if not kopplung_bleibt(model, kp, kn):
+    for kp, z in zip(kopp, kp_zaehlt):
+        if not z or not any(not np.isfinite(w) for _r, w in kp.paare()):
             continue
         starr += 1
         g = str(getattr(kp, "gruppe", "") or "").strip()
@@ -630,13 +671,15 @@ def starre_kopplung_sperre(model: Model, aktiv=None) -> str:
             "Theorie II. Ordnung wählen.")
 
 
-def kopplung_sperre(model: Model, aktiv=None) -> str:
+def kopplung_sperre(model: Model, aktiv=None, alt: bool = False) -> str:
     """Starrkoerper und starre Knotenkopplungen (Runde k8, 15.11.2026):
-    leer, oder der Text der Abweisung."""
-    return " ".join(t for t in (starrkoerper_sperre(model, aktiv), starre_kopplung_sperre(model, aktiv)) if t)
+    leer, oder der Text der Abweisung. ``alt``: die Regel bis Runde k10
+    (fuer die Verfahrenstabelle)."""
+    return " ".join(t for t in (starrkoerper_sperre(model, aktiv, alt),
+                                starre_kopplung_sperre(model, aktiv, alt)) if t)
 
 
-def kopplung_sperre_modell(model: Model) -> dict:
+def kopplung_sperre_modell(model: Model, alt: bool = False) -> dict:
     """{Text der Abweisung: [Lastfaelle und Kombinationen]} fuer alles, was
     nach Theorie III. Ordnung gestellt ist - je in seiner Situation (nur dort
     wirksame Starrkoerper und Kopplungen zaehlen). Fuer die Modellpruefung
@@ -658,7 +701,7 @@ def kopplung_sperre_modell(model: Model) -> dict:
             # zuerst „nur für Stabtragwerke“ ab (dieselbe Bedingung wie in
             # solve_theorie3): hier kein irrefuehrender FEHLER (Gegenpruefung
             # 15.11.2026, Schale mit RBE2-Lastknoten)
-            je_situation[sit] = kopplung_sperre(model, aktiv) if _nur_staebe(model, aktiv) else ""
+            je_situation[sit] = kopplung_sperre(model, aktiv, alt) if _nur_staebe(model, aktiv) else ""
         text = je_situation[sit]
         if text:
             out.setdefault(text, []).append(str(o.name))
@@ -909,9 +952,13 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
             fl, _N = zust.get(sl_.i, (np.zeros(12), 0.0))
             res.beam_end[sl_.i] = fl
         if aktiv is not None:
+            # Nullen je Elementart wie solver.postprocess: eine abgeschaltete
+            # Schale bekam bis zum 15.11.2026 Stabendkraefte, und
+            # beam_end_forces brach beim Abschluss mit KeyError (Querschnitt
+            # = Name der Schalendicke) ab (Runde k10, Punkt 1)
+            from .solver import inaktive_nullen
             res.info["inaktiv"] = [i for i in range(ne) if not aktiv[i]]
-            for i in res.info["inaktiv"]:
-                res.beam_end[i] = np.zeros(12)
+            inaktive_nullen(model, res, res.info["inaktiv"])
         return res
 
     # Theorie I. Ordnung als Bezug (u_max_I)

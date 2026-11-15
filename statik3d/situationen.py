@@ -116,8 +116,10 @@ def wirksame_knoten(model: Model, aktiv, kn: np.ndarray = None) -> np.ndarray:
       Stabendes (stabeinleitung.ist_verteilkopplung) loest nur ein wirksamer
       Slave aus - wie bei der Kopplung eines Stabendes, die einen wirksamen
       Koerperknoten braucht (:func:`kopplung_bleibt`): Ist der Koerper
-      abgeschaltet, lebt er ueber den Stab nicht wieder auf. Dieselbe Regel
-      wie theorie3._wirksame_knoten_th3.
+      abgeschaltet, lebt er ueber den Stab nicht wieder auf. Die Abweisung
+      nach Theorie III. Ordnung (theorie3._th3_wirkung) zaehlt den Anschluss
+      eines Stabendes seit Runde k10 auch, wenn nur das Stabende mittraegt und
+      ein Koerperknoten kein Element hat oder gelagert ist.
 
     Ein Starrkoerper oder eine Kopplung, deren ganze Kette an keinem
     wirksamen Element und keinem solchen Lagerknoten haengt (ein ganz

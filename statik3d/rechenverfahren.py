@@ -2185,6 +2185,53 @@ def _theorie3_starrkoerper(model) -> bool:
         return True
 
 
+def _theorie3_anschluss_neu(model) -> list:
+    """Lastfaelle und Kombinationen nach Theorie III. Ordnung, die seit Stand
+    66 (Runde k10) abgewiesen werden und davor gerechnet wurden: der Anschluss
+    eines Stabendes an einen Koerper (Kopplung „Stabende“ oder verteilende
+    Kopplung) wirkt, obwohl kein Koerperknoten mittraegt - Koerperknoten ohne
+    jedes Element (ohne Situation wirkten diese Kopplungen in Theorie I.
+    Ordnung immer) oder gelagerter Knoten eines abgeschalteten Koerpers.
+    Vergleich der Abweisung heute und mit der Regel bis Runde k10
+    (theorie3.kopplung_sperre_modell, ``alt``)."""
+    if not (getattr(model, "starrkoerper", None) or getattr(model, "kopplungen", None)):
+        return []
+    from .theorie3 import kopplung_sperre_modell
+    neu = {n: t for t, namen in kopplung_sperre_modell(model).items() for n in namen}
+    if not neu:
+        return []
+    alt = {n: t for t, namen in kopplung_sperre_modell(model, alt=True).items() for n in namen}
+    return sorted(n for n, t in neu.items() if alt.get(n) != t)
+
+
+def _theorie3_anschluss_betrifft(model) -> bool:
+    """Modellmerkmal theorie3_stabende_anschluss (Stand 66)."""
+    try:
+        return bool(_theorie3_anschluss_neu(model))
+    except Exception:                       # noqa: BLE001 - nicht pruefbar: möglicherweise betroffen
+        return True
+
+
+def _theorie3_anschluss_im_ergebnis(model, an) -> str:
+    """Ergebnisse nach Theorie III. Ordnung der Lastfaelle und Kombinationen
+    aus :func:`_theorie3_anschluss_neu` (bei einer Ergebniskombination auch
+    ihre Alternativen „EK [k]“)."""
+    try:
+        namen_neu = set(_theorie3_anschluss_neu(model))
+    except Exception:                       # noqa: BLE001
+        return ""
+    if not namen_neu:
+        return ""
+    th3 = getattr(an, "theorie3", None)
+    namen = [str(n) for n in (getattr(th3, "kombinationen", None) or {})]
+    for n, r in _ergebnis_paare(an):
+        if str((getattr(r, "info", None) or {}).get("theorie", "")).startswith("III"):
+            namen.append(str(n))
+    namen = sorted({n for n in namen if n in namen_neu or n.split(" [")[0] in namen_neu})
+    return ("Theorie III. Ordnung mit Anschluss eines Stabendes: " + ", ".join(namen[:6])
+            + (" …" if len(namen) > 6 else "")) if namen else ""
+
+
 def _ergebnis_paare(an) -> list:
     try:
         return list(an.all_results().items()) + list((getattr(an, "alternativen", None) or {}).items())
@@ -4031,10 +4078,31 @@ MERKMALE: list = [
                       "Kopplung) an einem wirksamen Element hängt - oder eine Kopplung an einem solchen Knoten, "
                       "auch im Spannschritt (Anker mit Sollkraft, Weg „spannen und verriegeln“)",
         betrifft=_maske_starrkoerper_betroffen, im_ergebnis=_maske_starrkoerper_im_ergebnis),
+    # Runde k10 (15.11.2026, Fehlerkorrektur): die Abweisung nach Theorie III.
+    # Ordnung (Stand 64) liess den Anschluss eines Stabendes an einen Koerper
+    # (Kopplung „Stabende“, verteilende Kopplung) nur mit mittragendem
+    # Koerperknoten gelten. Kopplung „Stabende“ an einem Knoten Q ohne Element,
+    # daran per RBE2 der Lastknoten: Theorie I. Ordnung 0,5357 mm, Theorie III.
+    # Ordnung still 0,0000 mm (Summe Rz 0); Last direkt an Q: 100,5357 statt
+    # 0,5357 mm; RBE3 „Stabende“ an einem gelagerten, abgeschalteten Koerper:
+    # Theorie I. Ordnung und Gegenrechnung 0,0000 mm, Theorie III. Ordnung
+    # 0,5357 mm (theorie3._th3_wirkung). Seither mit Klartext abgewiesen.
+    Merkmal(
+        name="theorie3_stabende_anschluss", titel="Anschluss eines Stabendes nach Theorie III. Ordnung",
+        texte={"alt": "Anschluss eines Stabendes (Kopplung „Stabende“, RBE3) nur mit mittragendem "
+                      "Körperknoten erkannt: an einem Knoten ohne Element oder einem gelagerten Knoten "
+                      "eines abgeschalteten Körpers still als weiche Feder oder weggelassen",
+               "neu": "auch dort erkannt und mit Klartext abgewiesen"},
+        wechsel=(Wechsel(stand=66, datum="15.11.2026", commit="fix/k10-th3", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Lastfall oder Kombination nach Theorie III. Ordnung mit einer Kopplung „Stabende“ "
+                      "oder einer verteilenden Kopplung eines Stabendes, deren Körperknoten kein Element "
+                      "hat oder ein gelagerter Knoten eines abgeschalteten Körpers ist",
+        betrifft=_theorie3_anschluss_betrifft, im_ergebnis=_theorie3_anschluss_im_ergebnis),
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 65
+VERFAHRENSSTAND = 66
 
 
 def merkmal(name: str) -> Optional[Merkmal]:
