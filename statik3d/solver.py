@@ -11583,6 +11583,15 @@ def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = Non
     mdf = np.asarray(Mff.diagonal()).ravel()
     sigma = -1e-6 * float(kd.mean() / max(float(mdf.mean()), 1e-300))
     A = (Kff - sigma * Mff).tocsc()
+    # Rang der Massenmatrix (Runde k10b, 15.11.2026): eine Zusatzmasse
+    # m n n^T wirkt je Knoten nur in Normalenrichtung, zaehlt bei schraeger
+    # Normale aber drei Freiheitsgrade mit Masse. Es gibt nur so viele
+    # Eigenformen, wie M unabhaengige Richtungen hat. Bis k10 nahm der
+    # Eigenloeser n_masse an: an einer schraegen Wand mit 8 Knoten (24
+    # Massen-FHG, Rang 8) lieferte ARPACK bei 10 angeforderten Formen eine
+    # Scheinform mit 0 Hz und weitere ohne Bedeutung, der dichte Weg brach
+    # bei 20 mit IndexError ab.
+    rang = _massenrang(Mff, fi, model.nn)
     # Wenige Freiheitsgrade mit Masse (Runde k10, 15.11.2026): ARPACK baut im
     # Shift-Invert-Modus einen Krylov-Raum aus Vektoren M x - mit nur
     # n_masse Freiheitsgraden mit Masse hat er hoechstens n_masse Richtungen.
@@ -11591,23 +11600,68 @@ def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = Non
     # gemessen an einer Punktmasse am masselosen Kragarm (3 FHG mit Masse).
     # Dann statisch kondensiert und dicht geloest: die masselosen FHG sind
     # exakt herausgerechnet, es gibt genau n_masse Eigenformen.
-    dicht = n_masse <= max(2 * nmodes + 1, 20)
+    #
+    # Grenze des dichten Wegs (k10b): er haelt nur die kondensierte Matrix
+    # (n_masse x n_masse, hoechstens MODAL_DICHT_MAX = 2000 Zeilen, je Kopie
+    # 32 MB) und je Loesung einen Vektor der Laenge n; die Eigenformen
+    # entstehen einzeln aus einer Loesung je Form. Bis k10b legte er eine
+    # volle Matrix n x n_masse an (1 Mio. FHG, 201 Massen-FHG: 1,6 GB).
+    ncv = max(2 * nmodes + 1, 20)
+    dicht = rang <= ncv and n_masse <= MODAL_DICHT_MAX
+    grenz_hinweis = ""
     if dicht:
-        k = min(nmodes, n_masse)
-    loeser = LinearSolver(A)
+        k = min(nmodes, rang)
+    elif rang <= ncv:
+        # Viele Massen-FHG, aber wenige Richtungen und sehr viele Formen
+        # angefordert: ARPACK braucht mehr Lanczos-Vektoren als Formen und
+        # darf nicht mehr halten, als M Richtungen hat - sonst Scheinformen.
+        k = max(1, (rang - 1) // 2)
+        ncv = 2 * k + 1
+        grenz_hinweis = (f"{k} von {nmodes} angeforderten Eigenformen: Das System hat {rang} Eigenformen mit "
+                         f"Masse; bei mehr als {MODAL_DICHT_MAX} Freiheitsgraden mit Masse rechnet der "
+                         f"Eigenlöser in einem Lauf höchstens die unteren {k}. Weniger Formen anfordern "
+                         f"oder die Massen vereinfachen.")
+    try:
+        loeser = LinearSolver(A)
+    except (RuntimeError, ValueError) as ex:
+        raise RuntimeError(_modal_singulaer_text(model, K, fi, ex, progress)) from None
     # Die Modalanalyse faktorisiert selbst, ohne StaticSystem - das Ausweichen
     # meldete hier bis zum 22.09.2026 nur warnings.warn (Befund K2).
     if loeser.ausweichgrund:
         _melde(progress, f"Gleichungslöser ausgewichen - {loeser.ausweichgrund}")
     try:
+        # Regulaer? K - sigma M mit sigma < 0 ist nur dann singulaer, wenn sich
+        # ein Teil ohne Masse ohne Steifigkeit bewegen kann (A z = 0 heisst
+        # K z = 0 und M z = 0). Dann ist die Eigenform dort unbestimmt: bis
+        # k10b kam „ARPACK error -9999" oder, auf dem dichten Weg, eine Form,
+        # in der ein loser RBE3-Slave beliebig mitlief - ohne Wort. Geprueft
+        # wird wie in der Statik: eine Loesung mit Residuumspruefung, mit
+        # einer rechten Seite, die jede Richtung enthaelt.
+        try:
+            loeser.solve(np.random.default_rng(0).standard_normal(A.shape[0]), check=True)
+        except RuntimeError as ex:
+            raise RuntimeError(_modal_singulaer_text(model, K, fi, ex, progress)) from None
         if dicht:
-            vals_, vecs = _modal_kondensiert(loeser, Mff, mdf, sigma, k)
+            vals_, vecs = _modal_kondensiert(loeser, Mff, mdf, sigma, k, rang)
         else:
             op = LinearOperator(A.shape, dtype=float,
                                 matvec=lambda x: loeser.solve(np.asarray(x, float).ravel(), check=False))
-            vals_, vecs = eigsh(Kff, k=k, M=Mff, sigma=sigma, which="LM", OPinv=op)
+            from scipy.sparse.linalg import ArpackError
+            try:
+                vals_, vecs = eigsh(Kff, k=k, M=Mff, sigma=sigma, which="LM", OPinv=op,
+                                    **({"ncv": ncv} if grenz_hinweis else {}))
+            except ArpackError as ex:
+                raise RuntimeError(
+                    f"Eigenschwingungen nicht berechenbar: der Eigenlöser (ARPACK) fand keine {k} "
+                    f"Eigenformen ({str(ex)[:160]}). Das System hat {n_masse} Freiheitsgrade mit Masse in "
+                    f"{rang} unabhängigen Richtungen. Weniger Eigenformen anfordern; bleibt die Meldung, "
+                    f"Lagerung und Massen prüfen.") from None
     finally:
         loeser.freigeben()
+    # Der dichte Weg liefert nur die Formen, die es gibt (Rang von M) und die
+    # rechnerisch aufloesbar sind - k folgt der Zahl der Paare (bis k10b
+    # IndexError, wenn es weniger waren).
+    k = len(vals_)
     order = np.argsort(vals_)
     vals_ = np.maximum(vals_[order], 0.0)
     vecs = vecs[:, order]
@@ -11632,53 +11686,153 @@ def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = Non
                 "starrkoerper": int(np.sum(freqs < STARR_HZ)),
                 "kontakt": kontakt_text, "kontakt_aktiv": n_kontakt,
                 "loeser": loeser.backend}
+    if rang < n_masse:
+        res.info["massenrang"] = int(rang)
     if k < nmodes:
-        res.info["moden_hinweis"] = moden_hinweis(k, nmodes, n_masse)
+        res.info["moden_hinweis"] = grenz_hinweis or moden_hinweis(k, nmodes, n_masse, rang)
         _melde(progress, res.info["moden_hinweis"])
     res.info.update(_ausweich_eintraege([(loeser.ausweichgrund, loeser.backend)]))
     _schalenlage_eintragen(res, schalenlage)
     return res
 
 
-def moden_hinweis(k: int, angefordert: int, n_masse: int) -> str:
+def moden_hinweis(k: int, angefordert: int, n_masse: int, rang: int = None) -> str:
     """Klartext, wenn die Modalanalyse weniger Eigenformen liefert als
-    angefordert (Runde k10, 15.11.2026)."""
+    angefordert (Runde k10, 15.11.2026; Rang und Aufloesung k10b)."""
+    rang = n_masse if rang is None else int(rang)
     fhg = "einen Freiheitsgrad" if n_masse == 1 else f"{n_masse} Freiheitsgrade"
-    return (f"{k} von {angefordert} angeforderten Eigenformen: Das System hat nur {fhg} mit Masse "
-            f"(Punktmassen, Werkstoffe mit Dichte) und damit nicht mehr Eigenformen; "
-            f"masselose Teile schwingen nur mit.")
+    if rang >= n_masse and k >= n_masse:
+        return (f"{k} von {angefordert} angeforderten Eigenformen: Das System hat nur {fhg} mit Masse "
+                f"(Punktmassen, Werkstoffe mit Dichte) und damit nicht mehr Eigenformen; "
+                f"masselose Teile schwingen nur mit.")
+    satz = f"{k} von {angefordert} angeforderten Eigenformen: Das System hat {fhg} mit Masse"
+    if rang < n_masse:
+        wo = "einer Richtung" if rang == 1 else f"{rang} unabhängigen Richtungen"
+        satz += (f", die Massen wirken aber nur in {wo} (etwa eine Zusatzmasse "
+                 f"nur senkrecht zur benetzten Fläche) – mehr Eigenformen gibt es nicht")
+    if k < rang:
+        rest = rang - k
+        satz += ("; " if rang < n_masse else ". ") + (
+            f"{'Eine weitere Eigenform liegt' if rest == 1 else f'Weitere {rest} Eigenformen liegen'} über "
+            f"dem Millionenfachen der Grundfrequenz (sehr kleine Massen neben großen, etwa an starren "
+            f"Kopplungen) und {'ist' if rest == 1 else 'sind'} rechnerisch nicht auflösbar")
+    return satz + "; masselose Teile schwingen nur mit."
 
 
-def _modal_kondensiert(loeser: "LinearSolver", Mff, mdf: np.ndarray, sigma: float, k: int) -> tuple:
+#: Hoechstzahl der Freiheitsgrade mit Masse fuer den dichten Eigenweg (k10b):
+#: die kondensierte Matrix hat dann hoechstens 2000 x 2000 Eintraege (32 MB je
+#: Kopie, mit eigh rund 160 MB).
+MODAL_DICHT_MAX = 2000
+
+#: Eigenwerte nu = 1/(lambda - sigma) unter diesem Bruchteil des groessten
+#: sind Rundungsrauschen (eigh rechnet nu absolut auf etwa 1e-16 · nu_max
+#: genau). Was bleibt, hat lambda - sigma hoechstens 1e12-mal so gross wie die
+#: Grundform und ist auf etwa 0,01 % genau; was wegfaellt, liegt ueber dem
+#: Millionenfachen der Grundfrequenz (sigma < 0).
+MODAL_NU_REL = 1e-12
+
+
+def _massenrang(Mff, fi: np.ndarray, nn: int) -> int:
+    """Zahl der unabhaengigen Richtungen der Massenmatrix (freie FHG).
+
+    Die Massenmatrix ist knotenweise blockdiagonal (konzentrierte Massen,
+    Punktmassen, Zusatzmassen m n n^T je Knoten); dann ist der Rang die Summe
+    der Raenge der Knotenbloecke. Hat M Kopplungen zwischen Knoten, gilt die
+    Zahl der FHG mit Masse (obere Schranke, bei positiv definiten
+    Elementmassen genau)."""
+    fi = np.asarray(fi, int)
+    d = np.asarray(Mff.diagonal()).ravel()
+    n_masse = int(np.count_nonzero(d > 0))
+    C = sparse.coo_matrix(Mff)
+    aus = (C.row != C.col) & (C.data != 0)
+    if not np.any(aus):
+        return n_masse
+    # Knoten je freiem FHG; Woelb-FHG (hinter 6 nn) je eigener Block
+    knoten = np.where(fi < NDOF * nn, fi // NDOF, nn + np.arange(len(fi)))
+    r, c = C.row[aus], C.col[aus]
+    if np.any(knoten[r] != knoten[c]):
+        return n_masse
+    gekoppelt = np.unique(knoten[r])
+    in_block = np.isin(knoten, gekoppelt)
+    rang = int(np.count_nonzero((d > 0) & ~in_block))
+    sel = np.where(in_block)[0]
+    Mb = sparse.csr_matrix(Mff)[sel][:, sel].toarray()
+    kb = knoten[sel]
+    for kn in gekoppelt:
+        j = np.where(kb == kn)[0]
+        B = Mb[np.ix_(j, j)]
+        w = np.linalg.eigvalsh(0.5 * (B + B.T))
+        rang += int(np.count_nonzero(w > 1e-12 * max(float(w.max()), 0.0)))
+    return rang
+
+
+def _modal_singulaer_text(model, K, fi, ex, progress=None) -> str:
+    """Klartext, wenn K - sigma M singulaer ist: ein Teil ohne Masse ist ohne
+    Steifigkeit beweglich (Runde k10b). Die Ursachenzeilen kommen aus der
+    Diagnose der Statik (diagnose.singulaer_text), der Kopf sagt, was das fuer
+    die Schwingung heisst."""
+    from types import SimpleNamespace
+    try:
+        from .diagnose import singulaer_text
+        text = singulaer_text(model, ex, SimpleNamespace(K=K, fi=fi, _progress=progress))
+        rumpf = text.split("\n", 1)[1] if "\n" in text else ""
+    except Exception as ex2:              # noqa: BLE001 - die Meldung darf nie sperren
+        rumpf = f"Diagnose nicht möglich: {type(ex2).__name__}: {ex2}"
+    return ("Eigenschwingungen nicht berechenbar: Ein Teil des Modells ohne Masse ist ohne Steifigkeit "
+            "beweglich (etwa ein loser Knoten an einem RBE3 oder ein gewichtsloser Körper ohne Halt). Seine "
+            "Bewegung ist in jeder Eigenform unbestimmt; die statische Rechnung bricht am selben Modell mit "
+            "„Gleichungssystem singulär“ ab. Teil anschließen, lagern oder entfernen."
+            + ("\n" + rumpf if rumpf else ""))
+
+
+def _modal_kondensiert(loeser: "LinearSolver", Mff, mdf: np.ndarray, sigma: float, k: int,
+                       rang: int = None) -> tuple:
     """(Eigenwerte, Eigenvektoren) von Kff v = lambda Mff v, wenn nur wenige
     Freiheitsgrade Masse tragen: exakt statisch kondensiert auf diese.
 
-    ``loeser`` zerlegt A = Kff - sigma Mff. Mit den Einheitslasten an den
-    Massen-FHG m ist X = A^-1 E_m und F = X[m] die Nachgiebigkeit der
-    kondensierten Matrix A_red = K_red - sigma M_mm (A_red = F^-1), weil die
-    masselosen FHG in M weder Diagonale noch Nebenglieder haben (M positiv
-    semidefinit). Dann gilt M_mm phi = nu A_red phi mit lambda = sigma + 1/nu,
-    und die volle Form ist v = X M_mm phi (A v = (lambda - sigma) M v)."""
+    ``loeser`` zerlegt A = Kff - sigma Mff (regulaer, von solve_modal
+    geprueft). Mit den Einheitslasten an den Massen-FHG m ist F = (A^-1)[m, m]
+    die Nachgiebigkeit der kondensierten Matrix A_red = K_red - sigma M_mm
+    (A_red = F^-1), weil die masselosen FHG in M weder Diagonale noch
+    Nebenglieder haben (M positiv semidefinit). Dann gilt M_mm phi = nu A_red phi
+    mit lambda = sigma + 1/nu, und die volle Form ist v = A^-1 (E_m M_mm phi).
+
+    Es kommen hoechstens ``k`` Paare, und nur die, die es gibt: hoechstens
+    ``rang`` (Rang von M_mm) und nur nu ueber MODAL_NU_REL · nu_max - darunter
+    ist nu Rundungsrauschen. Speicher: F (n_masse²) und je Form ein Vektor;
+    bis k10b hielt die Funktion die volle Matrix n x n_masse."""
     import scipy.linalg as sla
     m = np.where(mdf > 0)[0]
     n = Mff.shape[0]
-    X = np.zeros((n, len(m)))
+    F = np.empty((len(m), len(m)))
+    e = np.zeros(n)
     for j, i in enumerate(m):
-        e = np.zeros(n)
         e[i] = 1.0
-        X[:, j] = loeser.solve(e, check=False)
-    F = X[m]
+        F[:, j] = loeser.solve(e, check=False)[m]
+        e[i] = 0.0
     F = 0.5 * (F + F.T)
     A_red = np.linalg.inv(F)
+    del F
     A_red = 0.5 * (A_red + A_red.T)
-    Mmm = Mff[m][:, m].toarray()
+    Mmm = sparse.csr_matrix(Mff)[m][:, m].toarray()
     Mmm = 0.5 * (Mmm + Mmm.T)
     nu, phi = sla.eigh(Mmm, A_red)
-    gut = nu > 0
+    del A_red
+    nu_max = float(nu.max()) if nu.size else 0.0
+    if nu_max <= 0:
+        raise RuntimeError("Eigenschwingungen nicht berechenbar: die Massenmatrix hat keine wirksame Richtung.")
+    gut = np.where(nu > MODAL_NU_REL * nu_max)[0]
+    gut = gut[np.argsort(-nu[gut])]                  # groesstes nu = kleinstes lambda zuerst
+    if rang is not None:
+        gut = gut[:max(1, int(rang))]
+    gut = gut[:k]
     lam = sigma + 1.0 / nu[gut]
-    phi = phi[:, gut]
-    order = np.argsort(lam)[:k]
-    return lam[order], X @ (Mmm @ phi[:, order])
+    vecs = np.empty((n, len(gut)))
+    rhs = np.zeros(n)
+    for j, g in enumerate(gut):
+        rhs[m] = Mmm @ phi[:, g]
+        vecs[:, j] = loeser.solve(rhs, check=False)
+    return lam, vecs
 
 
 # ==========================================================================

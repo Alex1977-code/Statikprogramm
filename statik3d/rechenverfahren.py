@@ -2669,6 +2669,50 @@ def _starrkoerper_strafe_im_ergebnis(model, an) -> str:
             + (" …" if len(namen) > 6 else ""))
 
 
+def _modal_masselos_betroffen(model) -> bool:
+    """Modellmerkmal modal_massenrang (Stand 68, Runde k10b): ein Teil ohne
+    Masse - ein Element mit gewichtslosem Werkstoff (rho = 0) oder ein Knoten
+    ohne Element, den ein RBE3 oder eine Kopplung nicht voll haelt. Nur dann kann die
+    Massenmatrix weniger Richtungen haben als Freiheitsgrade mit Masse
+    (Zusatzmasse auf masselosen Teilen) oder K - sigma M singulaer sein
+    (masseloser Mechanismus); beides hat sich in solve_modal geaendert."""
+    try:
+        mats = getattr(model, "materials", None) or {}
+        im_element = set()
+        for e in getattr(model, "elements", None) or []:
+            im_element.update(int(n) for n in (getattr(e, "nodes", None) or []))
+            mat = mats.get(getattr(e, "mat", None))
+            if mat is not None and not float(getattr(mat, "rho", 0.0) or 0.0) > 0.0:
+                return True
+        # Ein RBE3 haelt seine Slaves nicht, und mit weniger als drei Slaves
+        # ist auch die Drehung des Masters nicht bestimmt; eine Kopplung in
+        # weniger als drei Richtungen laesst den Knoten in den uebrigen frei.
+        # RBE2-Slaves und voll gekoppelte Knoten sind gehalten.
+        lose = set()
+        for sk in getattr(model, "starrkoerper", None) or []:
+            if str(getattr(sk, "art", "")).upper() == "RBE3":
+                lose.update(int(n) for n in (sk.slaves or []))
+                if len(sk.slaves or []) < 3:
+                    lose.add(int(sk.master))
+        for kp in getattr(model, "kopplungen", None) or []:
+            if len(list(kp.paare())) < 3:
+                lose.update((int(kp.node_a), int(kp.node_b)))
+        return bool(lose - im_element)
+    except Exception:                                   # noqa: BLE001 - lieber betroffen als still
+        return True
+
+
+def _modal_masselos_im_ergebnis(model, an) -> str:
+    """Nur Eigenformen: die Statik, das Knicken und Theorie II/III rechnen
+    unveraendert."""
+    if not _modal_masselos_betroffen(model):
+        return ""
+    if getattr(an, "kind", "") != "modal":
+        return ""
+    return "Eigenformen eines Modells mit Teilen ohne Masse: " + (str(getattr(an, "name", "") or "")
+                                                                  or "Modalanalyse")
+
+
 #: Die Tabelle (Einstufung des Anwenders vom 16.10.2026). Stand 1: Abbruch der
 #: Plastizitaet (a1194ef, 13.10.2026 19:32); Stand 1.5: die Korrekturen dazwischen
 #: (13.10. 23:09 bis 15.10. 12:56) - eine Datei ohne Angabe erkennt sie nur an
@@ -4082,6 +4126,24 @@ MERKMALE: list = [
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Starrkörper (RBE2/RBE3) und starre Knotenkopplung im selben Modell",
         betrifft=_starrkoerper_strafe_betroffen, im_ergebnis=_starrkoerper_strafe_im_ergebnis),
+    # Runde k10b (15.11.2026): die Modalanalyse nahm so viele Eigenformen an,
+    # wie es Freiheitsgrade mit Masse gibt. Eine Zusatzmasse m n n^T auf
+    # masselosen Teilen hat je Knoten aber nur eine Richtung: an einer
+    # schraegen Wand mit 8 Knoten (24 Massen-FHG, Rang 8) kamen bei 10
+    # angeforderten Formen eine Scheinform mit 0 Hz und Formen ohne Bedeutung
+    # heraus. Ein masseloser Mechanismus (loser RBE3-Slave) lieferte Formen, in
+    # denen der lose Teil beliebig mitlief. Seither so viele Formen, wie M
+    # Richtungen hat, und Klartext beim masselosen Mechanismus.
+    # Fehlerkorrektur
+    Merkmal(
+        name="modal_massenrang", titel="Eigenformen bei Teilen ohne Masse",
+        texte={"alt": "so viele Eigenformen wie Freiheitsgrade mit Masse; masseloser Mechanismus ungeprüft",
+               "neu": "so viele Eigenformen, wie die Massenmatrix Richtungen hat; masseloser Mechanismus "
+                      "wird gemeldet"},
+        wechsel=(Wechsel(stand=68, datum="15.11.2026", commit="fix/k10-num", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Teile ohne Masse (gewichtsloser Werkstoff, Knoten ohne Element an einem RBE3 oder an einer Kopplung in weniger als drei Richtungen)",
+        betrifft=_modal_masselos_betroffen, im_ergebnis=_modal_masselos_im_ergebnis),
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
