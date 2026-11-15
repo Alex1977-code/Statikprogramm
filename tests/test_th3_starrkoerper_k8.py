@@ -392,9 +392,208 @@ def test_web_knickform():
           "if (k === 'which') { S.ro.mode = null; }" in js and "S.ro.mode ?? R.mode" in js)
 
 
+# --------------------------------------------------------------------------
+# Gegenprüfung vom 15.11.2026 (ag_k8_pruef_th3), drei Befunde
+#
+# 1. Umgehung über Knoten ohne Element: die Sperre zählte nur Knoten mit
+#    Element. Lastknoten P per RBE2 an Q, Q per federnder Kopplung am
+#    Kragarmende b, weder P noch Q mit Element: Th III w(b) = 0 mm statt
+#    F L³/(3 E I) = 0,5357 mm; mit starrer Kopplung P–Q statt RBE2:
+#    w(P) = 100,5357 mm (Straffeder 1e4 N/m). Seither hängt ein Knoten ohne
+#    Element über Starrkörper und Kopplungen an seinem Nachbarn.
+# 2. Schale mit RBE2-Lastknoten nach Th III: Model.check meldete den
+#    Starrkörper als FEHLER, die Rechnung richtig „nur für Stabtragwerke“
+#    (CLI und Web brechen bei FEHLER ab). Seither dieselbe Bedingung wie in
+#    solve_theorie3.
+# 3. Daraus Status „Fehlerkorrektur“ am alten Ergebnis derselben Schale ohne
+#    Grund (das alte Verfahren rechnete dort nie nach Th III).
+# --------------------------------------------------------------------------
+def _kette(starr, mit_situation=False):
+    """Kragarm a–b 3 m (Element 0); Q deckungsgleich mit b, über eine federnde
+    Kopplung (1e12 N/m) an b; Lastknoten P über RBE2 „Kette“ (starr=False,
+    P 0,5 m über Q) oder über eine starre Kopplung, Gruppe „Starr“
+    (starr=True, P deckungsgleich), an Q. P und Q ohne Element.
+    mit_situation: zweiter Kragarm (Element 1) in LF1 abgeschaltet."""
+    from statik3d.model import Model, Material, Section, Kopplung, Situation
+    m = Model("U")
+    m.add_material(Material("ST", E=E, nu=0.3, rho=0.0, fy=355e6))
+    m.add_section(Section("Q", A=1e-2, Iy=I_K, Iz=I_K, It=1e-5, zmax=0.1, ymax=0.1))
+    m.design.imperfektionen = False
+    m.netz.stabteilung = 1
+    a = m.add_node(0, 0, 0)
+    b = m.add_node(L_K, 0, 0)
+    m.add_element("beam", [a, b], "ST", "Q")
+    m.fix(a, "all")
+    q = m.add_node(L_K, 0, 0)
+    m.kopplungen.append(Kopplung(q, b, [[1, 0, 0], [0, 1, 0], [0, 0, 1]], [1e12] * 3, "Feder"))
+    if starr:
+        p = m.add_node(L_K, 0, 0)
+        m.kopplungen.append(Kopplung(p, q, [[1, 0, 0], [0, 1, 0], [0, 0, 1]], [float("inf")] * 3, "Starr"))
+    else:
+        p = m.add_node(L_K, 0, 0.5)
+        m.add_starrkoerper(p, [q], "RBE2", name="Kette")
+    if mit_situation:
+        c = m.add_node(0, 2, 0)
+        d = m.add_node(L_K, 2, 0)
+        m.add_element("beam", [c, d], "ST", "Q")
+        m.fix(c, "all")
+        m.situationen["s"] = Situation("s", "", [1])
+        m.load_cases["LF1"].situation = "s"
+    m.load_node(p, Fz=-F_K)
+    m.load_cases["LF1"].theorie = "III"
+    return m, b, p
+
+
+def _schale():
+    """Platte shell4 1 × 1 m, zwei Ecken eingespannt, Lastknoten über RBE2
+    „Arm“ an den beiden freien Ecken, LF1 nach Theorie III. Ordnung."""
+    from statik3d.model import Model, Material, ShellProp
+    m = Model("Sch")
+    m.add_material(Material("S", E=E, nu=0.3, rho=0.0, fy=355e6))
+    m.add_shell_prop(ShellProp("t", 0.01))
+    n = [m.add_node(x, y, 0) for x, y in ((0, 0), (1, 0), (1, 1), (0, 1))]
+    m.add_element("shell4", n, "S", "t")
+    m.fix(n[0], "all")
+    m.fix(n[3], "all")
+    p = m.add_node(1.5, 0.5, 0)
+    m.add_starrkoerper(p, [n[1], n[2]], "RBE2", name="Arm")
+    m.load_node(p, Fz=-100.0)
+    m.load_cases["LF1"].theorie = "III"
+    return m
+
+
+def _solve_all_lf1(m):
+    from statik3d import solver
+    an = _still(solver.solve_all, m, workers=1, design=False)
+    info = an.theorie3.kombinationen.get("LF1") if an.theorie3 is not None else None
+    return an, an.cases.get("LF1"), (getattr(info, "fehler", "") or "")
+
+
+def test_umgehung_rbe2_kette():
+    hand = _hand_kragarm()
+    m, b, p = _kette(starr=False)
+    m.load_cases["LF1"].theorie = "I"
+    u1 = _th1(m)
+    m.load_cases["LF1"].theorie = "III"
+    nahe("Kette RBE2 über Knoten ohne Element: Th I w(b) = F L³/(3 E I) (Hand)", float(-u1[b, 2]), hand, 1e-3)
+    u3, text = _th3(m, stabteilung=False)
+    print(f"   Th III: {'abgewiesen' if u3 is None else f'w(b) {-u3[b, 2] * 1e3:.4f} mm'} – {text[:100]}")
+    check("Th III mit RBE2 zwischen Knoten ohne Element abgewiesen (vorher still w(b) 0 mm)",
+          u3 is None and TEXT_SK in text and "Kette" in text, "gerechnet" if u3 is not None else "")
+    an, r, f = _solve_all_lf1(m)
+    check("… solve_all: Fehler mit Klartext, Ergebnis als Theorie I. Ordnung markiert",
+          TEXT_SK in f and r is not None and r.info.get("theorie") == "I", f[:100])
+    w = None if r is None else float(-np.asarray(r.u).reshape(-1, 6)[b, 2])
+    nahe("… lineares Ergebnis w(b) = Hand", w, hand, 1e-3)
+    treffer = [z for z in m.check() if TEXT_SK in z]
+    check("… Modellprüfung: FEHLER mit LF1", len(treffer) == 1 and treffer[0].startswith("FEHLER")
+          and "LF1" in treffer[0], "; ".join(treffer)[:160])
+    ms, _b, _p = _kette(starr=False, mit_situation=True)
+    _an, _r, fs = _solve_all_lf1(ms)
+    check("… auch in einer Situation mit abgeschaltetem fremdem Element abgewiesen", TEXT_SK in fs, fs[:100])
+    from statik3d import rechenverfahren as rv
+    mk = rv.merkmal("theorie3_starrkoerper")
+    check("… Merkmal theorie3_starrkoerper: betroffen", mk is not None and mk.betrifft(m))
+
+
+def test_umgehung_starre_kopplung():
+    hand = _hand_kragarm()
+    m, b, p = _kette(starr=True)
+    m.load_cases["LF1"].theorie = "I"
+    u1 = _th1(m)
+    m.load_cases["LF1"].theorie = "III"
+    nahe("Starre Kopplung P–Q, Q federnd an b: Th I w(b) = Hand", float(-u1[b, 2]), hand, 1e-3)
+    nahe("… Th I w(P) = Hand (starr, Feder 1e12 N/m vernachlässigbar)", float(-u1[p, 2]), hand, 1e-3)
+    u3, text = _th3(m, stabteilung=False)
+    print(f"   Th III: {'abgewiesen' if u3 is None else f'w(P) {-u3[p, 2] * 1e3:.4f} mm'} – {text[:100]}")
+    check("Th III mit starrer Kopplung zwischen Knoten ohne Element abgewiesen (vorher w(P) 100,5357 mm)",
+          u3 is None and TEXT_KP in text and "Starr" in text, "gerechnet" if u3 is not None else "")
+    an, r, f = _solve_all_lf1(m)
+    check("… solve_all: Fehler mit Klartext, Ergebnis als Theorie I. Ordnung markiert",
+          TEXT_KP in f and r is not None and r.info.get("theorie") == "I", f[:100])
+    wp = None if r is None else float(-np.asarray(r.u).reshape(-1, 6)[p, 2])
+    nahe("… lineares Ergebnis w(P) = Hand", wp, hand, 1e-3)
+    treffer = [z for z in m.check() if TEXT_KP in z]
+    check("… Modellprüfung: FEHLER mit LF1", len(treffer) == 1 and treffer[0].startswith("FEHLER")
+          and "LF1" in treffer[0], "; ".join(treffer)[:160])
+    from statik3d import rechenverfahren as rv
+    mk = rv.merkmal("theorie3_starrkoerper")
+    check("… Merkmal theorie3_starrkoerper: betroffen", mk is not None and mk.betrifft(m))
+
+
+def test_schale_modellpruefung():
+    from statik3d.theorie3 import kopplung_sperre_modell
+    m = _schale()
+    fehler = [z for z in m.check() if z.startswith("FEHLER")]
+    check("Schale mit RBE2 nach Th III: Modellprüfung ohne FEHLER zum Starrkörper",
+          not any(TEXT_SK in z for z in fehler), "; ".join(fehler)[:160])
+    check("… kopplung_sperre_modell leer (nur Stabtragwerke zählen)", kopplung_sperre_modell(m) == {},
+          str(list(kopplung_sperre_modell(m)))[:120])
+    an, r, f = _solve_all_lf1(m)
+    check("… Rechnung meldet „nur für Stabtragwerke“, LF1 linear",
+          "nur für Stabtragwerke" in f and TEXT_SK not in f and r is not None
+          and r.info.get("theorie") == "I", f[:100])
+
+
+def test_schale_status():
+    from statik3d import rechenverfahren as rv
+    mk = rv.merkmal("theorie3_starrkoerper")
+    m = _schale()
+    an, _r, _f = _solve_all_lf1(m)
+    alt = dict(rv.aktuelle_merkmale(m))
+    alt["theorie3_starrkoerper"] = "alt"
+    st = rv.betroffen(m, alt, an)
+    print(f"   Schale, Ergebnis vor Stand 64: {st[:120]!r}")
+    check("Schale: altes Ergebnis nicht „betroffen“ durch Starrkörper nach Th III",
+          mk is not None and not mk.betrifft(m) and mk.titel not in st, st[:160])
+    # Gegenprobe: Stabmodell mit RBE3-Lastknoten ist wirklich betroffen
+    m2, _b = _kragarm_rbe3()
+    m2.load_cases["LF1"].theorie = "III"
+    an2, _r2, _f2 = _solve_all_lf1(m2)
+    alt2 = dict(rv.aktuelle_merkmale(m2))
+    alt2["theorie3_starrkoerper"] = "alt"
+    st2 = rv.betroffen(m2, alt2, an2)
+    check("… Gegenprobe Stab mit RBE3-Lastknoten: betroffen", mk is not None and mk.titel in st2, st2[:160])
+
+
+def test_kette_am_lager():
+    """Restluecke der zweiten Gegenpruefung (R1): P (Last) per RBE2 an den
+    eingespannten Knoten Q, beide ohne Element, daneben ein belasteter
+    Kragarm. Th III rechnete ohne Meldung und verlor die Last an P
+    (Summe Rz 1000 statt 2000 N)."""
+    from statik3d.model import Model, Material, Section
+    m = Model("L")
+    m.add_material(Material("ST", E=E, nu=0.3, rho=0.0, fy=355e6))
+    m.add_section(Section("Q", A=1e-2, Iy=I_K, Iz=I_K, It=1e-5, zmax=0.1, ymax=0.1))
+    m.design.imperfektionen = False
+    m.netz.stabteilung = 1
+    a = m.add_node(0, 0, 0)
+    b = m.add_node(L_K, 0, 0)
+    m.add_element("beam", [a, b], "ST", "Q")
+    m.fix(a, "all")
+    q = m.add_node(0, 2, 0)
+    p = m.add_node(0.5, 2, 0)
+    m.fix(q, "all")
+    m.add_starrkoerper(q, [p], "RBE2", name="Lagerarm")
+    m.load_node(b, Fz=-F_K)
+    m.load_node(p, Fz=-F_K)
+    m.load_cases["LF1"].theorie = "III"
+    u3, text = _th3(m, stabteilung=False)
+    check("Th III mit RBE2 nur zwischen Lagerknoten und Lastknoten (ohne Element) abgewiesen",
+          u3 is None and TEXT_SK in text and "Lagerarm" in text, text[:100])
+    treffer = [z for z in m.check() if TEXT_SK in z]
+    check("… Modellprüfung: FEHLER mit LF1", len(treffer) == 1 and treffer[0].startswith("FEHLER"),
+          "; ".join(treffer)[:160])
+    # Gegenprobe: dieselbe Kette ohne Th III bleibt ohne Meldung
+    m.load_cases["LF1"].theorie = "I"
+    check("… Gegenprobe Theorie I. Ordnung: keine Meldung", not [z for z in m.check() if TEXT_SK in z])
+
+
 def main():
     for t in (test_rbe2_arm, test_rbe3_lastknoten, test_situation, test_kombination, test_kopplung_starr,
-              test_kopplung_feder, test_verfahrenstabelle, test_web_knickform):
+              test_kopplung_feder, test_verfahrenstabelle, test_web_knickform,
+              test_umgehung_rbe2_kette, test_umgehung_starre_kopplung, test_schale_modellpruefung,
+              test_schale_status, test_kette_am_lager):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
