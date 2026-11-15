@@ -921,11 +921,75 @@ def test_merkmal_modal():
           f"{t_modal!r} / {t_statik!r}")
 
 
+def test_merkmal_modal_datei():
+    """Gegenpruefung k10b, Runde 2: Eine Ergebnisdatei traegt Eigenformen nur
+    im Schwingungsnachweis einer Analysis (Analysis.schwingung mit res_luft und
+    res_wasser, gui/main.py _schwingung_rechnen); ein Results der Art „modal“
+    wird nie gespeichert. _modal_masselos_im_ergebnis sah nur ``kind ==
+    "modal"``, bewerten() wertete den leeren Text als „sicher nicht berührt“,
+    und ein alter Schwingungsnachweis genau des Falls der Runde (Wasser-
+    Zusatzmasse an gewichtslosen Teilen) galt beim Oeffnen still als gueltig.
+    Geprueft an der Analysis selbst und ueber schreiben/lesen einer Datei des
+    Stands 67 (ohne Angabe zu modal_massenrang)."""
+    import tempfile
+    from statik3d import rechenverfahren as rv, solver, ergebnisse
+    from statik3d.schwingung import SchwingungsErgebnis
+    mk = rv.merkmal("modal_massenrang")
+    if mk is None:
+        check("Merkmal modal_massenrang vorhanden", False)
+        return
+    m, Z = wand(8)
+    # die Wand ist gewichtslos: Masse nur aus dem Wasser (in Luft keine Eigenform)
+    res_w = _still(solver.solve_modal, m, 8, workers=1, zusatzmasse=Z)
+    m.add_load_case("LF1", "G")
+    m.load_node(8, Fz=-F, case="LF1")
+    an_ohne = _still(solver.solve_all, m, workers=1, design=False)
+    an = _still(solver.solve_all, m, workers=1, design=False)
+    an.schwingung = SchwingungsErgebnis(name="SN1", wasserdruck="Oberwasser", res_luft=None, res_wasser=res_w)
+    t = mk.im_ergebnis(m, an)
+    check("im Ergebnis: Analysis mit Schwingungsnachweis nennt den Nachweis", "SN1" in t, repr(t))
+    check("im Ergebnis: Analysis ohne Schwingungsnachweis bleibt leer (Statik unberührt)",
+          mk.im_ergebnis(m, an_ohne) == "", repr(mk.im_ergebnis(m, an_ohne)))
+    for wert in ("alt", None):
+        b = rv.bewerten(m, {"modal_massenrang": wert}, an)
+        check(f"bewerten (Datei mit modal_massenrang = {wert!r}, Analysis mit Schwingungsnachweis): "
+              f"möglicherweise betroffen", mk.titel in (b.get("betroffen") or "")
+              and (wert is not None or "modal_massenrang" in (b.get("unsicher") or [])),
+              f"{b.get('betroffen')!r} {b.get('unsicher')}")
+        b0 = rv.bewerten(m, {"modal_massenrang": wert}, an_ohne)
+        check(f"bewerten (modal_massenrang = {wert!r}, nur Statik): Merkmal nicht genannt",
+              mk.titel not in (b0.get("betroffen") or ""), repr(b0.get("betroffen")))
+    # ueber die Datei: geschrieben mit dem Stand 67, der das Merkmal nicht kannte
+    alt_angabe = rv.angabe
+
+    def angabe_67(model, merkmale=None):
+        d = alt_angabe(model, merkmale)
+        d["merkmale"].pop("modal_massenrang", None)
+        return {"stand": 67, "merkmale": d["merkmale"]}
+
+    with tempfile.TemporaryDirectory() as tmp:
+        pfad = os.path.join(tmp, "wand.s3e")
+        rv.angabe = angabe_67
+        try:
+            _still(ergebnisse.schreiben, pfad, m, an)
+        finally:
+            rv.angabe = alt_angabe
+        an2 = _still(ergebnisse.lesen, pfad, m)
+    betr = (an2.info or {}).get("verfahren_betroffen") or ""
+    check("Datei des Stands 67 mit Schwingungsnachweis: geladen mit Status „möglicherweise betroffen“ "
+          "(Eigenformen bei Teilen ohne Masse)",
+          getattr(an2, "schwingung", None) is not None and an2.info.get("rechenverfahren", {}).get(
+              "modal_massenrang") == "alt" and mk.titel in betr and "SN1" in betr,
+          f"schwingung {type(getattr(an2, 'schwingung', None)).__name__}, "
+          f"Merkmal {an2.info.get('rechenverfahren', {}).get('modal_massenrang')!r}, betroffen {betr!r}")
+
+
 def main():
     tests = [test_starre_kopplung_rbe2, test_strafbeiwert, test_bitgleich, test_ruecknahme, test_merkmal,
              test_punktmasse_kragarm, test_punktmasse_feder, test_schutz_arpack,
              test_zusatzmasse_rang1, test_kleinmasse, test_wand_rang, test_grenze_dicht,
-             test_lose_teile_ohne_masse, test_lose_teile_klartext, test_lform_gleich, test_speicher_dicht, test_merkmal_modal]
+             test_lose_teile_ohne_masse, test_lose_teile_klartext, test_lform_gleich, test_speicher_dicht, test_merkmal_modal,
+             test_merkmal_modal_datei]
     fehl = []
     for t in tests:
         print(f"\n--- {t.__name__} ---")

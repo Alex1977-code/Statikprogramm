@@ -2706,13 +2706,26 @@ def _modal_masselos_betroffen(model) -> bool:
 
 def _modal_masselos_im_ergebnis(model, an) -> str:
     """Nur Eigenformen: die Statik, das Knicken und Theorie II/III rechnen
-    unveraendert."""
+    unveraendert.
+
+    Eigenformen stehen in einer Modalanalyse (Results der Art „modal“, nur in
+    der Sitzung) und im Schwingungsnachweis einer Analysis (Analysis.schwingung
+    mit res_luft und res_wasser; nur er steht in der Ergebnisdatei). Bis zur
+    Gegenpruefung k10b, Runde 2, sah diese Funktion nur die Art „modal“: beim
+    Oeffnen einer alten Datei war der Text leer, bewerten() wertete das als
+    „sicher nicht beruehrt“, und ein alter Schwingungsnachweis eines Modells mit
+    Teilen ohne Masse galt still als gueltig. Der Nachweis zaehlt ganz - auch
+    sein Lastfall der Druckschwankung haengt von den Eigenformen ab."""
     if not _modal_masselos_betroffen(model):
         return ""
-    if getattr(an, "kind", "") != "modal":
-        return ""
-    return "Eigenformen eines Modells mit Teilen ohne Masse: " + (str(getattr(an, "name", "") or "")
-                                                                  or "Modalanalyse")
+    if getattr(an, "kind", "") == "modal":
+        return "Eigenformen eines Modells mit Teilen ohne Masse: " + (str(getattr(an, "name", "") or "")
+                                                                      or "Modalanalyse")
+    sw = getattr(an, "schwingung", None)
+    if sw is not None:
+        return "Schwingungsnachweis eines Modells mit Teilen ohne Masse: " + (
+            str(getattr(sw, "name", "") or "") or "Schwingung")
+    return ""
 
 
 #: Die Tabelle (Einstufung des Anwenders vom 16.10.2026). Stand 1: Abbruch der
@@ -4136,7 +4149,8 @@ MERKMALE: list = [
     # heraus. Ein masseloser Mechanismus (loser RBE3-Slave) lieferte Formen, in
     # denen der lose Teil beliebig mitlief. Seither so viele Formen, wie M
     # Richtungen hat, und Klartext beim masselosen Mechanismus.
-    # Fehlerkorrektur
+    # Fehlerkorrektur. Am Ergebnis: die Modalanalyse und der Schwingungsnachweis
+    # einer Analysis (nur er steht in der Ergebnisdatei).
     Merkmal(
         name="modal_massenrang", titel="Eigenformen bei Teilen ohne Masse",
         texte={"alt": "so viele Eigenformen wie Freiheitsgrade mit Masse; masseloser Mechanismus ungeprüft",
