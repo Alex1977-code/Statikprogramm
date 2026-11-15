@@ -2019,6 +2019,13 @@ class Results:
         if self.buckling_factors is not None:
             s.append("Knicklastfaktoren       : "
                      + ", ".join(f"{f:.3f}" for f in self.buckling_factors[:10]))
+            # Erster Faktor nicht positiv (Runde k8, 15.11.2026): der
+            # massgebende eigens - er stand sonst nur als zweiter Wert oder,
+            # nach dem Nachfordern (Form 35), gar nicht in der Zeile
+            j = massgebende_knickform(self.buckling_factors)
+            if j is not None and j > 0:
+                s.append(f"α_cr maßgebend          : {float(self.buckling_factors[j]):.3f} "
+                         f"(Form {j + 1}, kleinster positiver Faktor)")
         return "\n".join(s)
 
 
@@ -11688,6 +11695,27 @@ def _soll_endkraefte(model: Model, res, factors: dict, aktiv=None) -> dict:
             if fl is not None:
                 aus[int(i)] = np.asarray(fl, float)
     return aus
+
+
+def massgebende_knickform(faktoren):
+    """Index der massgebenden Knickform: des kleinsten positiven (endlichen)
+    Verzweigungslastfaktors in ``faktoren`` (Results.buckling_factors), None
+    ohne positiven.
+
+    Die Liste ist aufsteigend nach Betrag, beiderlei Vorzeichens; vor dem
+    ersten positiven koennen negative stehen (gezogene Staebe, die bei
+    umgekehrter Last knicken; seit Stand 62 auch nachgeforderte Formen). Bis
+    zum 15.11.2026 (Runde k8, Stand 63) nahmen Bericht und Knicklaengen den
+    Faktor mit Index 0: zwei Kragstuetzen mit -3 / 6 / -12 - kein Hinweis
+    „α_cr < 10“, Knicklaengen „α_cr ≤ 0“ statt β = 2."""
+    if faktoren is None:
+        return None
+    f = np.asarray(faktoren, float).ravel()
+    ok = np.isfinite(f) & (f > 0)
+    if not ok.any():
+        return None
+    idx = np.flatnonzero(ok)
+    return int(idx[int(np.argmin(f[idx]))])
 
 
 #: Hoechstens so viele Knickformen fordert solve_buckling nach, wenn unter den

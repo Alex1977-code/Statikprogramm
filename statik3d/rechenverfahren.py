@@ -2129,6 +2129,31 @@ def _knicken_ohne_positiven_im_ergebnis(model, an) -> str:
             if namen else "")
 
 
+def _knicken_erster_nicht_positiv_im_ergebnis(model, an) -> str:
+    """Ein Knickergebnis, dessen erster Faktor nicht positiv ist, mit einem
+    positiven dahinter, oder Knicklaengen aus einer Figur mit α_cr ≤ 0 -
+    Merkmal knickfaktor_massgebend_positiv (Runde k8)."""
+    import math
+    paare = list(_ergebnis_paare(an))
+    if getattr(an, "kind", "") == "buckling":
+        paare.append((str(getattr(an, "name", "") or "Knicken"), an))
+    namen = []
+    for n, r in paare:
+        f = getattr(r, "buckling_factors", None) if getattr(r, "kind", "") == "buckling" else None
+        if f is None or not len(f):
+            continue
+        werte = [float(x) for x in f]
+        if not werte[0] > 0 and any(math.isfinite(x) and x > 0 for x in werte):
+            namen.append(str(n))
+    kl = getattr(an, "knicklaengen", None)
+    a = getattr(kl, "alpha_cr", None)
+    if kl is not None and a is not None and not float(a) > 0:
+        namen.append("Knicklängen")
+    namen = sorted(set(namen))
+    return ("Knicken, erster Faktor nicht positiv: " + ", ".join(namen[:6]) + (" …" if len(namen) > 6 else "")
+            if namen else "")
+
+
 def _theorie3_im_ergebnis(model, an) -> str:
     th3 = getattr(an, "theorie3", None)
     namen = [str(n) for n in (getattr(th3, "kombinationen", None) or {})]
@@ -3704,10 +3729,25 @@ MERKMALE: list = [
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Knickergebnis, dessen Faktoren alle negativ sind",
         im_ergebnis=_knicken_ohne_positiven_im_ergebnis),
+    # Runde k8 (15.11.2026): die Faktoren stehen nach Betrag geordnet, vor dem
+    # ersten positiven koennen negative stehen (gezogene Staebe). Bericht und
+    # Knicklaengen (Vorgabe ohne gewaehlte Figur, Vorauswahl in der
+    # Ergebnismaske) nahmen den ersten: zwei Kragstuetzen mit -3 / 6 / -12 -
+    # kein Hinweis „α_cr < 10“, Knicklaengen „α_cr ≤ 0“ statt β = 2.
+    # Seither der kleinste positive (solver.massgebende_knickform).
+    # Fehlerkorrektur
+    Merkmal(
+        name="knickfaktor_massgebend_positiv", titel="Knicken: maßgebend der kleinste positive Faktor",
+        texte={"alt": "der erste Faktor der Liste (nach Betrag), auch wenn er negativ ist",
+               "neu": "der kleinste positive Faktor und seine Knickfigur (Bericht, Knicklängen, Vorauswahl)"},
+        wechsel=(Wechsel(stand=63, datum="15.11.2026", commit="fix/k8-bericht", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Knickergebnis mit negativem ersten Faktor und positivem dahinter",
+        im_ergebnis=_knicken_erster_nicht_positiv_im_ergebnis),
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 62
+VERFAHRENSSTAND = 63
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

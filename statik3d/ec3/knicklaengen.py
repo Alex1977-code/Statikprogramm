@@ -131,11 +131,18 @@ def _druckkraft(model: Model, res, member: Member) -> float:
     return float(N.min()) if len(N) else 0.0
 
 
-def knicklaengen_aus_eigenform(model: Model, res, modus: int = 0,
+def knicklaengen_aus_eigenform(model: Model, res, modus: int = None,
                                min_beteiligung: float = 0.05,
                                staebe=None) -> KnicklaengenErgebnis:
     """Knicklängenbeiwerte aller Stäbe aus der Knickfigur ``modus`` des
     Verzweigungsergebnisses ``res`` (``solver.solve_buckling``).
+
+    ``modus`` None (Vorgabe): die maßgebende Knickfigur, die des kleinsten
+    positiven Faktors (solver.massgebende_knickform; ohne positiven Figur 1).
+    Bis zum 15.11.2026 (Runde k8, Stand 63) war die Vorgabe Figur 1 - die
+    Liste ist nach Betrag geordnet, mit einem gezogenen Stab im Grundzustand
+    steht dort ein negativer Faktor, und jeder Stab bekam „α_cr ≤ 0“ ohne
+    Knicklänge. Eine ausdrücklich gewählte Figur bleibt, wie sie ist.
 
     ``res`` trägt den Grundzustand (Normalkräfte) und die Knickfiguren mit
     ihren Faktoren. Stäbe unter Zug bekommen keine Knicklänge."""
@@ -143,6 +150,10 @@ def knicklaengen_aus_eigenform(model: Model, res, modus: int = 0,
     faktoren = getattr(res, "buckling_factors", None)
     if figuren is None or faktoren is None or len(figuren) == 0:
         raise ValueError("Kein Verzweigungsergebnis: zuerst „Knicken“ rechnen")
+    if modus is None:
+        from ..solver import massgebende_knickform
+        j = massgebende_knickform(faktoren)
+        modus = j if j is not None and j < len(figuren) else 0
     if not 0 <= modus < len(figuren):
         raise ValueError(f"Knickfigur {modus + 1} gibt es nicht ({len(figuren)} gerechnet)")
     alpha = float(faktoren[modus])
