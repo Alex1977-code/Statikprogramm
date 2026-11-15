@@ -6033,6 +6033,39 @@ Vorspannkraft traf es die Ankerenden (siehe „Ankerenden an starren Scheiben
 und in Volumen im Spannschritt“). Ausgefallene Zugstäbe („nur Zug“ unter
 Druck) betraf es nicht, denn dort baut das Programm kein neues System auf.
 
+**Lasten und Kopplungen bei abgeschalteten Elementen** (seit 15.11.2026,
+Stand 65). Ist in einer Situation ein Element abgeschaltet, steht ein Stab auf
+„aus“ oder sind im Spannschritt (Weg „spannen und verriegeln“) die Anker
+inaktiv, rechnet das Programm mit einer Elementmaske. Eine Knotenlast und das
+Eigengewicht einer Punktmasse wirken dann nur an Knoten, die mittragen. Eine
+Kopplung bleibt, sobald einer ihrer Knoten mitträgt; die Kopplung eines
+Stabendes bleibt, sobald ihr Körperknoten mitträgt. Es tragen die Knoten mit,
+an denen ein wirksames Element hängt, außerdem gelagerte Knoten, an denen im
+ganzen Modell kein Element hängt. Ein gelagerter Knoten, dessen Elemente alle
+abgeschaltet sind, trägt nicht mit. Ebenso trägt jeder Knoten mit, der über
+Starrkörper (RBE2 oder RBE3) und Kopplungen an einem solchen Knoten hängt, auch
+über mehrere Glieder und über Knoten ohne Element hinweg. Bei einem Starrkörper
+genügt ein mittragender Master oder Slave, dann tragen alle seine Knoten mit.
+Bei der verteilenden Kopplung eines Stabendes (Stabende auf einer Stirnfläche,
+Kreisring einer Scheibe) muss ein Körperknoten mittragen, sonst lebt ein
+abgeschalteter Körper über den Stab nicht wieder auf. Hängt ein Starrkörper
+oder eine Kopplung samt ihrer ganzen Kette weder an einem wirksamen Element
+noch an einem gelagerten Knoten ohne Element, wirkt sie nicht, und ihre Lasten
+entfallen. Hängt ein abgeschalteter Arm dagegen über einen Starrkörper oder
+eine Kopplung an einem wirksamen Element oder an einem gelagerten Knoten ohne
+Element, tragen seine Knoten mit, und eine Last dort geht in das wirksame
+Bauteil oder in das Lager, wie in einem Modell, in dem die abgeschalteten
+Elemente gelöscht sind. Die Steifigkeit der Starrkörper bleibt immer im Modell.
+Eine RBE3 legt nur das gewichtete Mittel ihrer Slaves fest; hängen an ihr
+mehrere Slaves, die sonst nichts hält, sind sie beweglich, und greift dort
+eine Last an, bricht die Rechnung mit „Gleichungssystem singulär“ ab. Bis
+Verfahrensstand 64 entfielen solche Lasten ohne Warnung (Kragarm 3 m, 1 kN per
+RBE2 am Ende, Element dahinter abgeschaltet: 0 statt 0,5357 mm), und im
+Spannschritt entfiel die Kopplung eines Ankerendes an einem Knoten ohne
+Element (Ankerkraft 76,8 statt 100 kN mit der Meldung „Mechanismus“).
+Betroffene Ergebnisse tragen den Hinweis „Ergebnis möglicherweise betroffen –
+neu rechnen“. Geprüft in `tests/test_maske_starrkoerper_k9.py`.
+
 ### Register „Auswahl"
 
 Sobald in der Ansicht etwas gewählt ist, erscheint rechts im Ribbon ein
