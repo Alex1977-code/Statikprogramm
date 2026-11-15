@@ -1480,35 +1480,68 @@ def gelenkketten(model) -> list:
         aktiv = model.grundmaske() if hasattr(model, "grundmaske") else None
         K = asm.stiffness(model, 1, aktiv)
         fixed, _vals, _auto = asm.gesperrte_und_automatische(model, K)
-        moden = weichster_modus(K, model, np.where(~fixed)[0])
+        # ohne Knotenbefund: die Vorpruefung laeuft an gesunden Modellen
+        moden = weichster_modus(K, model, np.where(~fixed)[0], knoten=False)
     except Exception:                     # noqa: BLE001 - eine Diagnose darf nie sperren
         return []
     return [s for s in moden if getattr(s, "gelenke", None)]
 
 
-#: Block der Nullraumsuche in Stufe 2 (15.11.2026): so viele Vektoren,
-#: so viele Schritte. Sechs reichen fuer die Starrkoerperbewegungen eines
-#: Teils. Gemessen an den Beispielen der Runde k10 (bezogene Energie der
-#: Ritz-Vektoren): RBE3 mit einem losen Slave nach sechs Schritten 1e-16 bei
-#: den Nullmoden, 7e-8 beim naechsten; RBE3 mit zehn losen Slaves (Nullraum
-#: 30, groesser als der Block) nach sechs Schritten noch 4,3e-12 am sechsten
-#: Vektor - ueber der Schranke -, nach zwoelf 7,7e-15. Darum zehn.
+#: Block der Nullraumsuche in Stufe 2 (15.11.2026): so viele Vektoren je
+#: Runde, hoechstens so viele Schritte je Runde. Sechs reichen fuer die
+#: Starrkoerperbewegungen eines Teils; ist der Block voll (alle Vektoren ohne
+#: Steifigkeit), werden die gefundenen festgehalten und eine neue Runde sucht
+#: weiter (Nachbesserung k10, siehe :func:`nullbewegungen`).
 NULLBLOCK = 6
-NULLBLOCK_SCHRITTE = 10
+NULLBLOCK_SCHRITTE = 12
+
+#: Trennung (Nachbesserung k10): eine Bewegung mit Steifigkeit im Block muss
+#: so stark gedaempft sein, dass ihr Anteil in den Nullvektoren nach den
+#: Schritten der Runde hoechstens NULLRAUM_REST ist. Der Daempfungsfaktor je
+#: Schritt ist shift / (shift + lambda); daraus die noetige Schrittzahl.
+NULLRAUM_REST = 1e-6
+
+#: Verschiebung der **skalierten** Matrix D^-1/2 K D^-1/2 (Diagonale 1), wenn
+#: der Faktor von K + eps·I die Bewegungen nicht trennt. An einer RBE3 mit
+#: vielen losen Slaves sind deren Diagonalen 1,7e-12 · max diag(K) klein; die
+#: naechsten Eigenwerte der unskalierten Matrix nach dem Nullraum lagen bei
+#: 1,7e-12 bis 9,1e-12 · max diag(K), also unter eps = 1e-10 · max diag(K),
+#: und die Inversiteration konnte sie vom Nullraum nicht trennen (20 Slaves:
+#: Nullraum 60, gefunden 3). Skaliert liegen sie bei 6e-8 und hoeher. Die
+#: Verschiebung ist so gross wie die Schranke GELENK_NULLENERGIE: eine
+#: Bewegung knapp darueber wird je Schritt schon gedaempft. Mit 1e-10 blieben
+#: an einem Kreisring mit Bolzenstab die beiden weichen Bewegungen mit
+#: 4,4e-12 (Strafsteifigkeit der RBE3 in der Diagonale) in den Nullvektoren
+#: haengen, und Bolzen und Kragarmende hiessen „frei verschieblich“.
+NULLRAUM_SHIFT = 1e-12
+
+#: Hoechstens so viele Zahlen fuer die Basis (Freiheitsgrade x Vektoren) und
+#: hoechstens so viele Vektoren; darueber sagt die Meldung „mindestens“.
+#: Am Drehlager (426 867 FHG) sind das 46 Vektoren.
+NULLRAUM_SPEICHER = 2e7
+NULLRAUM_HOECHSTENS = 240
+
+#: Die zweite, skalierte Faktorisierung nur bis zu so vielen freien
+#: Freiheitsgraden (wie GELENKKETTE_FHG_MAX). Am Drehlager (426 867 FHG)
+#: kostete sie samt Suche 154 bis 216 s zusaetzlich - die Rechenzeit im
+#: Fehlerfall darf dort nicht spuerbar steigen. Darueber sagt die Meldung,
+#: dass die Frage offen bleibt, statt Knoten ungeprueft zu nennen.
+NULLRAUM_SKALIERT_FHG_MAX = 60000
 
 
 def knotenliste_text(knoten, zeigen: int = 3) -> str:
-    """„Knoten 3“, „Knoten 3 und 4“, „Knoten 1, 2 und 3“ oder bei vielen
-    „Knoten 12, 13, 17 und 40 weitere“ - die Nummern wie in Tabellen und
-    Modellbaum (ab 0)."""
+    """„Knoten K3“, „Knoten K3 und K4“, „Knoten K1, K2 und K3“ oder bei vielen
+    „Knoten K12, K13, K17 und 40 weitere“ - die Nummern wie in Tabellen,
+    Modellbaum und Rueckfragen der Oberflaeche (ab 0, mit „K“ wie
+    gui/main.py _ziel_titel). Die Reihenfolge bestimmt der Aufrufer."""
     kn = [int(k) for k in dict.fromkeys(int(x) for x in knoten)]
     if not kn:
         return ""
     if len(kn) == 1:
-        return f"Knoten {kn[0]}"
+        return f"Knoten K{kn[0]}"
     if len(kn) <= zeigen + 1:
-        return "Knoten " + ", ".join(str(k) for k in kn[:-1]) + f" und {kn[-1]}"
-    return "Knoten " + ", ".join(str(k) for k in kn[:zeigen]) + f" und {len(kn) - zeigen} weitere"
+        return "Knoten " + ", ".join(f"K{k}" for k in kn[:-1]) + f" und K{kn[-1]}"
+    return "Knoten " + ", ".join(f"K{k}" for k in kn[:zeigen]) + f" und {len(kn) - zeigen} weitere"
 
 
 def _loesen_block(lu, X: np.ndarray) -> np.ndarray:
@@ -1524,37 +1557,160 @@ def _loesen_block(lu, X: np.ndarray) -> np.ndarray:
                             for j in range(X.shape[1])])
 
 
-def nullbewegungen(lu, Kf, diag: np.ndarray, rng, block: int = NULLBLOCK,
-                   schritte: int = NULLBLOCK_SCHRITTE) -> np.ndarray:
-    """Basis der Bewegungen ohne Steifigkeit (nf x r) - Block-Inversiteration
-    mit dem vorhandenen Faktor von K + eps·I und Rayleigh-Ritz.
+def _nullraum_runden(lu, A, d: np.ndarray, shift: float, rng, block: int, schritte: int,
+                     hoechstens: int, frueh: bool = False) -> tuple:
+    """Block-Inversiteration ueber ``lu`` (Faktor von A + shift·I) mit
+    Rayleigh-Ritz am Paar (A, diag(d)); Rueckgabe ``(F, vollstaendig,
+    getrennt)``, F (nf x r) die Bewegungen mit bezogener Energie unter
+    :data:`GELENK_NULLENERGIE`.
 
-    Behalten werden die Ritz-Vektoren mit bezogener Energie
-    v^T K v / v^T diag(K) v unter :data:`GELENK_NULLENERGIE` - dieselbe
-    Schranke wie fuer den Mechanismus der Gelenkkette. Ein nur schlecht
-    konditioniertes System (Straffedern gegeneinander) hat keinen solchen
-    Vektor; dann ist die Basis leer und der Befund nennt die Knoten des
-    weichsten Modus. Nur im Fehlerfall gerufen, ohne neue Faktorisierung."""
+    Je Runde hoechstens ``schritte`` Schritte. Gerechnet wird, bis jede
+    Bewegung mit Steifigkeit im Block (Rayleigh-Quotient lambda zu A) auf
+    :data:`NULLRAUM_REST` gedaempft ist, Faktor shift/(shift + lambda) je
+    Schritt, und zwei Schritte lang dieselbe Zahl gilt. Ist der Block voll,
+    werden die Bewegungen festgehalten und eine neue Runde sucht senkrecht
+    dazu. ``getrennt`` ist falsch, wenn eine Runde das nicht schafft - dann
+    taugt dieser Faktor nicht, und ``F`` ist nur ein Teil. ``frueh`` (fuer den
+    ersten Faktor, nach dem die skalierte Suche kommt): die Runde abbrechen,
+    sobald die noetige Schrittzahl ueber ``schritte`` liegt, und einen vollen
+    Block nicht festhalten, sondern als nicht getrennt melden."""
     import scipy.linalg as sla
-    nf = Kf.shape[0]
-    p = min(int(block), nf)
-    if p <= 0:
-        return np.zeros((nf, 0))
-    X = rng.standard_normal((nf, p))
-    X, _ = np.linalg.qr(X)
-    for _ in range(int(schritte)):
-        X = _loesen_block(lu, X)
-        if not np.all(np.isfinite(X)):
-            return np.zeros((nf, 0))
-        X, _ = np.linalg.qr(X)
-    H = X.T @ (Kf @ X)
-    B = X.T @ (np.asarray(diag, float)[:, None] * X)
+    nf = int(A.shape[0])
+    d = np.asarray(d, float)
+    fest = np.zeros((nf, 0))
+
+    def senkrecht(X):
+        if fest.shape[1]:
+            X = X - fest @ (fest.T @ X)
+            X = X - fest @ (fest.T @ X)
+        return np.linalg.qr(X)[0]
+
+    vollstaendig, getrennt = False, True
+    while True:
+        if fest.shape[1] >= nf:
+            vollstaendig = True
+            break
+        p = min(int(block), hoechstens - fest.shape[1], nf - fest.shape[1])
+        if p <= 0:
+            break
+        X = senkrecht(rng.standard_normal((nf, p)))
+        vorher, stabil, fertig = -1, 0, False
+        null = np.zeros(p, bool)
+        Y = np.eye(p)
+        for schritt in range(1, int(schritte) + 1):
+            X = _loesen_block(lu, X)
+            if not np.all(np.isfinite(X)):
+                return fest, False, False
+            X = senkrecht(X)
+            H = X.T @ (A @ X)
+            B = X.T @ (d[:, None] * X)
+            mu, Y = sla.eigh(0.5 * (H + H.T), 0.5 * (B + B.T))
+            null = np.abs(mu) <= GELENK_NULLENERGIE
+            anz = int(null.sum())
+            stabil = stabil + 1 if anz == vorher else 0
+            vorher = anz
+            if anz == p:
+                continue                  # voll: alle Schritte, Trennung unbekannt
+            # Rayleigh-Quotient zu A (nicht bezogen) der Ritz-Vektoren mit Steifigkeit
+            lam = float(np.min(np.abs(mu[~null]) / np.maximum((Y[:, ~null] ** 2).sum(axis=0), 1e-300)))
+            q = shift / (shift + lam) if lam > 0 else 1.0
+            noetig = int(np.ceil(np.log(NULLRAUM_REST) / np.log(q))) if q < 1.0 else 10 ** 9
+            if schritt >= noetig and stabil >= 1:
+                fertig = True
+                break
+            if frueh and schritt >= 2 and noetig > int(schritte):
+                # nach zwei Schritten reicht die Schrittzahl nicht: abbrechen statt
+                # zehn weitere Schritte (am Drehlager je Schritt 6 Loesungen). Nach
+                # nur einem Schritt ist die Schaetzung zu grob - an Fall 1 brach
+                # der erste Weg dann ab, obwohl er nach drei Schritten trennte.
+                break
+        if frueh and int(null.sum()) == p:
+            # voller Block am ersten Faktor: ob Bewegungen knapp ueber der
+            # Schranke (lambda unter eps) in den festgehaltenen Vektoren stecken,
+            # laesst sich hier nicht pruefen - die skalierte Suche entscheidet
+            return fest, False, False
+        neu = X @ Y[:, null]
+        if neu.shape[1]:
+            neu = np.linalg.qr(neu)[0]
+            fest = np.column_stack([fest, neu]) if fest.shape[1] else neu
+        if int(null.sum()) < p:
+            vollstaendig, getrennt = fertig, fertig
+            break
+    if fest.shape[1]:
+        # gemeinsamer Rayleigh-Ritz ueber alles Festgehaltene
+        H = fest.T @ (A @ fest)
+        B = fest.T @ (d[:, None] * fest)
+        try:
+            mu, Y = sla.eigh(0.5 * (H + H.T), 0.5 * (B + B.T))
+            fest = fest @ Y[:, np.abs(mu) <= GELENK_NULLENERGIE]
+        except Exception:                 # noqa: BLE001 - B nicht definit
+            return np.zeros((nf, 0)), False, False
+    return fest, vollstaendig, getrennt
+
+
+def nullbewegungen(Kf, diag: np.ndarray, rng, lu=None, eps: float = None, block: int = NULLBLOCK,
+                   schritte: int = NULLBLOCK_SCHRITTE, hoechstens: int = None) -> tuple:
+    """Basis der Bewegungen ohne Steifigkeit: ``(Z, vollstaendig, geklaert)``, ``Z``
+    (nf x r) auf den freien Freiheitsgraden; Bewegung ohne Steifigkeit heisst
+    bezogene Energie v^T K v / v^T D v unter :data:`GELENK_NULLENERGIE`
+    (D = diag(K)), wie bei der Gelenkkette.
+
+    Zuerst ueber den vorhandenen Faktor ``lu`` von K + eps·I (keine neue
+    Faktorisierung). Trennt er die Bewegungen nicht - die Bewegungen mit
+    Steifigkeit im Block liegen zu nahe an eps, typisch bei Knoten mit sehr
+    kleiner Diagonale wie losen RBE3-Slaves -, dann noch einmal an der
+    skalierten Matrix D^-1/2 K D^-1/2 + :data:`NULLRAUM_SHIFT` · I (eigene
+    Faktorisierung; ``lu`` wird vorher, die neue danach freigegeben). Siehe
+    :func:`_nullraum_runden`. Ueber :data:`NULLRAUM_SKALIERT_FHG_MAX` freien
+    Freiheitsgraden entfaellt dieser zweite Weg: dann ist ``geklaert``
+    falsch und ``Z`` leer - die Frage bleibt offen, und die Meldung sagt das.
+
+    ``vollstaendig`` ist nur wahr, wenn die letzte Runde nicht voll war und
+    die Trennung gelang; sonst kann es weitere Bewegungen geben, und die
+    Meldung sagt „mindestens“. Zum Schluss ein Rayleigh-Ritz ueber alle
+    festgehaltenen Vektoren zusammen: was dort ueber der Schranke liegt,
+    faellt heraus.
+
+    Bis zur Nachbesserung k10 (15.11.2026) lief ein einziger Block von sechs
+    Vektoren ueber den Faktor von K + eps·I: bei 20, 30 und 60 losen
+    RBE3-Slaves (Nullraum 60, 90, 180) fand er 3, 2 und 0 Bewegungen, ohne
+    Hinweis, dass es mehr gibt. Nur im Fehlerfall gerufen."""
+    from scipy.sparse import diags, identity
+    nf = int(Kf.shape[0])
+    if nf <= 0:
+        return np.zeros((0, 0)), True, True
+    if hoechstens is None:
+        hoechstens = min(NULLRAUM_HOECHSTENS, max(int(block), int(NULLRAUM_SPEICHER // nf)))
+    hoechstens = max(0, min(int(hoechstens), nf))
+    d = np.asarray(diag, float).copy()
+    d[~(d > 0)] = 1.0
+    if lu is not None and eps is not None and eps > 0:
+        F, vollstaendig, getrennt = _nullraum_runden(lu, Kf, d, float(eps), rng, block, schritte,
+                                                     hoechstens, frueh=True)
+        if getrennt:
+            return F, vollstaendig, True
+    if nf > NULLRAUM_SKALIERT_FHG_MAX:
+        return np.zeros((nf, 0)), False, False
+    from .solver import LinearSolver
+    if lu is not None:
+        # der Faktor von K + eps·I wird nicht mehr gebraucht: vor der zweiten
+        # Faktorisierung freigeben (am Drehlager sonst zwei Faktoren zugleich)
+        try:
+            lu.freigeben()
+        except Exception:                 # noqa: BLE001
+            pass
+    sk = 1.0 / np.sqrt(d)
+    Sm = (diags(sk) @ Kf @ diags(sk)).tocsc()
+    lus = LinearSolver((Sm + NULLRAUM_SHIFT * identity(nf, format="csc")).tocsc())
     try:
-        mu, Y = sla.eigh(0.5 * (H + H.T), 0.5 * (B + B.T))
-    except Exception:                     # noqa: BLE001 - B nicht definit
-        return np.zeros((nf, 0))
-    behalten = np.abs(mu) <= GELENK_NULLENERGIE
-    return X @ Y[:, behalten]
+        F, vollstaendig, _getrennt = _nullraum_runden(lus, Sm, np.ones(nf), NULLRAUM_SHIFT, rng, block,
+                                                      schritte, hoechstens)
+    finally:
+        try:
+            lus.freigeben()
+        except Exception:                 # noqa: BLE001 - beim Aufraeumen nie sperren
+            pass
+    return sk[:, None] * F, vollstaendig, True
 
 
 def _knoten_ohne_element(model, knoten, aktiv=None) -> list:
@@ -1589,7 +1745,7 @@ def _rollen_text(model, k: int) -> str:
     for kp in getattr(model, "kopplungen", None) or []:
         if int(kp.node_a) == k or int(kp.node_b) == k:
             anderer = int(kp.node_b) if int(kp.node_a) == k else int(kp.node_a)
-            teile.append(f"Kopplung mit Knoten {anderer}")
+            teile.append(f"Kopplung mit Knoten K{anderer}")
     return ", ".join(list(dict.fromkeys(teile))[:3])
 
 
@@ -1598,16 +1754,9 @@ def _rollen_text(model, k: int) -> str:
 #: Drehlager (142 308 Knoten) brauchte die Beschreibung aller Knoten 11,6 s.
 KNOTENBEFUND_HOECHSTENS = 200
 
-#: Die Nullraumsuche (Block) laeuft nur, wenn schon der weichste Modus der
-#: einfachen Inversiteration fast keine Energie kostet (bezogene Energie
-#: unter dem Zehnfachen von GELENK_NULLENERGIE). Sonst gibt es keinen
-#: Nullraum, und der Block kostete am Drehlager 15,5 bis 21,9 s fuer nichts
-#: (mit der Schranke 1e-9 lief er dort noch).
-NULLBLOCK_VORAB = 1e-11
-
 
 def knotenbefund(model, Z: np.ndarray, aktiv=None, zeigen: int = 4, frei: bool = True,
-                 anteil: float = None) -> tuple:
+                 anteil: float = None, vollstaendig: bool = True) -> tuple:
     """Die Knoten einer Bewegung ohne Steifigkeit und ihre Richtungen im
     Klartext. ``Z`` (ndof x r): Basis der Bewegungen (Spalten), auf den
     vollen Freiheitsgraden. Rueckgabe ``(Satz, Knotenliste)``.
@@ -1615,9 +1764,15 @@ def knotenbefund(model, Z: np.ndarray, aktiv=None, zeigen: int = 4, frei: bool =
     Je Knoten der Rang der Verschiebungs- und der Drehanteile ueber alle
     Spalten: „in Richtung z frei verschieblich“, „in allen drei Richtungen
     frei verschieblich, um x frei drehbar“. Knoten gleicher Beschreibung
-    stehen zusammen; gezeigt werden die mit dem groessten Ausschlag zuerst.
+    stehen zusammen; die Gruppen folgen dem groessten Ausschlag, in jeder
+    Gruppe und in der zurueckgegebenen Knotenliste stehen die Nummern
+    aufsteigend. Beschrieben werden hoechstens
+    :data:`KNOTENBEFUND_HOECHSTENS` Knoten, die mit dem groessten Ausschlag.
     ``frei=False`` (ein einzelner weichster Modus, kein Nullraum): dann ohne
-    „frei“ - „Knoten 2 (Verschiebung in Richtung y, Drehung um x)“.
+    „frei“ - „Knoten K2 (Verschiebung in Richtung y, Drehung um x)“.
+    ``vollstaendig=False`` (die Basis ist nur ein Teil des Nullraums, siehe
+    :func:`nullbewegungen`): ein Rang unter drei heisst dann nur
+    „mindestens“ - „mindestens in Richtung z frei verschieblich“.
     ``anteil``: Knoten ab diesem Anteil des groessten Ausschlags (Vorgabe
     :data:`ZWANG_RANG`, fuer den weichsten Modus 0,5 wie ``gross``).
     """
@@ -1626,10 +1781,19 @@ def knotenbefund(model, Z: np.ndarray, aktiv=None, zeigen: int = 4, frei: bool =
         Z = Z[:, None]
     if Z.shape[1] == 0 or Z.shape[0] < NDOF * nn:
         return "", []
+    # Auswahl der Knoten wie bisher (Ausschlag je Spalte normiert) ...
     Z = Z / np.maximum(np.abs(Z).max(axis=0, keepdims=True), 1e-300)
-    W = Z[:NDOF * nn].reshape(nn, NDOF, -1)
-    groesse = np.abs(W).max(axis=(1, 2))
-    grenze = ZWANG_RANG * float(groesse.max())
+    groesse = np.abs(Z[:NDOF * nn].reshape(nn, NDOF, -1)).max(axis=(1, 2))
+    # ... der Rang aber mit Drehungen mal Modellgroesse (Nachbesserung k10):
+    # eine Drehung zaehlt nach dem Weg, den sie ueber das Modell macht, nicht
+    # in rad gegen m. An einer RBE3 mit 64 losen Slaves bis 12,8 m vom Master
+    # lag die Drehung des Masters je Spalte unter 1e-3 der groessten
+    # Verschiebung und fehlte im Text.
+    W = np.array(Z[:NDOF * nn], float).reshape(nn, NDOF, -1)
+    nodes = np.asarray(model.nodes, float).reshape(-1, 3)
+    lc = float(np.ptp(nodes, axis=0).max()) if nodes.size else 1.0
+    W[:, 3:6, :] *= lc if lc > 0 else 1.0
+    grenze = ZWANG_RANG * float(np.abs(W).max())
     schwelle = (ZWANG_RANG if anteil is None else float(anteil)) * float(groesse.max())
     kn = np.flatnonzero(groesse >= schwelle)
     if kn.size == 0:
@@ -1647,7 +1811,7 @@ def knotenbefund(model, Z: np.ndarray, aktiv=None, zeigen: int = 4, frei: bool =
             u, sw, _vt = np.linalg.svd(A, full_matrices=False)
             d = int((sw > grenze).sum())
             if d and frei:
-                teile.append(textfn(u[:, :d]))
+                teile.append(("" if vollstaendig or d >= 3 else "mindestens ") + textfn(u[:, :d]))
             elif d:
                 teile.append(("Verschiebung in Richtung " if von == 0 else "Drehung um ")
                              + _achse(u[:, 0]))
@@ -1660,7 +1824,7 @@ def knotenbefund(model, Z: np.ndarray, aktiv=None, zeigen: int = 4, frei: bool =
               for t, g in reihe[:zeigen]]
     rest = sum(len(g) for _t, g in reihe[zeigen:]) + ueber
     satz = "; ".join(saetze) + (f"; dazu {rest} weitere Knoten" if rest else "")
-    alle = [k for _t, g in reihe for k in g]
+    alle = sorted(k for _t, g in reihe for k in g)
     ohne = _knoten_ohne_element(model, alle, aktiv)
     if ohne:
         rollen = [(k, _rollen_text(model, k)) for k in ohne[:3]]
@@ -1668,7 +1832,7 @@ def knotenbefund(model, Z: np.ndarray, aktiv=None, zeigen: int = 4, frei: bool =
                  if len(ohne) == len(alle) else
                  f". {knotenliste_text(ohne)} " + ("hängt" if len(ohne) == 1 else "hängen")
                  + " an keinem wirksamen Element")
-        r = [f"Knoten {k}: {t}" for k, t in rollen if t]
+        r = [f"Knoten K{k}: {t}" for k, t in rollen if t]
         if r:
             satz += " (" + "; ".join(r) + ")"
         if any("Slave des RBE3" in t for _k, t in rollen):
@@ -1677,7 +1841,7 @@ def knotenbefund(model, Z: np.ndarray, aktiv=None, zeigen: int = 4, frei: bool =
 
 
 def weichster_modus(K, model, frei=None, schritte: int = 20,
-                    hoechstens: int = 1, melden=None, aktiv=None) -> list:
+                    hoechstens: int = 1, melden=None, aktiv=None, knoten: bool = True) -> list:
     """Stufe 2: der niedrigste Modus von K ueber inverse Iteration.
 
     Fuer Faelle ohne Starrkoerpermodus - weiche Mechanismen, Nullsteifigkeit,
@@ -1698,6 +1862,11 @@ def weichster_modus(K, model, frei=None, schritte: int = 20,
     (:func:`nullbewegungen`), sonst die Knoten des weichsten Modus.
     ``aktiv`` ist die Elementmaske des Systems; abgeschaltete Elemente
     werden nicht als Traeger der Bewegung genannt.
+
+    ``knoten=False`` laesst den Knotenbefund samt Nullraumsuche weg - fuer
+    die Vorpruefung :func:`gelenkketten`, die im Normalweg an gesunden
+    Modellen laeuft und nur die Kette braucht. Bis zur Nachbesserung k10 lief
+    der Block dort mit (Durchlauftraeger mit 9000 Staeben: 2,5 statt 1,7 s).
     """
     from scipy.sparse import identity
     K = K.tocsc()
@@ -1753,33 +1922,49 @@ def weichster_modus(K, model, frei=None, schritte: int = 20,
     feld = voll[:NDOF * model.nn].reshape(-1, NDOF)[:, :3] if voll.size >= NDOF * model.nn else None
     if feld is None or not feld.size:
         return []
+    ausweichgrund = str(getattr(lu, "ausweichgrund", "") or "")
     # Knoten und Richtungen (15.11.2026): erst der Nullraum, sonst der Modus.
-    # Den Block nur, wenn der weichste Modus schon fast nichts kostet.
-    nenner0 = float(v @ (diag * v))
-    vorab = float(v @ (Kf @ v)) / nenner0 if nenner0 > 0 else 0.0
-    try:
-        Zf = (nullbewegungen(lu, Kf, diag, np.random.default_rng(1))
-              if abs(vorab) <= NULLBLOCK_VORAB else np.zeros((Kf.shape[0], 0)))
-        Z = np.zeros((n, Zf.shape[1]))
-        Z[idx] = Zf
-        knotentext, nullknoten = knotenbefund(model, Z, aktiv) if Zf.shape[1] else ("", [])
-        nullrang = int(Zf.shape[1])
-    except Exception:                     # noqa: BLE001 - der Befund darf nie sperren
-        knotentext, nullknoten, nullrang = "", [], 0
+    # Die Nullraumsuche nimmt zuerst den Faktor von K + eps·I und nur, wenn er
+    # die Bewegungen nicht trennt, die skalierte Matrix (Nachbesserung k10).
+    knotentext, nullknoten, nullrang, vollstaendig, geklaert = "", [], 0, True, True
+    offen = (f"die genaue Suche läuft nur bis {NULLRAUM_SKALIERT_FHG_MAX} Freiheitsgrade"
+             if Kf.shape[0] > NULLRAUM_SKALIERT_FHG_MAX else "die Suche trennte die Bewegungen nicht")
     weichknoten: list = []
+    if knoten:
+        try:
+            if melden:
+                melden(f"Diagnose: Bewegungen ohne Steifigkeit ({Kf.shape[0]} Freiheitsgrade)")
+            Zf, vollstaendig, geklaert = nullbewegungen(Kf, diag, np.random.default_rng(1), lu=lu,
+                                                        eps=eps)
+            Z = np.zeros((n, Zf.shape[1]))
+            Z[idx] = Zf
+            knotentext, nullknoten = (knotenbefund(model, Z, aktiv, vollstaendig=vollstaendig)
+                                      if Zf.shape[1] else ("", []))
+            nullrang = int(Zf.shape[1])
+        except Exception as ex:           # noqa: BLE001 - der Befund darf nie sperren
+            knotentext, nullknoten, nullrang, vollstaendig, geklaert = "", [], 0, True, False
+            offen = f"die Suche scheiterte ({type(ex).__name__})"
     if knotentext:
         knotentext = "Ohne Steifigkeit beweglich: " + knotentext + "."
-        if nullrang >= min(NULLBLOCK, Kf.shape[0]) and nullrang < Kf.shape[0]:
-            # der Block ist voll: es kann mehr Bewegungen (und Knoten) geben
+        if not vollstaendig:
+            # Block an der Grenze oder Trennung unklar: es kann mehr geben
             knotentext += (f" Es sind mindestens {nullrang} unabhängige Bewegungen; die Suche "
-                           "zeigt nur diese, weitere Knoten sind möglich.")
-    else:
+                           "hat nicht alle bestimmt, weitere Knoten und Richtungen sind möglich.")
+        else:
+            knotentext += (" Das ist eine Bewegung." if nullrang == 1 else
+                           f" Das sind {nullrang} unabhängige Bewegungen.")
+    elif knoten:
         try:
             mtext, weichknoten = knotenbefund(model, voll, aktiv, frei=False, anteil=0.5)
         except Exception:                 # noqa: BLE001
             mtext, weichknoten = "", []
         if mtext:
             knotentext = "Die weichste Bewegung betrifft vor allem " + mtext + "."
+        if not geklaert:
+            # keine Behauptung ohne Rechnung (Nachbesserung k10)
+            knotentext = (knotentext + " " if knotentext else "") + (
+                f"Ob sich Knoten ganz ohne Steifigkeit bewegen, hat die Diagnose bei {Kf.shape[0]} "
+                f"Freiheitsgraden nicht geklärt; {offen}.")
     betrag = np.linalg.norm(feld, axis=1)
     gross = np.flatnonzero(betrag >= 0.5 * betrag.max()) if betrag.max() > 0 else []
     gruppe_von = _gruppen_je_knoten(model)
@@ -1801,7 +1986,7 @@ def weichster_modus(K, model, frei=None, schritte: int = 20,
             t=(feld[gross].mean(axis=0) if len(gross) else np.zeros(3)),
             bezug=schwer, mitte=schwer, feld=feld,
             element=nr, ausschlag=ausschlag, energie=energie, anteil=anteil,
-            ausweichgrund=str(getattr(lu, "ausweichgrund", "") or ""),
+            ausweichgrund=ausweichgrund,
             text=ktext, ursache=kursache,
             abhilfe=("lager", int(kette["knoten"][0])))
         s.gelenke = list(kette["gelenke"])
@@ -1813,9 +1998,9 @@ def weichster_modus(K, model, frei=None, schritte: int = 20,
         t=(feld[gross].mean(axis=0) if len(gross) else np.zeros(3)),
         bezug=schwer, mitte=schwer, feld=feld,
         element=nr, ausschlag=ausschlag, energie=energie, anteil=anteil,
-        ausweichgrund=str(getattr(lu, "ausweichgrund", "") or ""),
+        ausweichgrund=ausweichgrund,
         text=(f"{wo}, Element {nr} ({art})" if nr >= 0 else
-              knotenliste_text(nullknoten) if nullknoten else
+              knotenliste_text(sorted(nullknoten)) if nullknoten else
               wo if koerper or not weichknoten else knotenliste_text(sorted(weichknoten)))
              + ": Bewegung fast ohne Steifigkeit",
         ursache=(knotentext + " " if knotentext else "")
