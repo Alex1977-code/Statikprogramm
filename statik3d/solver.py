@@ -11242,6 +11242,29 @@ def _laengslast_hinweise_sammeln(an, progress=None) -> None:
             _melde(progress, "Hinweis: " + t)
 
 
+def _bdk_chi_lt_gefuehrt(design) -> dict:
+    """{Stab: {Kombination, Lastfall oder Alternative}}, deren Ergebnis der
+    Stabilitaetsnachweis des Stabs gefuehrt hat (MemberCheck.stability, je
+    Eintrag ``combo``; am I-Stab mit Haken Biegedrillknicken samt chi_LT,
+    ec3.stability.member_stability). Ein zusammengefasster Eintrag „EK1 [1] =
+    EK2 [1]“ gilt fuer alle seine Namen (DesignResults.gleiche). Ein Stab mit
+    „nicht gefuehrt“ (MemberCheck.fehler) fehlt. Ohne Nachweise: leer."""
+    if design is None:
+        return {}
+    gleiche = getattr(design, "gleiche", None) or {}
+    out: dict = {}
+    for k, mc in (getattr(design, "members", None) or {}).items():
+        if getattr(mc, "fehler", ""):
+            continue
+        namen = set()
+        for st in getattr(mc, "stability", None) or []:
+            c = st.get("combo") if isinstance(st, dict) else None
+            if c:
+                namen.update(gleiche.get(c) or [c])
+        out[k] = namen
+    return out
+
+
 def _bdk_hinweise_sammeln(an, progress=None) -> None:
     """Der Hinweis „Theorie II. Ordnung und α_cr enthalten kein
     Biegedrillknicken“ (statik3d.bdk_hinweis, Runde k8, 15.11.2026): eine
@@ -11255,23 +11278,33 @@ def _bdk_hinweise_sammeln(an, progress=None) -> None:
     in den Hinweis der Kombination (Th2Info.hinweise, Theoriekapitel) und in
     die Zeile (Gegenpruefung k8, 15.11.2026).
 
+    Erfasst gilt ein Haken-Stab nur **je Kombination**: in der Kombination,
+    dem Lastfall oder der Alternative, deren Ergebnis sein Stabilitaets-
+    nachweis (chi_LT) gefuehrt hat (:func:`_bdk_chi_lt_gefuehrt`). Bis zur
+    Runde k10 (15.11.2026) galt er fuer jede Kombination nach Theorie II.
+    Ordnung als erfasst, sobald sein Nachweis ohne Fehler stand - auch in
+    einer GZG-Kombination, einem Lastfall neben Kombinationen oder einer nicht
+    ausgewaehlten Kombination, die der EC3-Nachweis (nur GZT,
+    ec3.design._uls_results) gar nicht fuehrt.
+
     Wiederholbar: auch nach einem Abbruch (_teilanalyse) und nach
     nachtraeglich gestarteten Nachweisen (Oberflaeche _design_done, Web
     start_design) - die Staebe ohne Haken stehen fest in
     ``bdk_staebe_direkt``, die Haken-Staebe kommen je nach an.design dazu
     oder fallen wieder weg."""
     from .bdk_hinweis import BDK_KENNUNG, bdk_text
-    gefuehrt = set()
-    if getattr(an, "design", None) is not None:
-        gefuehrt = {k for k, mc in an.design.members.items() if not getattr(mc, "fehler", "")}
-    for info in (getattr(an.theorie2, "kombinationen", None) or {}).values():
+    gefuehrt = _bdk_chi_lt_gefuehrt(getattr(an, "design", None))
+    for zeile, info in (getattr(an.theorie2, "kombinationen", None) or {}).items():
         ec3 = list(getattr(info, "bdk_ec3_staebe", None) or [])
         if not ec3:
             continue
         if getattr(info, "bdk_staebe_direkt", None) is None:
             info.bdk_staebe_direkt = list(getattr(info, "bdk_staebe", None) or [])
         direkt = list(info.bdk_staebe_direkt)
-        info.bdk_staebe = direkt + [n for n in ec3 if n not in gefuehrt and n not in direkt]
+        # erfasst nur, wenn der Nachweis des Stabs genau diese Kombination
+        # (bzw. diesen Lastfall, diese Alternative) gefuehrt hat (Runde k10)
+        info.bdk_staebe = direkt + [n for n in ec3
+                                    if zeile not in gefuehrt.get(n, ()) and n not in direkt]
         info.hinweise[:] = ([h for h in info.hinweise if BDK_KENNUNG not in h]
                             + ([bdk_text(info.bdk_staebe)] if info.bdk_staebe else []))
     namen, texte = [], []

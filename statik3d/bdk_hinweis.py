@@ -27,7 +27,11 @@ Kriterium (je Stab bzw. gerader Kette von Balken ohne Stab):
    diesen Stab auch gefuehrt wird (solver._bdk_hinweise_sammeln nach
    check_members): ohne Nachweise (CLI ohne --nachweise, Haken „Nachweise“
    ab) oder mit „nicht gefuehrt“ (Werkstoff ohne f_y) erfassen die Haken
-   allein nichts (Gegenpruefung k8, 15.11.2026).
+   allein nichts (Gegenpruefung k8, 15.11.2026). Und es gilt je
+   Kombination: nur dort, wo der Stabilitaetsnachweis des Stabs dieses
+   Ergebnis gefuehrt hat - nicht in GZG-Kombinationen, nicht in Lastfaellen
+   neben Kombinationen, nicht in nicht ausgewaehlten Kombinationen
+   (solver._bdk_chi_lt_gefuehrt, Runde k10).
 3. Nicht gefaehrdet: Hohlprofile (RHS, CHS) und Querschnitte ohne starke
    Achse (I_y = I_z, etwa Kreis, Quadrat) - DIN EN 1993-1-1, 6.3.2.1(2)
    (quadratische und runde Hohlprofile, Kastenquerschnitte) und 6.3.1.4(1)
