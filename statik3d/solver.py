@@ -1960,6 +1960,8 @@ class Results:
                 s.append(f"Kontakt                 : {self.info['kontakt']}, "
                          f"{self.info.get('kontakt_aktiv', 0)} "
                          f"{'Bedingung' if self.info.get('kontakt_aktiv', 0) == 1 else 'Bedingungen'} aktiv")
+            if self.info.get("moden_hinweis"):
+                s.append(f"Eigenformen             : {self.info['moden_hinweis']}")
             if self.info.get("loeser"):
                 s.append(f"Löser                   : {NAMEN.get(self.info['loeser'], self.info['loeser'])}")
         pz = self.info.get("plastizitaet")
@@ -11581,15 +11583,29 @@ def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = Non
     mdf = np.asarray(Mff.diagonal()).ravel()
     sigma = -1e-6 * float(kd.mean() / max(float(mdf.mean()), 1e-300))
     A = (Kff - sigma * Mff).tocsc()
+    # Wenige Freiheitsgrade mit Masse (Runde k10, 15.11.2026): ARPACK baut im
+    # Shift-Invert-Modus einen Krylov-Raum aus Vektoren M x - mit nur
+    # n_masse Freiheitsgraden mit Masse hat er hoechstens n_masse Richtungen.
+    # Verlangt ARPACK mehr Lanczos-Vektoren (ncv = max(2 k + 1, 20)), brach es
+    # mit "ARPACK error -9999: Could not build an Arnoldi factorization" ab -
+    # gemessen an einer Punktmasse am masselosen Kragarm (3 FHG mit Masse).
+    # Dann statisch kondensiert und dicht geloest: die masselosen FHG sind
+    # exakt herausgerechnet, es gibt genau n_masse Eigenformen.
+    dicht = n_masse <= max(2 * nmodes + 1, 20)
+    if dicht:
+        k = min(nmodes, n_masse)
     loeser = LinearSolver(A)
     # Die Modalanalyse faktorisiert selbst, ohne StaticSystem - das Ausweichen
     # meldete hier bis zum 22.09.2026 nur warnings.warn (Befund K2).
     if loeser.ausweichgrund:
         _melde(progress, f"Gleichungslöser ausgewichen - {loeser.ausweichgrund}")
     try:
-        op = LinearOperator(A.shape, dtype=float,
-                            matvec=lambda x: loeser.solve(np.asarray(x, float).ravel(), check=False))
-        vals_, vecs = eigsh(Kff, k=k, M=Mff, sigma=sigma, which="LM", OPinv=op)
+        if dicht:
+            vals_, vecs = _modal_kondensiert(loeser, Mff, mdf, sigma, k)
+        else:
+            op = LinearOperator(A.shape, dtype=float,
+                                matvec=lambda x: loeser.solve(np.asarray(x, float).ravel(), check=False))
+            vals_, vecs = eigsh(Kff, k=k, M=Mff, sigma=sigma, which="LM", OPinv=op)
     finally:
         loeser.freigeben()
     order = np.argsort(vals_)
@@ -11611,12 +11627,58 @@ def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = Non
     res.modes = modes[:, :model.nn * NDOF].reshape(k, model.nn, NDOF)
     res.info = {"ndof": model.ndof, "nfree": len(fi), "time": time.time() - t0,
                 "zusatzmasse": zusatzmasse is not None,
+                "n_masse": n_masse, "moden_angefordert": int(nmodes),
+                "eigenloeser": "dicht, auf die Freiheitsgrade mit Masse kondensiert" if dicht else "ARPACK",
                 "starrkoerper": int(np.sum(freqs < STARR_HZ)),
                 "kontakt": kontakt_text, "kontakt_aktiv": n_kontakt,
                 "loeser": loeser.backend}
+    if k < nmodes:
+        res.info["moden_hinweis"] = moden_hinweis(k, nmodes, n_masse)
+        _melde(progress, res.info["moden_hinweis"])
     res.info.update(_ausweich_eintraege([(loeser.ausweichgrund, loeser.backend)]))
     _schalenlage_eintragen(res, schalenlage)
     return res
+
+
+def moden_hinweis(k: int, angefordert: int, n_masse: int) -> str:
+    """Klartext, wenn die Modalanalyse weniger Eigenformen liefert als
+    angefordert (Runde k10, 15.11.2026)."""
+    fhg = "einen Freiheitsgrad" if n_masse == 1 else f"{n_masse} Freiheitsgrade"
+    return (f"{k} von {angefordert} angeforderten Eigenformen: Das System hat nur {fhg} mit Masse "
+            f"(Punktmassen, Werkstoffe mit Dichte) und damit nicht mehr Eigenformen; "
+            f"masselose Teile schwingen nur mit.")
+
+
+def _modal_kondensiert(loeser: "LinearSolver", Mff, mdf: np.ndarray, sigma: float, k: int) -> tuple:
+    """(Eigenwerte, Eigenvektoren) von Kff v = lambda Mff v, wenn nur wenige
+    Freiheitsgrade Masse tragen: exakt statisch kondensiert auf diese.
+
+    ``loeser`` zerlegt A = Kff - sigma Mff. Mit den Einheitslasten an den
+    Massen-FHG m ist X = A^-1 E_m und F = X[m] die Nachgiebigkeit der
+    kondensierten Matrix A_red = K_red - sigma M_mm (A_red = F^-1), weil die
+    masselosen FHG in M weder Diagonale noch Nebenglieder haben (M positiv
+    semidefinit). Dann gilt M_mm phi = nu A_red phi mit lambda = sigma + 1/nu,
+    und die volle Form ist v = X M_mm phi (A v = (lambda - sigma) M v)."""
+    import scipy.linalg as sla
+    m = np.where(mdf > 0)[0]
+    n = Mff.shape[0]
+    X = np.zeros((n, len(m)))
+    for j, i in enumerate(m):
+        e = np.zeros(n)
+        e[i] = 1.0
+        X[:, j] = loeser.solve(e, check=False)
+    F = X[m]
+    F = 0.5 * (F + F.T)
+    A_red = np.linalg.inv(F)
+    A_red = 0.5 * (A_red + A_red.T)
+    Mmm = Mff[m][:, m].toarray()
+    Mmm = 0.5 * (Mmm + Mmm.T)
+    nu, phi = sla.eigh(Mmm, A_red)
+    gut = nu > 0
+    lam = sigma + 1.0 / nu[gut]
+    phi = phi[:, gut]
+    order = np.argsort(lam)[:k]
+    return lam[order], X @ (Mmm @ phi[:, order])
 
 
 # ==========================================================================

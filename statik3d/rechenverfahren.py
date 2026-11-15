@@ -2637,6 +2637,38 @@ def _maske_starrkoerper_im_ergebnis(model, an) -> str:
     return ("Knotenlast über Starrkörper oder Kette bei abgeschalteten Elementen: " + ", ".join(namen[:6])
             + (" …" if len(namen) > 6 else "")) if namen else ""
 
+def _starrkoerper_strafe_betroffen(model) -> bool:
+    """Modellmerkmal starrkoerper_strafe_bezug (Stand 68): ein Starrkoerper
+    (RBE2/RBE3, nicht die verteilende Kopplung eines Stabendes oder einer
+    Scheibe) und eine starre Knotenkopplung (mindestens eine Richtung
+    unendlich steif) im selben Modell. Nur dann hat sich der Strafbeiwert
+    des Starrkoerpers geaendert (assemble.stiffness)."""
+    try:
+        import numpy as np
+        from .stabeinleitung import ist_verteilkopplung
+        sk = [x for x in (getattr(model, "starrkoerper", None) or []) if not ist_verteilkopplung(x)]
+        if not sk:
+            return False
+        return any(not np.isfinite(w) for kp in (getattr(model, "kopplungen", None) or [])
+                   for _r, w in kp.paare())
+    except Exception:                                   # noqa: BLE001 - lieber betroffen als still
+        return True
+
+
+def _starrkoerper_strafe_im_ergebnis(model, an) -> str:
+    """Jedes Ergebnis eines Modells mit dem Merkmal: die Steifigkeit des
+    Starrkoerpers steckt in jedem Lastfall, jeder Kombination, im Knicken und
+    in den Eigenformen."""
+    if not _starrkoerper_strafe_betroffen(model):
+        return ""
+    paare = list(_ergebnis_paare(an))
+    if getattr(an, "kind", "") in ("buckling", "modal"):
+        paare.append((str(getattr(an, "name", "") or ""), an))
+    namen = sorted({str(n) for n, _r in paare if str(n)})
+    return ("Starrkörper neben starrer Knotenkopplung: " + (", ".join(namen[:6]) if namen else "alle Ergebnisse")
+            + (" …" if len(namen) > 6 else ""))
+
+
 #: Die Tabelle (Einstufung des Anwenders vom 16.10.2026). Stand 1: Abbruch der
 #: Plastizitaet (a1194ef, 13.10.2026 19:32); Stand 1.5: die Korrekturen dazwischen
 #: (13.10. 23:09 bis 15.10. 12:56) - eine Datei ohne Angabe erkennt sie nur an
@@ -4031,10 +4063,29 @@ MERKMALE: list = [
                       "Kopplung) an einem wirksamen Element hängt - oder eine Kopplung an einem solchen Knoten, "
                       "auch im Spannschritt (Anker mit Sollkraft, Weg „spannen und verriegeln“)",
         betrifft=_maske_starrkoerper_betroffen, im_ergebnis=_maske_starrkoerper_im_ergebnis),
+    # Runde k10 (15.11.2026, vom Anwender freigegeben): der Strafbeiwert der
+    # Starrkoerper (RBE2/RBE3) bezog sich auf die groesste Hauptdiagonale samt
+    # der Straffedern der starren Knotenkopplungen (selbst 1e4-mal die
+    # Elementsteifigkeit) - der Starrkoerper wurde 1e8-mal so steif wie die
+    # Elemente. Eine starre Kopplung an einem RBE2-Knoten (Kragarm 3 m, 1 kN)
+    # brach mit „numerisch singulär" (Residuum 0,0000044) ab; Modelle, die
+    # rechneten, hatten eine schlechter konditionierte Matrix. Seither ohne
+    # diese Straffedern, also 1e4-mal wie bei der starren Kopplung.
+    # Fehlerkorrektur
+    Merkmal(
+        name="starrkoerper_strafe_bezug", titel="Strafbeiwert der Starrkörper neben starren Kopplungen",
+        texte={"alt": "Starrkörper 1e4-mal die größte Hauptdiagonale samt den Straffedern der starren "
+                      "Kopplungen (rund 1e8-mal die Elementsteifigkeit)",
+               "neu": "Starrkörper 1e4-mal die größte Hauptdiagonale der Elemente, Federlager und endlichen "
+                      "Kopplungsfedern - wie die starre Kopplung"},
+        wechsel=(Wechsel(stand=68, datum="15.11.2026", commit="fix/k10-num", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Starrkörper (RBE2/RBE3) und starre Knotenkopplung im selben Modell",
+        betrifft=_starrkoerper_strafe_betroffen, im_ergebnis=_starrkoerper_strafe_im_ergebnis),
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 65
+VERFAHRENSSTAND = 68
 
 
 def merkmal(name: str) -> Optional[Merkmal]:
