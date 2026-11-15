@@ -17,7 +17,7 @@ API (JSON; Schluessel per Kopfzeile X-Statik-Key oder ?key=...):
     POST /api/design   POST /api/fatigue  Nachweise zur vorhandenen Analyse
     GET  /api/job                       Auftragsstatus, Fortschritt
     GET  /api/entries                   waehlbare Ergebnisse
-    GET  /api/results?which=env:ULS&field=umag[&mode=0]
+    GET  /api/results?which=env:ULS&field=umag[&mode=0]   (ohne mode: massgebende Knickform)
     GET  /api/diagram?which=...&quantity=My
     GET  /api/member?which=...&name=S1
     GET  /api/design                    Nachweistabellen und Einzelwerte
@@ -707,7 +707,11 @@ def _util_map(st: State, field: str) -> dict:
     return {}
 
 
-def result_payload(st: State, which: str = None, field: str = "umag", mode: int = 0) -> dict:
+def result_payload(st: State, which: str = None, field: str = "umag", mode: int = None) -> dict:
+    """``mode``: die gewaehlte Eigen- bzw. Knickform (ab 0); None heisst keine
+    Wahl - dann beim Knicken die massgebende Form (solver.massgebende_knickform,
+    kleinster positiver Faktor), sonst die erste. Bis zum 15.11.2026 (Runde k8)
+    kam ohne Wahl stets Form 1, auch mit negativem Faktor."""
     with st.lock:
         r = get_result(st, which)
         m = st.model
@@ -717,13 +721,17 @@ def result_payload(st: State, which: str = None, field: str = "umag", mode: int 
         U = None
         if getattr(r, "freqs", None) is not None:
             out["modes"] = [f"{i + 1}. Eigenform  f = {f:.3f} Hz" for i, f in enumerate(r.freqs)]
-            mode = max(0, min(mode, len(r.freqs) - 1))
+            mode = max(0, min(0 if mode is None else int(mode), len(r.freqs) - 1))
             U = r.modes[mode]
         elif getattr(r, "buckling_factors", None) is not None:
             out["modes"] = [f"{i + 1}. Knickform  η = {f:.3f}" for i, f in enumerate(r.buckling_factors)]
-            mode = max(0, min(mode, len(r.buckling_factors) - 1))
+            if mode is None:
+                from ..solver import massgebende_knickform
+                mode = massgebende_knickform(r.buckling_factors)
+            mode = max(0, min(0 if mode is None else int(mode), len(r.buckling_factors) - 1))
             U = r.buckling_modes[mode]
         else:
+            mode = 0 if mode is None else mode
             U = _displacement(r)
         out["mode"] = mode
         if U is None:
@@ -2586,8 +2594,10 @@ class Handler(BaseHTTPRequestHandler):
             with st.lock:
                 return self._json(result_entries(st))
         if path == "results":
+            # ohne mode keine Wahl: beim Knicken die massgebende Form (Runde k8)
+            modus = q.get("mode")
             return self._json(result_payload(st, q.get("which") or None, q.get("field") or "umag",
-                                             int(q.get("mode") or 0)))
+                                             int(modus) if modus not in (None, "") else None))
         if path == "diagram":
             return self._json(diagram_payload(st, q.get("which") or None, q.get("quantity") or "My",
                                               int(q.get("n") or 9)))
