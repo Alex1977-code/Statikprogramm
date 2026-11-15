@@ -277,6 +277,16 @@ class State:
                 # (Joint.ermuedung; leer = alle Ermuedungslasten): eine neue oder
                 # geloeschte Last aendert D. Bis zum 07.10.2026 blieb er stehen (N22).
                 self.analysis.joints = None
+            # Die Hinweise Biegedrillknicken der Analyse (Theorie II. Ordnung,
+            # alpha_cr) und eines stehenden Knickergebnisses beruhten auf den
+            # eben verworfenen Nachweisen: neu bilden, sonst zaehlt ein Nachweis,
+            # den es nicht mehr gibt, und der Hinweis fehlt still (Runde k10b,
+            # Nachbesserung 2, 15.11.2026). Die Oberflaeche verwirft dabei
+            # Analyse und Ergebnis gemeinsam, dort entsteht die Luecke nicht.
+            try:
+                solver._bdk_nach_nachweisen(self.analysis, self.results)
+            except Exception:                  # noqa: BLE001 - ein Hinweis sperrt nie
+                pass
 
 
 def _desktop_frei(st: State) -> None:

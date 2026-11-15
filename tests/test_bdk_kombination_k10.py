@@ -427,10 +427,74 @@ def test_ohne_chi_lt():
           and _knick_kein(st.results), f"{eint} | {st.results.info.get('bdk_hinweis')}")
 
 
+def _web_op(st, op, **kw):
+    from statik3d.web import server
+    with contextlib.redirect_stdout(io.StringIO()):
+        return server.apply_op(st, dict(op=op, **kw))
+
+
+def _single_knick_t1(st):
+    """Die Zusammenfassung des Einzelergebnisses im Browser (state_summary)."""
+    from statik3d.web import server
+    s = (server.state_summary(st).get("single") or {}).get("summary") or ""
+    return KNICK_T1 in s and s.count(KENNUNG) == 1
+
+
+def test_verworfen_web():
+    """Nachbesserung 2 k10b (Gegenpruefung 2, 15.11.2026): Im Browser verwirft
+    eine Aenderung an Stab- oder Nachweiseinstellungen (KEEP_DESIGN:
+    set_member, design_settings, auto_members; Ermuedungslasten) nur die
+    Nachweise (State.invalidate("design"/"ermuedung") -> an.design = None),
+    Analyse und Knickergebnis bleiben stehen. Deren Hinweise Biegedrill-
+    knicken beruhten weiter auf dem verworfenen Nachweis - der Hinweis fehlte
+    still, obwohl kein Nachweis mehr vorlag. Jetzt bilden sie sich dabei neu."""
+    from statik3d.web import server
+    # Knicken nach den Nachweisen (nur Lastfall: der Nachweis fuehrt ihn), dann verwerfen
+    for name, op, kw in (("set_member lt_check aus", "set_member",
+                          {"name": "T1", "fields": {"lt_check": False}}),
+                         ("set_member Nachweis aus", "set_member",
+                          {"name": "T1", "fields": {"design": False}}),
+                         ("design_settings", "design_settings",
+                          {"fields": {"imperfektionen": False}}),
+                         ("Ermüdungslast angelegt", "add_fatigue_load",
+                          {"name": "E1", "case_max": None})):
+        m = _ipe()
+        if op == "add_fatigue_load":
+            kw = dict(kw, case_max=m.active_case)
+        st = server.State(m)
+        st.analysis, _z = _rechnen(m)
+        s1 = _web_job(st, server.start_solve, {"kind": "buckling", "nmodes": 2})
+        r = st.results
+        vorher = s1[0] == "fertig" and _knick_kein(r)
+        _web_op(st, op, **kw)
+        check(f"Web: Knicken nach den Nachweisen, dann {name} (Nachweise verworfen, nicht neu "
+              "gestartet): Knick-Hinweis nennt T1 in res.info und state_summary",
+              vorher and st.analysis is not None and st.analysis.design is None and st.results is r
+              and _knick_t1(r) and _single_knick_t1(st),
+              f"{s1} vorher ohne {vorher} | {r.info.get('bdk_hinweis')}")
+    # Schutz: Nachweise danach neu gestartet -> chi_LT laeuft, Hinweis faellt wieder weg
+    s2 = _web_job(st, server.start_design)
+    check("Schutz: Nachweise danach neu gestartet (χ_LT läuft): Knick-Hinweis fällt wieder weg",
+          s2[0] == "fertig" and _knick_kein(st.results), f"{s2} | {st.results.info.get('bdk_hinweis')}")
+    # dasselbe nach Theorie II. Ordnung (Hinweis der Analyse, Runde k10)
+    for name, fields in (("lt_check aus", {"lt_check": False}), ("Nachweis aus", {"design": False})):
+        m = _ipe(lf_theorie="II")
+        st = server.State(m)
+        st.analysis, _z = _rechnen(m)
+        an = st.analysis
+        vorher = not an.info.get("bdk_hinweis") and not _bdk(an, m.active_case)
+        _web_op(st, "set_member", name="T1", fields=fields)
+        check(f"Web: LF1 nach Th. II mit Nachweisen, dann set_member {name} (Nachweise verworfen): "
+              "Zeile und Hinweis beim Lastfall nennen T1",
+              vorher and st.analysis is an and an.design is None and _zeile_t1(an)
+              and _t1(_bdk(an, m.active_case)),
+              f"vorher ohne {vorher} | {an.info.get('bdk_hinweis')} | {_bdk(an, m.active_case)}")
+
+
 def main():
     for t in (test_gzg, test_lastfall_neben_kombination, test_ausgewaehlt, test_nachtraeglich,
               test_abbruch, test_ergebniskombination, test_alle_gzt, test_knicken, test_knicken_web,
-              test_ohne_chi_lt):
+              test_ohne_chi_lt, test_verworfen_web):
         print(f"\n--- {t.__name__} ---")
         try:
             t()
