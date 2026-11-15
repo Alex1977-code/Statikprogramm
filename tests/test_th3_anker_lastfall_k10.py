@@ -24,6 +24,13 @@ Stabendes (theorie3._ankerknoten, _th3_wirkung) zwei Luecken:
   Punktmasse 1 kg mit g = -3 und +1 m/s²) laesst den Rundungsrest
   -5,55e-17 und wurde abgewiesen, obwohl Theorie I. Ordnung w(b) = 0,535714
   mm = Hand ergibt. Jetzt zaehlt der Knoten erst ab 1e-9 der Betragssumme.
+* Zweite Gegenpruefung zu k10b: (a) Eine Erdbeschleunigung als numpy-Feld
+  (Model.set_gravity, Setter und Lesen von Model.gravity, Nullfeld) liess
+  _lastknoten mit ValueError abbrechen: Modellpruefung stuerzte ab, Theorie
+  III. Ordnung wies ein rechenbares Modell ab (richtig w(b) = 0,535714 mm wie
+  Theorie I. Ordnung und Hand). (b) Die relative Schranke 1e-9 uebersah bei
+  -1e8 N / +1e8 N an Q einen echten Rest von 0,05 N (still 0,005 mm an der
+  Straffeder 1e4 N/m). Jetzt ist die Schranke auf 0,001 N begrenzt.
 
 Aufruf:  python -m tests.test_th3_anker_lastfall_k10
 """
@@ -327,10 +334,149 @@ def test_rundungsrest():
           T.TEXT_KP in t, t[:80])
 
 
+# --------------------------------------------------------------------------
+# Gegenpruefung 2 zu k10b: Erdbeschleunigung als numpy-Feld
+# --------------------------------------------------------------------------
+def feld_modell(wie, mit_pm):
+    """Kragarm, Last F an b in LF1, Kopplung „Stabende“ b-Q starr, Q ohne
+    Element; LF1 nach Theorie III. Ordnung. Die Erdbeschleunigung von LF1
+    liegt als numpy-Feld vor (set_gravity, Setter, Lesen von Model.gravity
+    oder Nullfeld), wahlweise mit Punktmasse 101,94 kg an Q."""
+    m, a, b = T.basis()
+    q = _kopplung_q(m, b)
+    m.load_node(b, Fz=-F, case="LF1")
+    if mit_pm:
+        m.add_punktmasse(q, MASSE)
+    if wie == "set_gravity":
+        m.set_gravity(-G, case="LF1")
+    elif wie == "setter":
+        m.gravity = [0.0, 0.0, -G]
+    elif wie == "getter":
+        m.load_cases["LF1"].gravity = [0.0, 0.0, -G]
+        _ = m.gravity
+    elif wie == "nullfeld":
+        m.load_cases["LF1"].gravity = np.zeros(3)
+    m.load_cases["LF1"].theorie = "III"
+    return m, b, q
+
+
+def test_erdbeschleunigung_feld():
+    from statik3d import solver
+    from statik3d.theorie3 import kopplung_sperre
+    mk = _merkmal()
+    for wie in ("set_gravity", "setter", "getter", "nullfeld"):
+        m, b, q = feld_modell(wie, False)
+        check(f"Vorbedingung ({wie}): g von LF1 ist ein numpy-Feld",
+              isinstance(m.load_cases["LF1"].gravity, np.ndarray), type(m.load_cases["LF1"].gravity).__name__)
+        # ohne Punktmasse an Q (bzw. mit Punktmasse unter Nullfeld): rechenbar
+        for pm in ((False, True) if wie == "nullfeld" else (False,)):
+            m, b, q = feld_modell(wie, pm)
+            zus = " mit Punktmasse an Q" if pm else ""
+            try:
+                pr = _fehler_zeilen(m)
+                ex = ""
+            except Exception as e:          # noqa: BLE001
+                pr, ex = [], f"{type(e).__name__}: {e}"
+            check(f"g als Feld ({wie}){zus}: Modellpruefung ohne Ausnahme und ohne FEHLER",
+                  not ex and not pr, ex or pr)
+            m, b, q = feld_modell(wie, pm)
+            m.load_cases["LF1"].theorie = "I"
+            _an, u1, _R1, _f1, ex1 = T.rechne(m, "I")
+            w1 = -u1[b, 2] if not ex1 else float("nan")
+            m, b, q = feld_modell(wie, pm)
+            _an, u3, _R3, f3, ex3 = T.rechne(m, "III")
+            w3 = -u3[b, 2] if not ex3 else float("nan")
+            check(f"… Theorie III. Ordnung rechnet, w(b) = Theorie I. Ordnung = F L³/(3 E I)",
+                  not ex3 and not f3 and abs(w3 - w1) <= 1e-6 and abs(w3 - HAND) <= 1e-4 * HAND,
+                  f"{ex3 or f3[:80]!r} III {w3 * 1e3:.6f} mm, I {w1 * 1e3:.6f} mm, Hand {HAND * 1e3:.6f} mm")
+            m, b, q = feld_modell(wie, pm)
+            try:
+                bt = mk.betrifft(m)
+            except Exception as e:          # noqa: BLE001
+                bt = f"{type(e).__name__}: {e}"
+            check(f"… Merkmal betrifft nicht", bt is False, bt)
+        if wie == "nullfeld":
+            continue
+        # mit Punktmasse an Q unter g: abweisen, nicht abstuerzen
+        m, b, q = feld_modell(wie, True)
+        try:
+            pr = _fehler_zeilen(m)
+            ex = ""
+        except Exception as e:              # noqa: BLE001
+            pr, ex = [], f"{type(e).__name__}: {e}"
+        check(f"g als Feld ({wie}), Punktmasse an Q: Modellpruefung meldet FEHLER ohne Ausnahme",
+              not ex and any(T.TEXT_KP in z for z in pr), ex or pr)
+        m, b, q = feld_modell(wie, True)
+        _an, _u, _R, f3, ex3 = T.rechne(m, "III")
+        check(f"… Theorie III. Ordnung weist mit Klartext ab", not ex3 and T.TEXT_KP in f3, ex3 or f3[:100])
+        m, b, q = feld_modell(wie, True)
+        try:
+            t = kopplung_sperre(m, None, factors={"LF1": 1.0})
+        except Exception as e:              # noqa: BLE001
+            t = f"{type(e).__name__}: {e}"
+        check(f"… kopplung_sperre mit Faktoren weist ab", T.TEXT_KP in t, t[:100])
+
+
+# --------------------------------------------------------------------------
+# Gegenpruefung 2 zu k10b: grosse, sich aufhebende Lasten mit echtem Rest
+# --------------------------------------------------------------------------
+def gross_modell(gross, rest, theorie="III"):
+    """Kopplung „Stabende“ b-Q starr, Q ohne Element; LF1: Last F an b;
+    an Q -gross N in LF2, +gross N in LF3 und -rest N in LF4;
+    LK1 = LF1 + LF2 + LF3 + LF4."""
+    m, a, b = T.basis()
+    q = _kopplung_q(m, b)
+    for n in ("LF2", "LF3", "LF4"):
+        m.add_load_case(n)
+    m.load_node(b, Fz=-F, case="LF1")
+    m.load_node(q, Fz=-gross, case="LF2")
+    m.load_node(q, Fz=gross, case="LF3")
+    if rest:
+        m.load_node(q, Fz=-rest, case="LF4")
+    c = m.add_combination("LK1", {"LF1": 1.0, "LF2": 1.0, "LF3": 1.0, "LF4": 1.0}, "ULS")
+    c.theorie = theorie
+    return m, b, q
+
+
+def test_grosser_rest():
+    from statik3d import solver
+    from statik3d.theorie3 import kopplung_sperre
+    mk = _merkmal()
+    for gross, rest in ((1e8, 0.05), (1e8, 0.015), (1e10, 0.05), (1e7, 0.05)):
+        # Gegenrechnung: Theorie I. Ordnung, Q wird um rest / 1e4 N/m nicht verschoben -
+        # der Rest wirkt; die Abweichung waere rest / (1e4 N/m) ueber 0,001 mm
+        m, b, q = gross_modell(gross, rest, "I")
+        an1 = T._still(solver.solve_all, m, workers=1, design=False)
+        u1 = np.asarray(an1.combinations["LK1"].u).reshape(-1, 6)
+        check(f"±{gross:.0f} N mit Rest {rest} N an Q, Theorie I. Ordnung: w(b) = Hand",
+              abs(-u1[b, 2] - HAND) <= 1e-4 * HAND, f"{-u1[b, 2] * 1e3:.6f} mm, Hand {HAND * 1e3:.6f} mm")
+        m, b, q = gross_modell(gross, rest)
+        t = kopplung_sperre(m, None, factors={"LF1": 1.0, "LF2": 1.0, "LF3": 1.0, "LF4": 1.0})
+        check(f"… kopplung_sperre weist den Rest ab (stille Abweichung waere {rest / 1e4 * 1e3:.4f} mm)",
+              T.TEXT_KP in t, t[:80])
+        m, b, q = gross_modell(gross, rest)
+        pr = _fehler_zeilen(m)
+        an = T._still(solver.solve_all, m, workers=1, design=False)
+        f3 = an.theorie3.kombinationen["LK1"].fehler or ""
+        check(f"… Rechnung weist ab, Modellpruefung meldet FEHLER",
+              T.TEXT_KP in f3 and any(T.TEXT_KP in z for z in pr), f"{f3[:80]!r} {pr}")
+        m, b, q = gross_modell(gross, rest)
+        check(f"… Merkmal betrifft", mk.betrifft(m) is True, mk.betrifft(m))
+    # Gegenprobe: genau aufgehoben (ohne Rest) wird gerechnet
+    m, b, q = gross_modell(1e8, 0.0)
+    pr = _fehler_zeilen(m)
+    an = T._still(solver.solve_all, m, workers=1, design=False)
+    f3 = an.theorie3.kombinationen["LK1"].fehler or ""
+    w3 = -np.asarray(an.combinations["LK1"].u).reshape(-1, 6)[b, 2]
+    check("… Gegenprobe ±1e8 N ohne Rest: gerechnet, w(b) = Hand, keine Meldung",
+          not f3 and not pr and abs(w3 - HAND) <= 1e-4 * HAND,
+          f"{f3[:80]!r} {pr} {w3 * 1e3:.6f} mm")
+
+
 def main():
     for t in (test_punktmasse_kopplung, test_punktmasse_rbe3, test_punktmasse_ohne_eigengewicht,
               test_last_anderer_lastfall, test_kombinationen, test_ergebniskombination, test_sperre_je_faktoren,
-              test_rundungsrest):
+              test_rundungsrest, test_erdbeschleunigung_feld, test_grosser_rest):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

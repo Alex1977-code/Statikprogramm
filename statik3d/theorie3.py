@@ -490,10 +490,14 @@ def _nur_staebe(model: Model, aktiv) -> bool:
                    for i, e in enumerate(model.elements))
 
 
-# Relativer Rest, bis zu dem sich die Lastbeitraege an einem Knoten als
-# aufgehoben gelten (Rundung der Faktoren, z. B. 0,1 und 0,3). Ein solcher Rest
-# bleibt mit der Straffeder 1e4 N/m weit unter 0,001 mm.
+# Rest, bis zu dem sich die Lastbeitraege an einem Knoten als aufgehoben
+# gelten (Rundung der Faktoren, z. B. 0,1 und 0,3): relativ _LAST_REST mal die
+# Betragssumme der Beitraege, hoechstens aber _LAST_REST_MAX (N bzw. Nm). Ein
+# uebersehener Rest bleibt damit unter 0,001 N; an der Straffeder 1e4 N/m sind
+# das unter 0,0001 mm. Der Rundungsrest (etwa 1e-16 der Betragssumme) bleibt
+# bis zu einer Betragssumme von rund 1e12 N darunter.
 _LAST_REST = 1e-9
+_LAST_REST_MAX = 1e-3
 
 
 def _lastknoten(model: Model, nn: int, factors: dict = None) -> np.ndarray:
@@ -519,7 +523,17 @@ def _lastknoten(model: Model, nn: int, factors: dict = None) -> np.ndarray:
     _LAST_REST mal die Betragssumme der Beitraege. Bis zur Gegenpruefung
     zu k10b wurde exakt mit null verglichen: LK1 = LF1 + 0,1 LF2 + 0,3 LF3 mit
     -3 N an Q in LF2 und +1 N in LF3 (Rest -5,55e-17 N) wurde abgewiesen,
-    obwohl Theorie I. Ordnung w(b) = 0,535714 mm = Hand ergibt."""
+    obwohl Theorie I. Ordnung w(b) = 0,535714 mm = Hand ergibt.
+
+    Die Schranke ist zudem auf _LAST_REST_MAX = 0,001 N bzw. Nm begrenzt.
+    Bis zur zweiten Gegenpruefung zu k10b galt nur die relative Schranke:
+    -1e8 N in LF2, +1e8 N in LF3 und -0,05 N in LF4 an Q (Schranke 0,2 N)
+    wurde still gerechnet, Theorie III. Ordnung w(Q) = 0,540741 mm gegen
+    Theorie I. Ordnung 0,535741 mm (0,05 N / 1e4 N/m = 0,005 mm). Ebenso
+    bis dahin: eine Erdbeschleunigung als numpy-Feld (Model.set_gravity,
+    Model.gravity) liess ``Feld or Liste`` mit ValueError abbrechen, die
+    Modellpruefung stuerzte ab und Theorie III. Ordnung wies ein rechenbares
+    Modell mit dem Text der Ausnahme ab."""
     lcs = getattr(model, "load_cases", None) or {}
     pm = [p for p in (getattr(model, "punktmassen", None) or [])
           if 0 <= int(p.node) < nn and float(p.masse) != 0.0]
@@ -538,7 +552,11 @@ def _lastknoten(model: Model, nn: int, factors: dict = None) -> np.ndarray:
                     beitrag = f * np.asarray(ld.F, float)[:6]
                     S[n] += beitrag
                     A[n] += np.abs(beitrag)
-            g = f * np.asarray(getattr(lc, "gravity", None) or [0.0, 0.0, 0.0], float)
+            # gravity ist eine Liste oder ein numpy-Feld (Model.set_gravity,
+            # Model.gravity); ``Feld or Liste`` waere mehrdeutig (ValueError)
+            g_lc = getattr(lc, "gravity", None)
+            g = f * (np.zeros(3) if g_lc is None
+                     else np.asarray(g_lc, float).ravel()[:3])
             if np.any(g):
                 for p in pm:
                     beitrag = float(p.masse) * g
@@ -546,7 +564,7 @@ def _lastknoten(model: Model, nn: int, factors: dict = None) -> np.ndarray:
                     A[int(p.node), :3] += np.abs(beitrag)
         # Heben sich die Beitraege einer Kombination bis auf Rundung auf
         # (0,1 * (-3 N) + 0,3 * 1 N = -5,55e-17 N), traegt der Knoten nichts.
-        out |= np.any(np.abs(S) > _LAST_REST * A, axis=1)
+        out |= np.any(np.abs(S) > np.minimum(_LAST_REST * A, _LAST_REST_MAX), axis=1)
     return out
 
 
