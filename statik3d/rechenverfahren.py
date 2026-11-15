@@ -2191,7 +2191,9 @@ def _theorie3_anschluss_neu(model) -> list:
     eines Stabendes an einen Koerper (Kopplung „Stabende“ oder verteilende
     Kopplung) wirkt, obwohl kein Koerperknoten mittraegt - die Koerperseite
     erreicht ueber Starrkoerper und Kopplungen einen Lager- oder Lastknoten
-    (Knoten-, Linien-, Flaechenlager; ohne Situation wirkten diese
+    (Knoten-, Linien-, Flaechenlager; Knotenlast oder Punktmasse unter
+    Eigengewicht, je Lastfall bzw. Kombination mit deren Lastfaellen und
+    Faktoren - theorie3._lastknoten; ohne Situation wirkten diese
     Kopplungen in Theorie I. Ordnung immer, die Starrkoerper immer) oder
     einen mittragenden Knoten (zweites Stabende). Vergleich der Abweisung
     heute und mit der Regel bis Runde k10 (theorie3.kopplung_sperre_modell,
@@ -4093,8 +4095,12 @@ MERKMALE: list = [
     # 0,5357 mm (theorie3._th3_wirkung); ebenso mit Linien- oder Flaechenlager,
     # ueber einen RBE2 an einem gelagerten Knoten (Kette) und mit zwei
     # Stabenden am selben abgeschalteten Koerper (Theorie I. Ordnung und
-    # Gegenrechnung 0,4377/0,0980 mm, Theorie III. Ordnung 0,5357/0,0000 mm).
-    # Seither mit Klartext abgewiesen.
+    # Gegenrechnung 0,4377/0,0980 mm, Theorie III. Ordnung 0,5357/0,0000 mm)
+    # und mit einer Punktmasse unter Eigengewicht an der Koerperseite
+    # (Theorie I. Ordnung 0,5357 mm, Theorie III. Ordnung still 100,5357 mm
+    # bzw. 0 mm). Seither mit Klartext abgewiesen - je Lastfall bzw.
+    # Kombination mit deren Lasten (eine Last nur in einem anderen Lastfall
+    # zaehlt nicht).
     Merkmal(
         name="theorie3_stabende_anschluss", titel="Anschluss eines Stabendes nach Theorie III. Ordnung",
         texte={"alt": "Anschluss eines Stabendes (Kopplung „Stabende“, RBE3) nur mit mittragendem "
@@ -4105,8 +4111,9 @@ MERKMALE: list = [
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Lastfall oder Kombination nach Theorie III. Ordnung mit einer Kopplung „Stabende“ "
                       "oder einer verteilenden Kopplung eines Stabendes, deren Körperseite nicht mitträgt, "
-                      "aber über Starrkörper oder Kopplungen einen Lager- oder Lastknoten (Knoten-, Linien-, "
-                      "Flächenlager) oder ein zweites Stabende erreicht",
+                      "aber über Starrkörper oder Kopplungen einen Lagerknoten (Knoten-, Linien-, "
+                      "Flächenlager), einen in diesem Lastfall bzw. dieser Kombination belasteten Knoten "
+                      "(Knotenlast oder Punktmasse unter Eigengewicht) oder ein zweites Stabende erreicht",
         betrifft=_theorie3_anschluss_betrifft, im_ergebnis=_theorie3_anschluss_im_ergebnis),
 ]
 

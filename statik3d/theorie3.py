@@ -490,12 +490,55 @@ def _nur_staebe(model: Model, aktiv) -> bool:
                    for i, e in enumerate(model.elements))
 
 
-def _ankerknoten(model: Model, nn: int) -> np.ndarray:
+def _lastknoten(model: Model, nn: int, factors: dict = None) -> np.ndarray:
+    """Maske (nn,) der Knoten, an die assemble.load_vector in der Rechnung mit
+    ``factors`` ({Lastfall: Faktor}) eine Last legt, ohne dass dort ein
+    Element sie verteilt: Knotenlasten (auch die aus Linienlasten und
+    Generatoren, die Model.lasten_verteilen als Knotenlasten ablegt) und
+    Punktmassen unter Eigengewicht (m g mit der Erdbeschleunigung des
+    Lastfalls). Gezaehlt wird die Summe mit den Faktoren; ohne ``factors``
+    jeder Lastfall fuer sich (irgendein Lastfall belastet den Knoten).
+    Elementlasten (Stab-, Flaechen-, Temperaturlasten, Eigengewicht der
+    Elemente) wirken nur an wirksamen Elementen, deren Knoten ohnehin
+    mittragen; Zwangsverformungen nur an Lagerknoten.
+
+    Bis zur zweiten Gegenpruefung vom 15.11.2026 zaehlten nur Knotenlasten,
+    und die aus jedem Lastfall: Punktmasse 101,94 kg an Q (Kopplung
+    „Stabende“ b-Q starr, Q ohne Element, g = 9,81 m/s²) - Theorie I.
+    Ordnung w(Q) = 0,5357 mm, Theorie III. Ordnung still 100,5357 mm; und LF1
+    ohne Last an Q wurde abgewiesen, weil LF2 nach Theorie I. Ordnung dort
+    Last hat (richtig 0,5357 mm wie Theorie I. Ordnung und Hand)."""
+    lcs = getattr(model, "load_cases", None) or {}
+    pm = [p for p in (getattr(model, "punktmassen", None) or [])
+          if 0 <= int(p.node) < nn and float(p.masse) != 0.0]
+    if factors is None:
+        gruppen = [[(lc, 1.0)] for lc in lcs.values()]
+    else:
+        gruppen = [[(lcs[n], float(f)) for n, f in factors.items() if f and n in lcs]]
+    out = np.zeros(nn, dtype=bool)
+    for gruppe in gruppen:
+        S = np.zeros((nn, 6))
+        for lc, f in gruppe:
+            for ld in (getattr(lc, "nodal_loads", None) or []):
+                n = int(ld.node)
+                if 0 <= n < nn:
+                    S[n] += f * np.asarray(ld.F, float)[:6]
+            g = f * np.asarray(getattr(lc, "gravity", None) or [0.0, 0.0, 0.0], float)
+            if np.any(g):
+                for p in pm:
+                    S[int(p.node), :3] += float(p.masse) * g
+        out |= np.any(S != 0.0, axis=1)
+    return out
+
+
+def _ankerknoten(model: Model, nn: int, factors: dict = None) -> np.ndarray:
     """Maske (nn,) der Knoten, an denen ein Anschluss eines Stabendes etwas
     halten oder tragen muss, auch wenn dort kein Element wirkt: Lagerknoten
     (Knoten-, Linien- und Flaechenlager, starr oder federnd, wie
-    supports.expand sie an die Knoten verteilt) und Knoten mit einer
-    Knotenlast in irgendeinem Lastfall (Runde k10, Nachbesserung)."""
+    supports.expand sie an die Knoten verteilt) und die Lastknoten der
+    Rechnung mit ``factors`` (:func:`_lastknoten`: Knotenlast oder Punktmasse
+    unter Eigengewicht; ohne ``factors`` aus irgendeinem Lastfall). Runde
+    k10, Nachbesserungen 1 und 2."""
     out = np.zeros(nn, dtype=bool)
     for sp in (getattr(model, "supports", None) or []):
         n = int(getattr(sp, "node", -1))
@@ -520,15 +563,11 @@ def _ankerknoten(model: Model, nn: int) -> np.ndarray:
                     for n in model.elements[int(i)].nodes:
                         if 0 <= int(n) < nn:
                             out[int(n)] = True
-    for lc in (getattr(model, "load_cases", None) or {}).values():
-        for ld in (getattr(lc, "nodal_loads", None) or []):
-            n = int(ld.node)
-            if 0 <= n < nn and np.any(np.asarray(ld.F, float) != 0.0):
-                out[n] = True
+    out |= _lastknoten(model, nn, factors)
     return out
 
 
-def _th3_wirkung(model: Model, aktiv, alt: bool = False) -> tuple:
+def _th3_wirkung(model: Model, aktiv, alt: bool = False, factors: dict = None) -> tuple:
     """(kn, sk_zaehlt, kp_zaehlt): Knotenmaske (nn,) der Knoten, die in der
     Rechnung mit ``aktiv`` mittragen, und je Starrkoerper bzw. Knotenkopplung
     des Modells, ob er bzw. sie in dieser Rechnung wirkt (Listen in der
@@ -558,9 +597,12 @@ def _th3_wirkung(model: Model, aktiv, alt: bool = False) -> tuple:
     ueber alle anderen Starrkoerper und Kopplungen (Theorie I. Ordnung baut
     die Starrkoerper immer ein) ein Ankerknoten erreicht - ein mittragender
     Knoten, ein Lagerknoten (Knoten-, Linien- oder Flaechenlager, starr oder
-    federnd, wie supports.expand sie verteilt) oder ein Knoten mit
-    Knotenlast in irgendeinem Lastfall (:func:`_ankerknoten`). Die
-    Stabknoten selbst zaehlen dabei nicht, dort endet der Weg.
+    federnd, wie supports.expand sie verteilt) oder ein Knoten, an den die
+    Rechnung mit ``factors`` eine Last legt - Knotenlast oder Punktmasse
+    unter Eigengewicht, mit den Lastfaellen und Faktoren des Lastfalls bzw.
+    der Kombination; ohne ``factors`` aus irgendeinem Lastfall
+    (:func:`_ankerknoten`). Die Stabknoten selbst zaehlen dabei nicht, dort
+    endet der Weg.
 
     Nachbesserung derselben Runde (Gegenpruefung 15.11.2026): Der erste
     Entwurf kannte als gelagert nur Knotenlager direkt am Koerperknoten und
@@ -636,7 +678,7 @@ def _th3_wirkung(model: Model, aktiv, alt: bool = False) -> tuple:
 
     def anker() -> np.ndarray:
         if not anker_cache:
-            anker_cache.append(_ankerknoten(model, nn))
+            anker_cache.append(_ankerknoten(model, nn, factors))
         return anker_cache[0]
 
     def erreicht(j: int) -> np.ndarray:
@@ -704,7 +746,7 @@ def _namen_liste(namen: list, n_max: int = 4) -> str:
     return teil + (f" und {len(namen) - n_max} weitere" if len(namen) > n_max else "")
 
 
-def starrkoerper_sperre(model: Model, aktiv=None, alt: bool = False) -> str:
+def starrkoerper_sperre(model: Model, aktiv=None, alt: bool = False, factors: dict = None) -> str:
     """Leer - oder der Grund, warum Theorie III. Ordnung nicht rechnet: ein
     wirksamer Starrkoerper (Model.starrkoerper, RBE2 oder RBE3).
 
@@ -721,7 +763,7 @@ def starrkoerper_sperre(model: Model, aktiv=None, alt: bool = False) -> str:
     sk_liste = getattr(model, "starrkoerper", None) or []
     if not sk_liste:
         return ""
-    _kn, sk_zaehlt, _kp = _th3_wirkung(model, aktiv, alt)
+    _kn, sk_zaehlt, _kp = _th3_wirkung(model, aktiv, alt, factors)
     namen = [str(sk.name or "ohne Namen") for sk, z in zip(sk_liste, sk_zaehlt) if z]
     if not namen:
         return ""
@@ -730,7 +772,8 @@ def starrkoerper_sperre(model: Model, aktiv=None, alt: bool = False) -> str:
             "oder Theorie II. Ordnung wählen.")
 
 
-def starre_kopplung_sperre(model: Model, aktiv=None, alt: bool = False) -> str:
+def starre_kopplung_sperre(model: Model, aktiv=None, alt: bool = False,
+                           factors: dict = None) -> str:
     """Leer - oder der Grund, warum Theorie III. Ordnung nicht rechnet: eine
     wirksame starre Knotenkopplung (Model.kopplungen mit Steifigkeit ``inf``).
 
@@ -746,7 +789,7 @@ def starre_kopplung_sperre(model: Model, aktiv=None, alt: bool = False) -> str:
     kopp = getattr(model, "kopplungen", None) or []
     if not kopp:
         return ""
-    _kn, _sk, kp_zaehlt = _th3_wirkung(model, aktiv, alt)
+    _kn, _sk, kp_zaehlt = _th3_wirkung(model, aktiv, alt, factors)
     starr, gruppen = 0, []
     for kp, z in zip(kopp, kp_zaehlt):
         if not z or not any(not np.isfinite(w) for _r, w in kp.paare()):
@@ -765,27 +808,48 @@ def starre_kopplung_sperre(model: Model, aktiv=None, alt: bool = False) -> str:
             "Theorie II. Ordnung wählen.")
 
 
-def kopplung_sperre(model: Model, aktiv=None, alt: bool = False) -> str:
+def kopplung_sperre(model: Model, aktiv=None, alt: bool = False, factors: dict = None) -> str:
     """Starrkoerper und starre Knotenkopplungen (Runde k8, 15.11.2026):
     leer, oder der Text der Abweisung. ``alt``: die Regel bis Runde k10
-    (fuer die Verfahrenstabelle)."""
-    return " ".join(t for t in (starrkoerper_sperre(model, aktiv, alt),
-                                starre_kopplung_sperre(model, aktiv, alt)) if t)
+    (fuer die Verfahrenstabelle). ``factors``: die Lastfaelle und Faktoren
+    der Rechnung ({Lastfall: Faktor}) - beim Anschluss eines Stabendes
+    zaehlen nur deren Lasten; ohne ``factors`` die Lasten aller Lastfaelle."""
+    return " ".join(t for t in (starrkoerper_sperre(model, aktiv, alt, factors),
+                                starre_kopplung_sperre(model, aktiv, alt, factors)) if t)
 
 
 def kopplung_sperre_modell(model: Model, alt: bool = False) -> dict:
     """{Text der Abweisung: [Lastfaelle und Kombinationen]} fuer alles, was
     nach Theorie III. Ordnung gestellt ist - je in seiner Situation (nur dort
-    wirksame Starrkoerper und Kopplungen zaehlen). Fuer die Modellpruefung
-    (Model.check) und die Verfahrenstabelle; leer, wenn nichts abgewiesen wird."""
+    wirksame Starrkoerper und Kopplungen zaehlen) und mit seinen Lastfaellen
+    und Faktoren, so wie solve_all und check_theorie3 rechnen: ein Lastfall
+    allein, eine Kombination mit ihren Faktoren, eine Ergebniskombination je
+    Alternative (genannt wird sie, sobald eine Alternative abgewiesen wird).
+    Fuer die Modellpruefung (Model.check) und die Verfahrenstabelle; leer,
+    wenn nichts abgewiesen wird.
+
+    Bis zur zweiten Gegenpruefung vom 15.11.2026 zaehlten die Lasten aller
+    Lastfaelle: LF1 nach Theorie III. Ordnung ohne Last an Q wurde gemeldet
+    und abgewiesen, weil LF2 nach Theorie I. Ordnung dort Last hat."""
     if not (getattr(model, "starrkoerper", None) or getattr(model, "kopplungen", None)):
         return {}
-    objekte = [o for o in list(model.load_cases.values()) + list(model.combinations.values())
-               if model.theorie_von(o) == "III"]
+    from .solver import alternativen_der_kombination
+    auftraege = []                       # (Name, Situation, [Faktoren je Rechnung])
+    for lc in model.load_cases.values():
+        if model.theorie_von(lc) == "III":
+            auftraege.append((str(lc.name), str(getattr(lc, "situation", "") or ""), [{lc.name: 1.0}]))
+    for c in model.combinations.values():
+        if model.theorie_von(c) != "III":
+            continue
+        if c.ist_umhuellende:
+            teile = [dict(t) for _n, t in alternativen_der_kombination(c)]
+        else:
+            teile = [dict(c.factors)]
+        auftraege.append((str(c.name), str(getattr(c, "situation", "") or ""), teile))
     out: dict = {}
     je_situation: dict = {}
-    for o in objekte:
-        sit = str(getattr(o, "situation", "") or "")
+    je_rechnung: dict = {}
+    for name, sit, teile in auftraege:
         if sit not in je_situation:
             try:
                 aktiv = model.aktive_elemente(sit)
@@ -795,10 +859,23 @@ def kopplung_sperre_modell(model: Model, alt: bool = False) -> dict:
             # zuerst „nur für Stabtragwerke“ ab (dieselbe Bedingung wie in
             # solve_theorie3): hier kein irrefuehrender FEHLER (Gegenpruefung
             # 15.11.2026, Schale mit RBE2-Lastknoten)
-            je_situation[sit] = kopplung_sperre(model, aktiv, alt) if _nur_staebe(model, aktiv) else ""
-        text = je_situation[sit]
-        if text:
-            out.setdefault(text, []).append(str(o.name))
+            je_situation[sit] = (aktiv, _nur_staebe(model, aktiv))
+        aktiv, nur_staebe = je_situation[sit]
+        if not nur_staebe:
+            continue
+        texte = []
+        for fak in teile:
+            fak = {str(n): float(f) for n, f in fak.items() if f}
+            if not fak:                      # nichts belastet: check_theorie3 rechnet nicht
+                continue
+            schluessel = (sit, tuple(sorted(fak.items())))
+            if schluessel not in je_rechnung:
+                je_rechnung[schluessel] = kopplung_sperre(model, aktiv, alt, fak)
+            t = je_rechnung[schluessel]
+            if t and t not in texte:
+                texte.append(t)
+        for t in texte:
+            out.setdefault(t, []).append(name)
     return out
 
 
@@ -823,7 +900,7 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
     # Volumen- oder Federelementen sagt die Pruefung „nur Stabtragwerke“ unten
     # den eigentlichen Grund (die Einleitungen dort sind auch Starrkoerper)
     if _nur_staebe(model, aktiv):
-        sperre_k = kopplung_sperre(model, aktiv)
+        sperre_k = kopplung_sperre(model, aktiv, factors=factors)
         if sperre_k:
             raise ValueError(sperre_k)
     ll_hinweise = []
