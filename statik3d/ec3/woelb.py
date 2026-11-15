@@ -148,10 +148,11 @@ def sektorwerte(sec: Section) -> Sektorwerte | None:
     if sec.typ == "U":
         # auf der Mittellinie: Flanschbreite bis Stegmitte (wie Section.channel,
         # model.iw_u_profil; bis zum 14.11.2026 die volle Breite, Befund C6), die
-        # Flanschdicke mit der Neigung, mit der I_w gebildet ist (UPN, Befund B'2)
-        from ..model import u_mittellinie, u_neigung_aus_iw
+        # Flanschdicke mit der Neigung, mit der I_w gebildet ist (UPN, Befund B'2), und
+        # deren Messstelle (UPN ueber h = 300 mm nach DIN 1026-1, Runde k7)
+        from ..model import u_mittellinie, u_flansch_aus_iw
         from ..zahlen import zahl_text
-        u = u_mittellinie(h, b, tw, tf, u_neigung_aus_iw(sec))
+        u = u_mittellinie(h, b, tw, tf, *u_flansch_aus_iw(sec))
         if u is None:
             return None
         bs, e, a0, c = u["bs"], u["e"], u["a0"], u["c"]

@@ -1112,6 +1112,32 @@ def _anschluss_feder_ueber_80(model) -> bool:
     return False
 
 
+def _laschenstoss_ueber_80(model) -> bool:
+    """Ein Laschenstoss, dessen Flanschlasche ueber 80 mm dick ist und dessen
+    Werkstoff dort kein f_y hat (nur Stahlsorte, keine Dickentabelle), und der
+    in der Rechnung etwas anderes als starr ist: fest „gelenkig“ oder mit einer
+    Drehfeder von Hand (automatisch bzw. Feder). Seit Stand 45 (Befund C4) warf
+    momenten_rotation dort, federn_setzen uebersprang den Anschluss, und das
+    Gelenk bzw. die Feder fehlte (Runde k7, 14.11.2026). Ein automatisch
+    modellierter Stoss ohne Feder von Hand rechnete vorher wie nachher starr."""
+    from .joints import anschluss as _an
+    for j in (getattr(model, "joints", None) or {}).values():
+        if not getattr(j, "design", True) or getattr(j, "typ", "") != "lasche":
+            continue
+        wahl = str(getattr(j, "modellierung", "") or "automatisch").lower()
+        if not (wahl == "gelenkig" or (getattr(j, "S_j", 0.0) and wahl in ("automatisch", "feder"))):
+            continue
+        try:
+            t = _an.vorlage(model, j)
+            mat = model.materials[model.elements[int(j.elem)].mat]
+        except Exception:                       # noqa: BLE001 - nicht gefuehrt, nicht betroffen
+            continue
+        t_fl = float(getattr(t, "t_fl", 0.0) or 0.0)
+        if t_fl > 0 and mat.dicke_ohne_wert(t_fl, "fy"):
+            return True
+    return False
+
+
 def _werkstoffe_sorte_ueber_80(model) -> list:
     """Namen der benutzten Werkstoffe, deren Stufe ueber 80 mm (Erzeugnisnorm,
     Material.erzeugnisnorm_setzen) zu einer anderen Sorte eingetragen wurde, als
@@ -1258,6 +1284,39 @@ def _u_profile_im_modell(model) -> str:
     return (f"die U-Profile {_kurz(namen)} tragen I_w nach einer früheren Formel (volle Flanschbreite "
             "bzw. UPN ohne Flanschneigung, zu groß) – beim Öffnen neu berechnen lassen oder den "
             "Querschnitt aus der Profiltabelle neu zuweisen, dann neu rechnen")
+
+
+def _upn_querschnitt_alt(model) -> tuple:
+    """(UPN, zusammengesetzte) - Namen der benutzten UPN, deren A, I_y, I_z, e_y genau
+    den Werten bis Stand 59 folgen (model.u_querschnitt_stand: t_f in der Flanschmitte
+    (b + t_w)/2 mit 8 % Neigung bzw. ohne Neigung aus dem DSTV-Import, ohne r2), und der
+    benutzten zusammengesetzten Querschnitte mit solchen UPN-Teilen
+    (model.u_zusammengesetzt_bis59). Unbenutzte zaehlen nicht (Befund A'10)."""
+    from .model import u_querschnitt_stand, u_zusammengesetzt_bis59
+    benutzt = {getattr(e, "sec", None) for e in (getattr(model, "elements", None) or [])}
+    einzeln, zus = [], []
+    for name, sec in (getattr(model, "sections", None) or {}).items():
+        if name not in benutzt:
+            continue
+        if u_querschnitt_stand(sec) is not None:
+            einzeln.append(str(name))
+        elif u_zusammengesetzt_bis59(sec):
+            zus.append(str(name))
+    return einzeln, zus
+
+
+def _upn_querschnitt_im_modell(model) -> str:
+    einzeln, zus = _upn_querschnitt_alt(model)
+    teile = []
+    if einzeln:
+        teile.append(f"die UPN {_kurz(einzeln)} tragen Querschnittswerte nach der früheren Formel (t_f in der "
+                     "Flanschmitte, ohne Ausrundung r2; UPN 200: A 32,86 statt 32,19 cm², I_y 1 966 statt "
+                     "1 911 cm⁴) – beim Öffnen neu berechnen lassen oder den Querschnitt aus der Profiltabelle "
+                     "neu zuweisen")
+    if zus:
+        teile.append(f"die zusammengesetzten Querschnitte {_kurz(zus)} enthalten UPN mit diesen früheren Werten "
+                     "– neu zusammensetzen")
+    return ("; ".join(teile) + ", dann neu rechnen") if teile else ""
 
 
 def _woelb_u(model) -> bool:
@@ -2008,6 +2067,65 @@ def _alpha_cr_im_ergebnis(an, _an2=None) -> str:
             namen.append(str(n))
     namen = sorted(set(namen))
     return ("alpha_cr bzw. Theorie II. Ordnung: " + ", ".join(namen[:6]) + (" …" if len(namen) > 6 else "")
+            if namen else "")
+
+
+def _knicken_im_ergebnis(model, an) -> str:
+    """Ein Knickergebnis (solve_buckling) in der Analyse, das Ergebnis selbst,
+    Knicklaengen aus der Knickfigur, oder alpha_cr in einem Modell mit
+    Vorspannkraft (Sollkraft) - Merkmal knicken_stabteilung."""
+    namen = [str(n) for n, r in _ergebnis_paare(an) if getattr(r, "kind", "") == "buckling"]
+    try:
+        from .vorspannkraft import sollkraefte
+        soll = any(sollkraefte(model, {n: 1.0}) for n in (getattr(model, "load_cases", None) or {}))
+    except Exception:                                   # noqa: BLE001 - lieber betroffen
+        soll = True
+    if soll:
+        namen += _alpha_cr_namen(an)
+    if getattr(an, "kind", "") == "buckling":
+        namen.append(str(getattr(an, "name", "") or "Knicken"))
+    if getattr(an, "knicklaengen", None) is not None:
+        namen.append("Knicklängen aus der Knickfigur")
+    namen = sorted(set(namen))
+    return ("Knicken: " + ", ".join(namen[:6]) + (" …" if len(namen) > 6 else "")) if namen else ""
+
+
+def _versatz_teilbar(model) -> bool:
+    """Ein Stab mit Versatz der Stabenden, den die interne Stabteilung teilt
+    (statik3d.stabteilung, seit Verfahrensstand 62) - bis dahin blieb er
+    ungeteilt."""
+    try:
+        from .stabteilung import teilzahlen, _hat_versatz
+        return any(_hat_versatz(model.elements[i]) for i in teilzahlen(model))
+    except Exception:                       # noqa: BLE001 - Pruefung, nie Abbruch
+        return False
+
+
+def _versatz_stabteilung_im_ergebnis(model, an) -> str:
+    """alpha_cr, Theorie II. Ordnung, Knicken oder Theorie III. Ordnung im
+    Ergebnis - Merkmal versatz_stabteilung."""
+    teile = [t for t in (_alpha_cr_im_ergebnis(model, an), _theorie3_im_ergebnis(model, an)) if t]
+    if getattr(an, "kind", "") == "buckling" and not teile:
+        teile.append("Knicken: " + str(getattr(an, "name", "") or "Knicken"))
+    return "; ".join(teile)
+
+
+def _knicken_ohne_positiven_im_ergebnis(model, an) -> str:
+    """Ein Knickergebnis (solve_buckling), dessen Faktoren alle negativ sind
+    - Merkmal knicken_positiver_faktor."""
+    import math
+    paare = list(_ergebnis_paare(an))
+    if getattr(an, "kind", "") == "buckling":
+        paare.append((str(getattr(an, "name", "") or "Knicken"), an))
+    namen = []
+    for n, r in paare:
+        f = getattr(r, "buckling_factors", None) if getattr(r, "kind", "") == "buckling" else None
+        if f is None:
+            continue
+        if not any(math.isfinite(float(x)) and float(x) > 0 for x in f):
+            namen.append(str(n))
+    namen = sorted(set(namen))
+    return ("Knicken ohne positiven Faktor: " + ", ".join(namen[:6]) + (" …" if len(namen) > 6 else "")
             if namen else "")
 
 
@@ -3503,10 +3621,93 @@ MERKMALE: list = [
         modellmerkmal="Stab mit Stablast in Stabrichtung (auch Eigengewicht) bei Stabteilung unter der Vorgabe "
                       "bzw. in einem Element, oder mit Längsgelenk; mit α_cr, Knicken oder Theorie II./III. Ordnung",
         betrifft=_laengslast_grob, im_ergebnis=_laengsgelenk_im_ergebnis),
+    # Runde k7 (14.11.2026): Laschenstoss mit Flanschlasche ueber 80 mm ohne
+    # Dickentabelle - momenten_rotation holte f_y der Lasche vor der Steifigkeit
+    # und warf (Befund C4), federn_setzen uebersprang den Anschluss: eine fest
+    # „gelenkig“ modellierte Lasche rechnete ohne Gelenk (Traeger 4 m, IPE 300,
+    # Lasche 90 mm: 0,832 statt 3,416 mm), eine Drehfeder von Hand fehlte (Kragarm
+    # 25,882 statt 29,882 mm). Wie die Kopfplatte (Stand 53). Fehlerkorrektur
+    Merkmal(
+        name="laschenstoss_ueber_80", titel="Gelenk oder Drehfeder eines Laschenstoßes über 80 mm",
+        texte={"alt": "Flanschlasche über 80 mm ohne f_y: Anschluss übersprungen, Stabende ohne Gelenk bzw. "
+                      "ohne Drehfeder von Hand",
+               "neu": "Steifigkeit des Stoßes ohne f_y, Gelenk bzw. Drehfeder in der Rechnung; M_j,Rd nicht "
+                      "bestimmt, mit Meldung"},
+        wechsel=(Wechsel(stand=59, datum="14.11.2026", commit="fix/k7-hinweis", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Laschenstoß mit Flanschlasche über 80 mm aus einem Werkstoff ohne Dickentabelle, fest "
+                      "„gelenkig“ modelliert oder mit Drehfeder von Hand",
+        betrifft=_laschenstoss_ueber_80),
+    # Runde k7 (14.11.2026, vom Anwender freigegeben): das Knicken (solve_buckling)
+    # teilte Staebe nicht intern wie Theorie II. Ordnung und alpha_cr „auto“ - ein
+    # Stab aus einem Element knickte mit seiner kubischen Biegelinie (Saeule 5 m
+    # mit Last in Stabrichtung unten: 16,80 statt 5,81; gelenkige Stuetze +21,6 %,
+    # beidseits eingespannt „Keine Normalkräfte“; Zugband-Kurzstab 4 369,9 statt
+    # 3 289,6). Seither am intern geteilten Modell. Dazu alpha_cr „auto“ mit
+    # Vorspannkraft (Sollkraft): die Teilung las dort N = 0 im verriegelten
+    # Zugband (801,6 statt 603,4). Fehlerkorrektur
+    Merkmal(
+        name="knicken_stabteilung", titel="Interne Stabteilung beim Knicken",
+        texte={"alt": "Knicken in den Elementen des Modells (ein Element je Stab: kubische Biegelinie); "
+                      "α_cr mit Vorspannkraft: gespannter Stab ungeteilt",
+               "neu": "Knicken am intern geteilten Modell wie Theorie II. Ordnung und α_cr; Teilung mit der "
+                      "Normalkraft der Vorspannkraft"},
+        wechsel=(Wechsel(stand=61, datum="14.11.2026", commit="fix/k7-knick", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Knicken (oder α_cr mit Vorspannkraft) mit Stäben, die die interne Stabteilung teilen "
+                      "würde (weniger Elemente je Stab als die Stabteilung)",
+        betrifft=_balken_teilbar, im_ergebnis=_knicken_im_ergebnis),
+    # Runde k7 (14.11.2026, vom Anwender freigegeben): Section.channel mass t_f eines UPN
+    # in der Flanschmitte (b + t_w)/2 mit 8 % fuer alle Groessen und liess r2 weg (UPN
+    # 200 A 32,86 statt 32,19 cm², I_y 1 966 statt 1 911 cm⁴, W_pl,z 43 statt 52 cm³);
+    # DIN 1026-1: t_f bei b/2 mit 8 %, ueber h = 300 mm bei (b + s)/2 mit 5 %, r1 und r2.
+    # Der DSTV-Import legte UPN ohne Neigung an. Der Wert steht im gespeicherten
+    # Querschnitt - erst ein neu berechneter wirkt. Fehlerkorrektur, Status am Modell
+    Merkmal(
+        name="upn_querschnitt", titel="Querschnittswerte der UPN (DIN 1026-1)",
+        texte={"alt": "UPN mit t_f in der Flanschmitte, 8 % Neigung, ohne r2",
+               "neu": "UPN nach DIN 1026-1: t_f bei b/2 (8 %), über h = 300 mm bei (b + s)/2 (5 %), r1 und r2"},
+        wechsel=(Wechsel(stand=60, datum="14.11.2026", commit="fix/k7-upn", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="benutzter UPN (auch als Teil eines zusammengesetzten Querschnitts) mit den "
+                      "Querschnittswerten bis Stand 59",
+        betrifft=lambda model: any(_upn_querschnitt_alt(model)), im_modell=_upn_querschnitt_im_modell),
+    # Runde k7, 15.11.2026 (vom Anwender freigegeben, „1 ja 2 ja“): Staebe mit
+    # Versatz der Stabenden blieben bei der internen Stabteilung ungeteilt und
+    # rechneten mit ihrer kubischen Biegelinie - Zugband mit Arm 0,3 m und
+    # Sollkraft 70 kN: alpha_cr „auto“ und Knicken 801,6 statt 603,4
+    # (Kurzstabmodell, Band in 10 Teilen); Theorie III. Ordnung am Kragarm mit
+    # Versatz quer 0,3 m am Ende seitliche Spitzenverschiebung 7,61 statt
+    # 8,23 mm (Kurzstabmodell). Seither
+    # geteilt, der Versatz am ersten und letzten Teil. Fehlerkorrektur
+    Merkmal(
+        name="versatz_stabteilung", titel="Interne Stabteilung an Stäben mit Versatz",
+        texte={"alt": "Stab mit Versatz der Stabenden ungeteilt (ein Element: kubische Biegelinie)",
+               "neu": "Stab mit Versatz intern geteilt, Zwischenknoten auf der versetzten Stabachse, Versatz "
+                      "nur am ersten und letzten Teil"},
+        wechsel=(Wechsel(stand=62, datum="15.11.2026", commit="fix/k7-versatzknick", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Stab mit Versatz der Stabenden (Exzentrizität), den die interne Stabteilung teilt, mit "
+                      "α_cr, Knicken oder Theorie II./III. Ordnung",
+        betrifft=_versatz_teilbar, im_ergebnis=_versatz_stabteilung_im_ergebnis),
+    # Runde k7, 15.11.2026 (vom Anwender freigegeben): das Knicken gab nur die
+    # angeforderten betragskleinsten Faktoren aus, auch wenn alle negativ
+    # waren - ein Fachwerk mit gezogenem Untergurt mit drei Formen nur
+    # -64,38 / -64,38 / -130,78, der kleinste positive Faktor 7765,80 ist der
+    # 35. nach Betrag. Seither werden Formen nachgefordert. Fehlerkorrektur
+    Merkmal(
+        name="knicken_positiver_faktor", titel="Knicken: mindestens ein positiver Faktor",
+        texte={"alt": "nur die angeforderten Formen, auch wenn alle Faktoren negativ sind",
+               "neu": "Formen nachgefordert, bis ein positiver Faktor dabei ist (oder Hinweis, dass es keinen "
+                      "gibt)"},
+        wechsel=(Wechsel(stand=62, datum="15.11.2026", commit="fix/k7-versatzknick", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Knickergebnis, dessen Faktoren alle negativ sind",
+        im_ergebnis=_knicken_ohne_positiven_im_ergebnis),
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 58
+VERFAHRENSSTAND = 62
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

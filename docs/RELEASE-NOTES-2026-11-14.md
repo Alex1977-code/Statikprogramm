@@ -44,7 +44,17 @@ Zehn Prüfagenten haben den Sammelzweig nach PR #45 und #46 geprüft (Befundlist
 * **Anzeige (Stand 57).** Verformungsnachweis „Stab“ nur uy, uz, u; Verdrehungen nur absolut; Browser behält das Antriebsmoment; Zählung ab 0; Umhüllende mit eingestellter Genauigkeit; Bericht ohne wissenschaftliche Schreibweise.
 * **Theorie II. Ordnung (Stand 58).** Mittel der Normalkraft bei Last in Stabrichtung, unabhängig von Gelenk und Elementrichtung (ein Element: 4,95 statt 11,56 bzw. 3,13 kNm); mit der Vorgabe-Teilung höchstens 0,1 % Änderung.
 
+## Vierter Teil: Nachschub (Stände 59 bis 62)
+
+Vier Behebungen, die der Anwender nach der zweiten Prüfrunde freigegeben hat; der Verfahrensstand steigt auf 62. Jede Zahl ist auf zwei Wegen geprüft.
+
+* **Hinweis und Laschenstoß (Stand 59).** Stab mit Last in Stabrichtung in weniger als vier Elementen: Hinweis (Moment sonst bis etwa 6 % unsicher), kein Wert geändert. Laschenstoß über 80 mm ohne Dickentabelle behält seine Steifigkeit (gelenkige Lasche: 3,416 statt 0,832 mm).
+* **UPN nach DIN 1026-1 (Stand 60).** Wahrer Umriss mit beiden Ausrundungen, Tabellenwerte auf 0,6 % (UPN 200: I_y 1 910,9 statt 1 966,2 cm⁴); DSTV/HiCAD-Import gleich; alle anderen Profile unverändert.
+* **Knicken mit interner Stabteilung (Stand 61).** Wie Theorie II. Ordnung; gelenkige Stütze aus einem Element bisher 21,6 % zu hoch.
+* **Stäbe mit Versatz und positiver Knickfaktor (Stand 62).** Die interne Stabteilung teilt auch Stäbe mit Versatz (Zugband: 603,41 statt 801,59, Kurzstabmodell 603,44). Liefern die angeforderten Knickfiguren nur negative Faktoren, rechnet das Programm weiter bis zum ersten positiven (Fachwerk: 7 765,80) oder meldet, dass es keinen gibt.
+
 ## Nicht enthalten
 
 * Nebenbefunde der Agenten, je eine Zeile in der Befundliste und in den Berichten, unter anderem: Schubbeulen von Zylindern mit den Bereichen des Meridiandrucks, Beulnachweise ohne Werkstoff fallen auf 235 zurück, Sonderregeln der Anzeigetafel nach 7.4.3, Feldanteil ohne Gelenk mit der Kraft am Stabanfang, Eckausbildung der freien Wand, Stellungsmaske zählt Knoten ab 1.
 * Vorschlag an den Anwender offen: beim Neuvernetzen einer Fläche die Knoten der Nachbarn wiederverwenden, damit zusammenhängende Konstruktionen nicht ganz neu vernetzt werden.
+* Offen aus Stand 62: Ein starrer Arm als Balken STARR quer zur Kraft und der Versatz desselben Arms geben nach Theorie II. Ordnung und beim Knicken verschiedene Werte (Knicken etwa 3 %, Durchbiegung etwa 0,1 %); vorgeschlagen ist ein Vergleich mit echter starrer Kopplung. Der HTML-Bericht nimmt für den Hinweis „α_cr < 10“ den ersten Faktor der Liste, auch einen negativen.

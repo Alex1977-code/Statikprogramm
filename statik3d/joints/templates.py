@@ -860,11 +860,25 @@ class Splice(JointTemplate):
         # Die Laschen tragen das Moment ueber die Flanschkraft
         hebel = max((sec.h or 0.3) - (sec.tf or 0.012), 0.1 * (sec.h or 0.3))
         schnitte = 2 if self.inner_flange else 1
-        F_fl = min(self.n_fl * (self.bolt.Fs_Rd() if self.bolt.preloaded
-                                else self.bolt.Fv_Rd() * schnitte),
-                   self.b_fl * self.t_fl * schnitte * self._blech(self.t_fl)[0] / self.gamma_M0)
-        g.M_j_Rd = F_fl * hebel
-        g.tragklasse = R.tragfaehigkeitsklasse(g.M_j_Rd, Mc_Rd)
+        # f_y der Lasche (mit ihrer Dicke, Befund B8) braucht nur M_j,Rd; die
+        # Steifigkeit (starr) haengt nicht daran. Bis zum 14.11.2026 wurde f_y
+        # vor allem anderen geholt: ueber 80 mm ohne Dickentabelle (kein Wert,
+        # Befund C4) warf das, federn_setzen uebersprang den Anschluss, und eine
+        # fest „gelenkig“ modellierte Lasche verlor ihr Gelenk, eine von Hand
+        # gesetzte Drehfeder fiel weg (Runde k7, wie die Kopfplatte in Runde k6).
+        try:
+            fy_fl = self._blech(self.t_fl)[0]
+        except ValueError as ex:
+            fy_fl = None
+            g.M_j_Rd, g.tragklasse = 0.0, ""
+            g.hinweise.append(f"M_j,Rd nicht bestimmt: {ex} Die Steifigkeit des Stoßes hängt "
+                              "nicht an f_y und sitzt in der Rechnung.")
+        if fy_fl is not None:
+            F_fl = min(self.n_fl * (self.bolt.Fs_Rd() if self.bolt.preloaded
+                                    else self.bolt.Fv_Rd() * schnitte),
+                       self.b_fl * self.t_fl * schnitte * fy_fl / self.gamma_M0)
+            g.M_j_Rd = F_fl * hebel
+            g.tragklasse = R.tragfaehigkeitsklasse(g.M_j_Rd, Mc_Rd)
         g.rotation_ok = True
         g.rotation_grund = ("durchgehender Stoß - die Verdrehung ist die des Stabes; "
                             "ein Rotationsvermögen des Anschlusses wird nicht benötigt")

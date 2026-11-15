@@ -11515,8 +11515,8 @@ gerade Kette von Balken zwischen Knoten mit Abzweig, Gelenk oder Lager als
 Stab. Geteilt wird nur, wo die Normalkraft nach Theorie I. Ordnung mindestens
 ein Tausendstel der Euler-Last des Elements erreicht; starre Kurzstäbe und
 Balken ohne Normalkraft bleiben ganz. Nicht geteilt werden außerdem
-Fachwerkstäbe, Seile, Stäbe mit Wölbkrafttorsion und Stäbe mit Versatz der
-Stabenden. Die Ergebnisse gelten für die Knoten und Elemente des Modells; das
+Fachwerkstäbe, Seile und Stäbe mit Wölbkrafttorsion (Stäbe mit Versatz seit
+15.11.2026, siehe unten). Die Ergebnisse gelten für die Knoten und Elemente des Modells; das
 Feld eines Elements setzt sich aus seinen Teilstücken zusammen, auch in der
 gespeicherten Ergebnisdatei. Stabteilung 1 schaltet die Teilung ab. Bis zum
 12.11.2026 rechnete ein Stab in einem Element bei gehaltenen Enden ohne den
@@ -11526,6 +11526,20 @@ Ergebnis nach Theorie I. Ordnung, ohne Hinweis. Jetzt sind es nach Theorie II.
 Ordnung 44,21 kNm (Differentialgleichung 44,207) und nach Theorie III.
 Ordnung 44,07 kNm (−0,3 %, das korotationale Element braucht mehr Teile).
 Geprüft in `tests/test_stabteilung.py`.
+
+**Stäbe mit Versatz in der internen Stabteilung** (seit 15.11.2026, Stand 62).
+Die interne Stabteilung teilt jetzt auch Stäbe mit Versatz der Stabenden, nach
+Theorie II. und III. Ordnung, für α_cr „auto“ und beim Knicken. Die
+Zwischenknoten liegen auf der versetzten Stabachse; den Versatz behalten nur
+das erste und das letzte Teilstück, die Teile dazwischen haben keinen.
+Ergebnisse und Schnittgrößen stehen weiter am Stab des Modells. Bis dahin
+rechnete ein Stab mit Versatz in einem Element mit kubischer Biegelinie:
+Zugband mit Arm 0,3 m längs des Bandes und Sollkraft 70 kN, Knicken und α_cr
+801,59 statt 603,41 (Kurzstabmodell 603,44); Theorie III. Ordnung am Kragarm
+4 m mit Versatz quer 0,3 m am Ende und 200 kN Druck: seitliche
+Spitzenverschiebung 7,61 statt 8,23 mm. Stäbe mit kleiner Normalkraft und
+starre Kurzstäbe bleiben wie bisher ungeteilt. Geprüft in
+`tests/test_versatz_stabteilung_k7.py`.
 
 **Stabteilung für α_cr** (seit 09.11.2026). Die Verzweigung rechnet je
 Element mit einer kubischen Biegelinie. Seit der internen Stabteilung
@@ -11587,7 +11601,8 @@ mit 0,1 m Versatz unter Zug in der Knotenlinie hob sich nach Theorie I. Ordnung
 um F·e·L²/(2·E·I), nach Theorie III. Ordnung gar nicht, und das Stabendmoment
 F·e fehlte. Bei kleinen Lasten stimmt Theorie III. Ordnung jetzt mit Theorie I./
 II. Ordnung überein, bei großen Verdrehungen (bis 32°) mit einem Modell aus
-starren Kurzstäben. Die interne Stabteilung teilt Stäbe mit Versatz nicht.
+starren Kurzstäben. Seit 15.11.2026 teilt die interne Stabteilung auch Stäbe
+mit Versatz (Stand 62).
 Verfahrensstand 34; geprüft in `tests/test_theorie3_versatz.py`.
 
 **Verschiedener Versatz an Anfang und Ende in allen Rechenarten** (seit
@@ -11666,6 +11681,36 @@ Richtung 11,56 oder 3,13 kNm). Mit der Vorgabe-Stabteilung 10 ändern sich die
 Ergebnisse um höchstens etwa 0,1 %. Ein einzelnes Element bleibt bei stark
 ungleichmäßiger Längslast eine Näherung; dafür feiner teilen. Geprüft in
 `tests/test_laengslast_mittel_1411.py`.
+
+**Hinweis bei Last in Stabrichtung** (seit 14.11.2026). Trägt ein Stab Last in
+seiner Richtung (Strecken-, Teil- oder Trapezlast, auch Eigengewicht am
+geneigten Stab) und wird er in weniger als vier Elementen gerechnet, steht
+nach Theorie II. und III. Ordnung, bei α_cr „auto“ und beim Knicken der
+Hinweis „Stab … trägt Last in Stabrichtung und ist in k Elemente geteilt –
+mindestens 4 Elemente empfohlen, sonst kann das Moment bis etwa 6 % auf der
+unsicheren Seite liegen.“ Maßgebend ist die gerechnete Elementzahl samt
+interner Stabteilung; mit der Vorgabe 10 erscheint der Hinweis nicht. Kein
+Wert wird geändert. Geprüft in `tests/test_hinweis_k7_1411.py`.
+
+**Knicken mit interner Stabteilung** (seit 14.11.2026, Stand 61). Das
+Verzweigungsproblem (*Knicken*, Knickfiguren, Knicklängen aus der Knickfigur)
+rechnet am intern geteilten Modell wie Theorie II. Ordnung und α_cr „auto“,
+mit denselben Regeln. Bis dahin knickte ein Stab aus einem Element mit seiner
+kubischen Biegelinie: Säule 5 m mit Last in Stabrichtung auf dem unteren
+Meter 16,80 statt 5,81, gelenkige Stütze 21,6 % zu hoch, eingespannt-gelenkig
+48,6 %, beidseits eingespannt „Keine Normalkräfte vorhanden“. Die Knickfigur
+steht an den Knoten des Modells. Geprüft in
+`tests/test_knicken_stabteilung_k7.py`.
+
+**Mindestens ein positiver Knickfaktor** (seit 15.11.2026, Stand 62). Liefern
+die angeforderten Knickfiguren nur negative Faktoren (das System knickt nur
+bei umgekehrter Last), rechnet das Programm weitere Figuren, bis ein
+positiver Faktor dabei ist, höchstens 100. Gibt es unter dieser Last keinen
+positiven Faktor, steht das im Klartext im Ergebnis. Fachwerk mit gezogenem
+Untergurt, drei Figuren angefordert: bisher nur −64,38, −64,38 und −130,78,
+jetzt bis zum ersten positiven Faktor 7 765,80. Fälle, die schon einen
+positiven Faktor liefern, bleiben unverändert. Geprüft in
+`tests/test_versatz_stabteilung_k7.py`.
 
 **Wölbkrafttorsion und Längsgelenk nach Theorie II. Ordnung** (seit
 12.11.2026). Balken mit Wölbkrafttorsion rechnen ihre Stabendkräfte jetzt mit
@@ -11932,6 +11977,22 @@ leert die Werte über 80 mm. Ein Verformungsnachweis „Stab“ führt nur uy, u
 u; Verdrehungen nur gegen einen absoluten Grenzwert in mrad. Geprüft in
 `tests/test_ermuedung_k6_1411.py`, `tests/test_werkstoff_k6_1411.py` und
 `tests/test_anzeige_runde2.py`.
+
+**UPN nach DIN 1026-1, Laschenstoß über 80 mm** (seit 14.11.2026, Stände 59
+und 60). Die Querschnittswerte der UPN kommen aus dem wahren Umriss nach
+DIN 1026-1 mit beiden Ausrundungen; t_f wird bis 300 mm Höhe bei b/2 mit 8 %
+Neigung gemessen, darüber bei (b + s)/2 mit 5 %. Die Tabellenwerte werden auf
+0,6 % getroffen (UPN 200: A 32,19 statt 32,86 cm², I_y 1 910,9 statt
+1 966,2 cm⁴, I_z 147,8 statt 155,2 cm⁴, W_pl,z 51,9 statt 43,1 cm³). DSTV- und
+HiCAD-Import geben einem U mit den Maßen eines UPN dieselbe Geometrie. Alle
+anderen Profilfamilien bleiben unverändert. Gespeicherte UPN mit den alten
+Werten tragen einen Status, die Frage beim Öffnen setzt die Werte der
+Profiltabelle. Ein Laschenstoß mit Flanschlasche über 80 mm ohne
+Dickentabelle behält wie die Kopfplatte seine Steifigkeit (gelenkig oder
+Drehfeder von Hand); bis dahin rechnete er starr (Träger 4 m, IPE 300,
+gelenkige Lasche 90 mm: 0,832 statt 3,416 mm). M_j,Rd und der Nachweis
+bleiben ohne f_y unbestimmt. Geprüft in `tests/test_upn_din1026_1411.py` und
+`tests/test_hinweis_k7_1411.py`.
 
 ### Verformungsnachweise (GZG)
 

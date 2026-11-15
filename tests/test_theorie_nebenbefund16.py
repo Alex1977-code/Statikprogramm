@@ -151,11 +151,14 @@ L_B = 4.0
 P_B = 0.5 * math.pi ** 2 * EI / L_B ** 2
 
 
-def _stab_versatz(art, e_y, n=8, qz=-1e3):
+def _stab_versatz(art, e_y, n=8, qz=-1e3, teilung=None):
     """Druckstab, gabelgelagert an der Knotenlinie; der Stab liegt um e_y
     daneben. art "versatz": Exzentrizitaet am Element; "kurzstab": eigene
-    Stabknoten, starr angeschlossen; "ohne": mittig."""
+    Stabknoten, starr angeschlossen; "ohne": mittig. ``teilung``:
+    netz.stabteilung (None: Vorgabe)."""
     m = _modell(Iz=50 * I)
+    if teilung is not None:
+        m.netz.stabteilung = teilung
     if art == "kurzstab":
         from statik3d.model import Section
         m.add_section(Section("STARR", A=1e3, Iy=1e2, Iz=1e2, It=1e2, zmax=0.1, ymax=0.1))
@@ -193,9 +196,23 @@ def test_b_kg_mit_versatz():
           a_v is not None and a_k is not None and abs(a_v / a_k - 1) < 1e-4, f"{a_v} gegen {a_k}")
     # Durchbiegung unter q = 1 kN/m: Vergroesserung 1/(1 - 1/alpha) = 2
     w1 = 5 * 1e3 * L_B ** 4 / (384 * EI)
-    check(f"… Durchbiegung in der Mitte wie mit Kurzstäben (auf 0,1 %; etwa 2 · {w1 * 1e3:.4f} mm, vorher −1,1148 mm)",
-          abs(w_v / w_k - 1) < 1e-3 and abs(abs(w_v) / (2 * w1) - 1) < 0.01,
-          f"Versatz {w_v * 1e3:.4f} mm, Kurzstäbe {w_k * 1e3:.4f} mm, ohne {w_o * 1e3:.4f} mm")
+    # Verglichen wird wie beim Anlegen dieser Pruefung (09.11.2026, vor der
+    # internen Stabteilung) jedes Modell in seinen eigenen acht Elementen
+    # (netz.stabteilung = 1). Seit Verfahrensstand 62 (15.11.2026) teilt die
+    # Stabteilung auch den Stab mit Versatz (je Element zwei Teile); das
+    # aendert w um 0,004 % (-0,317718 -> -0,317705 mm), geprueft unten auf
+    # 0,01 %. Bis dahin stand hier der ungeteilte Versatz gegen die in 80
+    # Teile geteilten Kurzstaebe: 9,97e-4 knapp unter der Grenze 1e-3; mit
+    # beiden geteilt 1,04e-3. Der Unterschied (eingeschwungen etwa 0,11 %) ist
+    # einer der Formulierung (Armanteil [F]x [a]x des Versatzes gegen den
+    # Balken STARR, dessen K_G nur seine Normalkraft kennt), nicht der Teilung.
+    _a, w_v1, _t, _r = _stab_versatz("versatz", e_y, teilung=1)
+    _a, w_k1, _t, _r = _stab_versatz("kurzstab", e_y, teilung=1)
+    check(f"… Durchbiegung in der Mitte wie mit Kurzstäben, beide in 8 Elementen (auf 0,1 %; etwa 2 · "
+          f"{w1 * 1e3:.4f} mm, vorher −1,1148 mm), intern geteilt wie ungeteilt (auf 0,01 %)",
+          abs(w_v1 / w_k1 - 1) < 1e-3 and abs(abs(w_v) / (2 * w1) - 1) < 0.01 and abs(w_v / w_v1 - 1) < 1e-4,
+          f"Versatz {w_v1 * 1e3:.4f} mm, Kurzstäbe {w_k1 * 1e3:.4f} mm (8 Elemente); geteilt Versatz "
+          f"{w_v * 1e3:.4f}, Kurzstäbe {w_k * 1e3:.4f}, ohne {w_o * 1e3:.4f} mm")
     check("… keine Verdrehung um die Stabachse (wie mit Kurzstäben; vorher 2,0 mrad)",
           abs(t_v) < 1e-6 and abs(t_k) < 1e-6, f"Versatz {t_v * 1e3:.5f} mrad, Kurzstäbe {t_k * 1e3:.5f} mrad")
 

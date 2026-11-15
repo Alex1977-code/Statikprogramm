@@ -792,9 +792,14 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
         # Vorspannkraft (Soll nach Verankerung, 13.10.2026): das Ergebnis nach
         # Theorie I. Ordnung bleibt stehen und wird gekennzeichnet
         return Results(name=name, kind="combination", model=model), Th2Info(kombination=name, fehler=sperre)
+    ll_hinweise = []
     if stabteilung:
-        from .stabteilung import fein_system, zurueck
+        from .stabteilung import fein_system, zurueck, laengslast_hinweise, kraefte_theorie1
         system = system or StaticSystem(model)
+        # Stab mit Last in Stabrichtung in weniger als vier gerechneten
+        # Elementen: Hinweis, kein geaenderter Wert (Runde k7, 14.11.2026)
+        ll_hinweise = laengslast_hinweise(model, factors, getattr(system, "aktiv", None), 1,
+                                          kraefte=lambda: kraefte_theorie1(model, system, factors))
         fein = fein_system(model, system, factors)
         if fein is not None:
             m2, sys2, abb = fein
@@ -802,6 +807,7 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
                                         elastisch=elastisch, max_iter=max_iter, tol=tol,
                                         richtung=richtung, alle_vorkruemmungen=alle_vorkruemmungen,
                                         progress=progress, stabteilung=False)
+            info.hinweise.extend(h for h in ll_hinweise if h not in info.hinweise)
             return zurueck(model, res2, abb), info
     t0 = time.time()
     system = system or StaticSystem(model)
@@ -825,6 +831,7 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
     postprocess(model, u1, res1, feq, q, temp, aktiv=aktiv)
 
     info = Th2Info(kombination=name, u_max_I=float(np.abs(u1).max()))
+    info.hinweise.extend(ll_hinweise)
     ac = alpha_cr(model, system, u1, n_anfang=n_anf, feq=feq)
     info.alpha_cr = ac["alpha_cr"]
     info.stab_aus(ac)
@@ -1114,8 +1121,13 @@ def check_theorie2(model: Model, analysis, combos: list = None, system=None,
             # am intern geteilten Modell wie die Rechnung selbst (12.11.2026):
             # mit einem Element je Stab lag alpha_cr bis 22 % zu hoch, und die
             # Kombination fiel womoeglich zu Unrecht unter die Grenze
-            from .stabteilung import fein_system
+            from .stabteilung import fein_system, laengslast_hinweise, kraefte_theorie1
             fein = fein_system(model, system, faktoren)
+            # Hinweis Last in Stabrichtung bei weniger als vier gerechneten
+            # Elementen (Runde k7) - auch wenn nur alpha_cr bestimmt wird
+            ll_hinweise = laengslast_hinweise(
+                model, faktoren, getattr(system, "aktiv", None), 1,
+                kraefte=lambda: kraefte_theorie1(model, system, faktoren))
             m_a, s_a = (fein[0], fein[1]) if fein is not None else (model, system)
             F, _feq, _q, _temp = case_loads(m_a, faktoren, getattr(s_a, "aktiv", None))
             from .vorspannkraft import sollkraefte
@@ -1145,6 +1157,7 @@ def check_theorie2(model: Model, analysis, combos: list = None, system=None,
                 info.hinweise.append(ac["fehler"])
             if ac.get("hinweis_teilung"):
                 info.hinweise.append(ac["hinweis_teilung"])
+            info.hinweise.extend(ll_hinweise)
             if ac["alpha_cr"] >= grenze:
                 out.kombinationen[zeile] = info
                 if schluessel is not None:

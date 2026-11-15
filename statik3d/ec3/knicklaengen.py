@@ -99,6 +99,30 @@ def _modale_biegeenergie(model: Model, v: np.ndarray, i: int) -> tuple[float, fl
     return ey, ez
 
 
+def _feine_eigenform(model: Model, res, v: np.ndarray, modus: int):
+    """(Modell, Eigenform) fuer die modale Energie. Hat das Knicken intern
+    geteilt (Runde k7, 14.11.2026: res.info["stabteilung"], die Eigenform der
+    Zwischenknoten in res.buckling_modes_teile), das feine Modell
+    (stabteilung.teilen mit denselben Teilzahlen - dieselbe Knotenfolge) und
+    die ganze Eigenform; an den Modellknoten allein fehlte die Biegelinie
+    zwischen ihnen (beidseits eingespannte Stuetze aus einem Element: dort
+    ist die Eigenform null). Sonst ``model`` und ``v``."""
+    teile = getattr(res, "buckling_modes_teile", None)
+    zahlen = (getattr(res, "info", None) or {}).get("stabteilung")
+    if teile is None or not zahlen or not 0 <= modus < len(teile):
+        return model, v
+    from ..stabteilung import teilen
+    fein = teilen(model, None, {int(i): int(n) for i, n in zahlen.items()})
+    if fein is None:
+        return model, v
+    m2 = fein[0]
+    zw = np.asarray(teile[modus], float).reshape(-1, 6)
+    grob = np.asarray(v, float).reshape(-1, 6)
+    if len(grob) != len(model.nodes) or len(m2.nodes) != len(grob) + len(zw):
+        return model, v
+    return m2, np.concatenate([grob, zw]).ravel()
+
+
 def _druckkraft(model: Model, res, member: Member) -> float:
     """Die maßgebende (größte) Druckkraft entlang des Stabes, negativ."""
     from ..solver import member_forces
@@ -127,11 +151,13 @@ def knicklaengen_aus_eigenform(model: Model, res, modus: int = 0,
                                min_beteiligung)
     if alpha <= 0:
         out.log.append(f"α_cr = {alpha:.3f} ≤ 0: die Knickfigur gehört zu einer Entlastung")
-    # Energie je Element (alle Stabelemente), daraus die Beteiligung der Staebe
+    # Energie je Element (alle Stabelemente), daraus die Beteiligung der Staebe -
+    # nach interner Teilung am feinen Modell (die Staebe dort mit ihren Teilen)
+    m_e, v_e = _feine_eigenform(model, res, v, modus)
     energie: dict[int, tuple[float, float]] = {}
-    for i, e in enumerate(model.elements):
+    for i, e in enumerate(m_e.elements):
         if e.typ in asm.LINE_TYPES:
-            energie[i] = _modale_biegeenergie(model, v, i)
+            energie[i] = _modale_biegeenergie(m_e, v_e, i)
     gesamt = sum(a + b for a, b in energie.values()) or 1.0
     namen = list(staebe) if staebe else list(model.members)
     for name in namen:
@@ -140,8 +166,9 @@ def knicklaengen_aus_eigenform(model: Model, res, modus: int = 0,
             continue
         L = sum(model.element_length(int(i)) for i in mem.elements)
         N_Ed = _druckkraft(model, res, mem)
-        ey = sum(energie.get(int(i), (0.0, 0.0))[0] for i in mem.elements)
-        ez = sum(energie.get(int(i), (0.0, 0.0))[1] for i in mem.elements)
+        mem_e = m_e.members.get(name, mem) if m_e is not model else mem
+        ey = sum(energie.get(int(i), (0.0, 0.0))[0] for i in mem_e.elements)
+        ez = sum(energie.get(int(i), (0.0, 0.0))[1] for i in mem_e.elements)
         anteil = (ey + ez) / gesamt
         k = Knicklaenge(name, L, N_Ed, alpha, beteiligung=anteil,
                         beteiligt=anteil >= min_beteiligung)

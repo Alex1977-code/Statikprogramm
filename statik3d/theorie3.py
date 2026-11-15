@@ -493,15 +493,27 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
     sperre_w = woelb_sperre(model, aktiv)
     if sperre_w:
         raise ValueError(sperre_w)
+    ll_hinweise = []
     if stabteilung:
-        from .stabteilung import teilen, zurueck, teilzahlen, kraefte_theorie1, FAKTOR_THEORIE3
+        from .stabteilung import (teilen, zurueck, teilzahlen, kraefte_theorie1, FAKTOR_THEORIE3,
+                                  laengslast_hinweise)
+        gemerkt: dict = {}
+
+        def _kraefte():
+            # Normalkraefte nach Theorie I. Ordnung - einmal, fuer Teilung und Hinweis
+            if "n" not in gemerkt:
+                try:
+                    from .solver import StaticSystem
+                    gemerkt["n"] = kraefte_theorie1(model, StaticSystem(model, aktiv=aktiv), factors)
+                except Exception:          # noqa: BLE001 - ohne Bezug keine Teilung
+                    gemerkt["n"] = None
+            return gemerkt["n"]
+        # Stab mit Last in Stabrichtung in weniger als vier gerechneten
+        # Elementen: Hinweis, kein geaenderter Wert (Runde k7, 14.11.2026)
+        ll_hinweise = laengslast_hinweise(model, factors, aktiv, FAKTOR_THEORIE3, kraefte=_kraefte)
         fein = None
         if teilzahlen(model, aktiv):
-            try:
-                from .solver import StaticSystem
-                kraefte = kraefte_theorie1(model, StaticSystem(model, aktiv=aktiv), factors)
-            except Exception:              # noqa: BLE001 - ohne Bezug keine Teilung
-                kraefte = None
+            kraefte = _kraefte()
             if kraefte is not None:
                 fein = teilen(model, aktiv, teilzahlen(model, aktiv, FAKTOR_THEORIE3, kraefte))
         if fein is not None:
@@ -510,9 +522,11 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
                                         tol=tol, imperfektionen=imperfektionen, elastisch=elastisch,
                                         richtung=richtung, alle_vorkruemmungen=alle_vorkruemmungen,
                                         aktiv=aktiv2, progress=progress, stabteilung=False)
+            info.hinweise.extend(h for h in ll_hinweise if h not in info.hinweise)
             return zurueck(model, res2, abb), info
     t0 = time.time()
     info = Th3Info(name=name)
+    info.hinweise.extend(ll_hinweise)
     ds = model.design
     if imperfektionen is None:
         imperfektionen = bool(getattr(ds, "imperfektionen", True))

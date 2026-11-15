@@ -1612,7 +1612,12 @@ class Results:
     modes: np.ndarray = None                # (nmodes, nn, 6)
     freqs: np.ndarray = None                # [Hz]
     buckling_factors: np.ndarray = None
-    buckling_modes: np.ndarray = None
+    buckling_modes: np.ndarray = None       # (nmodes, nn, 6) an den Knoten des Modells
+    #: Knicken am intern geteilten Modell (Runde k7, 14.11.2026): die Eigenform
+    #: der Zwischenknoten (nmodes, Zwischenknoten, 6) in der Reihenfolge von
+    #: stabteilung.teilen zu info["stabteilung"]; sonst None. Lesen nur mit
+    #: getattr (aeltere Ergebnisse haben das Feld nicht).
+    buckling_modes_teile: np.ndarray = None
     singular: list = field(default_factory=list)   # freie Bewegungen (singular.py)
     info: dict = field(default_factory=dict)
     model: Model = None
@@ -1878,6 +1883,11 @@ class Results:
         # Zeile bei „Nur aktiver Lastfall“ und bei --analyse lastfall (F36).
         s += dilatation_gebuendelt([(self.name, self)])
         s += seil_querlast_gebuendelt([(self.name, self)])
+        # Knicken: Last in Stabrichtung, Stab in weniger als vier Elementen (Runde k7)
+        s += [f"Hinweis: {z}" for z in (self.info.get("laengslast_teilung") or [])]
+        # Knicken: kein positiver Faktor unter den angeforderten Formen (Stand 62)
+        if self.info.get("knickfaktor_hinweis"):
+            s.append(f"Hinweis: {self.info['knickfaktor_hinweis']}")
         if self.u is not None and self.u.size:
             i = int(np.argmax(self.umag))
             s.append(f"max. Verschiebung       : {_fest(self.umag[i] * 1000, 4)} mm (Knoten {i})")
@@ -10871,6 +10881,8 @@ class Analysis:
         s += [f"Hinweis: {z}" for z in (self.info.get("schalenlage") or [])]
         # Anschluesse ohne Drehfeder in der Rechnung (Befund A'3 der zweiten Runde, 14.11.2026)
         s += [f"WARNUNG: {z}" for z in (self.info.get("anschluesse_uebersprungen") or {}).values()]
+        # Last in Stabrichtung, Stab in weniger als vier Elementen (Runde k7, 14.11.2026)
+        s += [f"Hinweis: {z}" for z in (self.info.get("laengslast_teilung") or [])]
         # die Iteration „gemeinsam“ ist ein Versuch (Fehlerliste F12, 06.10.2026)
         s += [f"WARNUNG: {z}" for z in gemeinsam_gebuendelt(self.all_results().items())]
         # verteilend eingeleitete Stabenden: eine Zeile ueber alle Ergebnisse (13.10.2026)
@@ -11194,6 +11206,25 @@ def _vorspannung_nachreichen(model: Model, an, progress=None) -> None:
         pass
 
 
+def _laengslast_hinweise_sammeln(an, progress=None) -> None:
+    """Die Hinweise „Last in Stabrichtung, weniger als vier Elemente“
+    (stabteilung.laengslast_hinweise, Runde k7, 14.11.2026) aus den Lastfaellen
+    und Kombinationen nach Theorie II./III. Ordnung und alpha_cr: je Text
+    einmal ins Protokoll, nach an.info["laengslast_teilung"] und damit in die
+    Zusammenfassung."""
+    from .stabteilung import LAENGSLAST_KENNUNG
+    texte = []
+    for th in (an.theorie2, an.theorie3):
+        for info in (getattr(th, "kombinationen", None) or {}).values():
+            for h in getattr(info, "hinweise", None) or []:
+                if LAENGSLAST_KENNUNG in h and h not in texte:
+                    texte.append(h)
+    if texte:
+        an.info["laengslast_teilung"] = texte
+        for t in texte:
+            _melde(progress, "Hinweis: " + t)
+
+
 def _solve_all_rumpf(model: Model, an: Analysis, systeme: dict, workers, progress, combinations,
                      envelopes, design, fatigue, t0) -> Analysis:
     """Der eigentliche Lauf - ``an`` und ``systeme`` fuellen sich unterwegs,
@@ -11314,6 +11345,7 @@ def _solve_all_rumpf(model: Model, an: Analysis, systeme: dict, workers, progres
         else:
             an.theorie3.kombinationen.update(t3.kombinationen)
             an.theorie3.settings.update(t3.settings)
+    _laengslast_hinweise_sammeln(an, progress)
     if ek_rechnen and ek_hoeher:
         # Nach II./III. Ordnung Gerechnetes kommt aus an.alternativen, alles
         # andere aus den linearen Lastfaellen - nie aus einem Gemisch
@@ -11658,6 +11690,64 @@ def _soll_endkraefte(model: Model, res, factors: dict, aktiv=None) -> dict:
     return aus
 
 
+#: Hoechstens so viele Knickformen fordert solve_buckling nach, wenn unter den
+#: angeforderten kein positiver Faktor ist (:func:`_positiven_nachfordern`)
+KNICK_FORMEN_MAX = 100
+
+
+def _positiven_nachfordern(system: StaticSystem, Kgff, k: int, vals, vecs, progress=None) -> tuple:
+    """Unter den ``k`` betragskleinsten Knickfaktoren ``vals`` ist kein
+    positiver: weitere Formen nachfordern (die Zahl verdoppelt, hoechstens
+    :data:`KNICK_FORMEN_MAX`), bis einer dabei ist. Rueckgabe (Faktoren,
+    Eigenvektoren, Hinweistext); die Liste reicht bis zum ersten positiven
+    Faktor, mindestens ``k`` lang, aufsteigend nach Betrag wie bisher.
+
+    Behebung vom 15.11.2026 (Runde k7, Verfahrensstand 62, vom Anwender
+    freigegeben): bis dahin standen nur die ``k`` betragskleinsten Faktoren
+    im Ergebnis, auch wenn alle negativ waren - ein Fachwerk mit gezogenem
+    Untergurt lieferte mit drei Formen nur -64,38 / -64,38 / -130,78, der
+    kleinste positive Faktor 7765,80 ist erst der 35. nach Betrag.
+
+    Ob es ueberhaupt einen positiven gibt, sagt vorher theorie2.groesstes_mu
+    (dasselbe Verfahren wie alpha_cr „auto“): ohne ihn wird nichts
+    nachgefordert, der Hinweis sagt es im Klartext. Erreicht die Suche die
+    Obergrenze, haengt der Faktor aus groesstes_mu mit seiner Form an; die
+    Formen dazwischen fehlen dann, und der Hinweis sagt auch das."""
+    from .theorie2 import groesstes_mu
+    n = Kgff.shape[0]
+    lam_p, vec_p = None, None
+    try:
+        mu, v = groesstes_mu(system.Kff, Kgff, k=1)
+        if mu is None:
+            return vals, vecs, (f"Kein positiver Knickfaktor: unter dieser Last knickt das System nicht. "
+                                f"Die {len(vals)} berechneten Faktoren sind negativ, sie gehören zum "
+                                "Knicken unter umgekehrter Last.")
+        lam_p, vec_p = float(1.0 / mu[0]), np.asarray(v, float)[:, 0]
+    except Exception:                       # noqa: BLE001 - dann nur nachfordern
+        pass
+    kk = k
+    grenze = max(k, min(KNICK_FORMEN_MAX, n - 2))
+    while kk < grenze:
+        kk = min(2 * kk, grenze)
+        _melde(progress, f"Kein positiver Knickfaktor unter den ersten Formen – {kk} Formen werden gerechnet")
+        vals2, vecs2 = _verzweigung(system, Kgff, kk, progress)
+        pos = np.nonzero(np.isfinite(vals2) & (vals2 > 0))[0]
+        if len(pos):
+            j = max(k, int(pos[0]) + 1)
+            return vals2[:j], vecs2[:, :j], (
+                f"Unter den {k} angeforderten Knickformen war kein positiver Faktor; nachgefordert bis "
+                f"Form {int(pos[0]) + 1}, kleinster positiver Faktor {_fest(vals2[pos[0]], 2)}.")
+        vals, vecs = vals2, vecs2
+    if lam_p is not None:
+        return (np.concatenate([np.asarray(vals, float), [lam_p]]),
+                np.column_stack([np.asarray(vecs, float), vec_p]),
+                f"Unter den ersten {len(vals)} Knickformen war kein positiver Faktor (Obergrenze der Suche "
+                f"{KNICK_FORMEN_MAX}); der kleinste positive Faktor {_fest(lam_p, 2)} steht mit seiner Form "
+                "als letzter in der Liste, die Formen dazwischen fehlen.")
+    return vals, vecs, (f"Unter den ersten {len(vals)} Knickformen war kein positiver Faktor (Obergrenze der "
+                        f"Suche {KNICK_FORMEN_MAX}); ob es einen gibt, ist nicht bekannt.")
+
+
 def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = None,
                    combination: str = None, workers: int = None) -> Results:
     """Lineares Verzweigungsproblem: (K + lambda*Kg) v = 0 (Stabtragwerke).
@@ -11671,7 +11761,14 @@ def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = Non
 
     Die Faktoren sind die ``nmodes`` betragskleinsten, beiderlei Vorzeichens
     (negativ: Knicken bei umgekehrter Last), aufsteigend nach Betrag - siehe
-    :func:`_verzweigung`, warum mit K als Metrik geloest wird."""
+    :func:`_verzweigung`, warum mit K als Metrik geloest wird. Ist darunter
+    kein positiver, werden Formen nachgefordert, bis einer dabei ist
+    (:func:`_positiven_nachfordern`, seit 15.11.2026); der Hinweis steht in
+    ``info["knickfaktor_hinweis"]``.
+
+    Balken werden intern geteilt wie nach Theorie II. Ordnung
+    (statik3d.stabteilung, seit 14.11.2026); ``buckling_modes`` steht an den
+    Knoten des Modells, die Zwischenknoten in ``buckling_modes_teile``."""
     t0 = time.time()
     schalenlage = _schalen_ausrichten(model, progress)
     if combination:
@@ -11686,12 +11783,44 @@ def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = Non
         static = solve_combination(model, model.combinations[combination], None, system, workers)
     else:
         static = solve_static(model, progress, case, workers, system)
-    u = static.u.ravel()
     if combination:
         c_ = model.combinations[combination]
         faktoren = {} if c_.ist_umhuellende else dict(c_.factors)
     else:
         faktoren = _lastfall_faktoren(model, case)[0]
+    # Am intern geteilten Modell wie Theorie II. Ordnung und alpha_cr „auto“
+    # (statik3d.stabteilung; Runde k7, 14.11.2026, vom Anwender freigegeben):
+    # ein Stab aus einem Element knickte bis dahin mit seiner kubischen
+    # Biegelinie - Saeule mit Last in Stabrichtung 16,80 statt 5,81 (alpha_cr
+    # „auto“), die beidseits eingespannte Stuetze gar nicht. Welche Balken
+    # geteilt werden, entscheiden die Normalkraefte des Grundzustands, wie sie
+    # in K_G stehen (keine zweite Loesung); gerechnet wird dann am feinen
+    # Modell, Ergebnis und Eigenformen gehen auf die Knoten und Elemente des
+    # Modells zurueck (stabteilung.zurueck).
+    from .stabteilung import fein_system, laengslast_hinweise
+    gemerkt: dict = {}
+
+    def kraefte():
+        if "N" not in gemerkt:
+            from .theorie2 import normalkraefte_kg
+            gemerkt["N"] = normalkraefte_kg(
+                model, static.u.ravel(), system.aktiv,
+                _anfang_im_ergebnis(model, static, faktoren, system.aktiv),
+                case_loads(model, faktoren, system.aktiv)[1])
+        return gemerkt["N"]
+
+    fein = fein_system(model, system, faktoren, kraefte=kraefte) if faktoren else None
+    # Stab mit Last in Stabrichtung in weniger als vier gerechneten Elementen
+    # (samt interner Teilung, wie Theorie II. Ordnung): Hinweis (Runde k7)
+    ll_hinweise = laengslast_hinweise(model, faktoren, system.aktiv, 1, kraefte=kraefte)
+    if fein is not None:
+        modell_grob = model
+        model, system, abb = fein
+        if combination:
+            static = solve_combination(model, model.combinations[combination], None, system, workers)
+        else:
+            static = solve_static(model, progress, case, workers, system)
+    u = static.u.ravel()
     # Stablasten fuer den Armanteil der Staebe mit Versatz (14.11.2026), davon
     # der symmetrische Teil wie in theorie2.alpha_cr; ohne Versatz nicht gebraucht
     feq = None
@@ -11707,6 +11836,8 @@ def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = Non
     Kg = asm.geometric_stiffness(model, u, system.aktiv,
                                  n_anfang=_anfang_im_ergebnis(model, static, faktoren, system.aktiv),
                                  feq=feq, symmetrisch=True, endkraefte=end)
+    for t in ll_hinweise:
+        _melde(progress, "Hinweis: " + t)
     fi = system.fi
     Kff = system.Kff
     Kgff = Kg[fi][:, fi].tocsc()
@@ -11717,6 +11848,10 @@ def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = Non
 
     k = min(nmodes, Kff.shape[0] - 2)
     vals_, vecs = _verzweigung(system, Kgff, k, progress)
+    knick_hinweis = ""
+    if not np.any(np.isfinite(vals_) & (vals_ > 0)):
+        vals_, vecs, knick_hinweis = _positiven_nachfordern(system, Kgff, k, vals_, vecs, progress)
+        k = len(vals_)
 
     modes = np.zeros((k, model.ndof))
     for i in range(k):
@@ -11725,10 +11860,26 @@ def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = Non
         if mx > 0:
             modes[i] /= mx
 
-    res = static
+    formen = modes[:, :model.nn * NDOF].reshape(k, model.nn, NDOF)
+    if fein is not None:
+        # zurueck auf das Modell: nur seine Knoten und Elemente. Die Eigenform
+        # der Zwischenknoten (Knoten nn.. des feinen Modells, in der Reihenfolge
+        # von stabteilung.teilen) steht getrennt in buckling_modes_teile - fuer
+        # die modale Energie der Knicklaengen (ec3.knicklaengen)
+        from .stabteilung import zurueck
+        res = zurueck(modell_grob, static, abb)
+        res.buckling_modes = formen[:, :abb.nn].copy()
+        res.buckling_modes_teile = formen[:, abb.nn:].copy()
+    else:
+        res = static
+        res.buckling_modes = formen
     res.kind = "buckling"
     res.buckling_factors = vals_
-    res.buckling_modes = modes[:, :model.nn * NDOF].reshape(k, model.nn, NDOF)
     res.info["time"] = time.time() - t0
+    if ll_hinweise:
+        res.info["laengslast_teilung"] = list(ll_hinweise)
+    if knick_hinweis:
+        res.info["knickfaktor_hinweis"] = knick_hinweis
+        _melde(progress, "Hinweis: " + knick_hinweis)
     _schalenlage_eintragen(res, schalenlage)
     return res
