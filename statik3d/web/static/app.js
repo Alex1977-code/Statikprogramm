@@ -155,7 +155,8 @@ function askKey() {
 // ======================================================================
 const S = {
   state: null, geom: null, tab: 'modell', entries: [], result: null, diagram: null, design: null,
-  ro: {which: '', field: 'umag', mode: 0, diagram: '', deform: true, scale: null, factor: 0},
+  // mode: null = keine Form gewählt, der Server zeigt beim Knicken die maßgebende (Runde k8)
+  ro: {which: '', field: 'umag', mode: null, diagram: '', deform: true, scale: null, factor: 0},
   sel: {nodes: new Set(), elems: new Set()},
   job: null, pollTimer: null, version: -1, member: '', profiles: {}, first: true, stellung: '',
 };
@@ -498,7 +499,8 @@ async function loadResults() {
   S.entries = await API.get('/api/entries');
   if (!S.entries.length) { S.result = null; view.result = null; view.draw(); return; }
   if (!S.entries.find(e => e.id === S.ro.which)) S.ro.which = S.entries[0].id;
-  S.result = await API.get(`/api/results?which=${enc(S.ro.which)}&field=${enc(S.ro.field)}&mode=${S.ro.mode}`);
+  const modus = S.ro.mode === null ? '' : `&mode=${S.ro.mode}`;
+  S.result = await API.get(`/api/results?which=${enc(S.ro.which)}&field=${enc(S.ro.field)}${modus}`);
   if (S.ro.diagram) {
     try { S.diagram = await API.get(`/api/diagram?which=${enc(S.ro.which)}&quantity=${enc(S.ro.diagram)}`); }
     catch (e) { S.diagram = null; toast(e.message, 'err'); }
@@ -910,7 +912,7 @@ function renderErgebnisse() {
   let html = `
 <div class="card">
   <div class="grid2">${sel('which', 'Ergebnis', S.entries.map(e => [e.id, e.label]), S.ro.which, 'data-ro="which"')}${sel('field', 'Färbung', fields, S.ro.field, 'data-ro="field"')}
-  ${R.modes ? sel('mode', 'Eigenform', R.modes.map((m, i) => [i, m]), S.ro.mode, 'data-ro="mode"') : sel('diagram', 'Schnittgrößenverlauf', diag, S.ro.diagram, 'data-ro="diagram"')}
+  ${R.modes ? sel('mode', 'Eigenform', R.modes.map((m, i) => [i, m]), S.ro.mode ?? R.mode, 'data-ro="mode"') : sel('diagram', 'Schnittgrößenverlauf', diag, S.ro.diagram, 'data-ro="diagram"')}
   <label><span>Überhöhung ×${g(S.ro.scale * Math.pow(10, S.ro.factor), 3)}</span><input type="range" min="-2" max="2" step="0.1" value="${S.ro.factor}" data-ro="factor"></label></div>
   ${chk('deform', 'Verformt darstellen', S.ro.deform, 'data-ro="deform"')}
   <pre>${esc(R.summary)}</pre>
@@ -1462,7 +1464,7 @@ function bindActions(root) {
       if (k === 'deform') { S.ro.deform = el.checked; view.opts.deform = el.checked; view.draw(); return; }
       if (k === 'factor') { S.ro.factor = parseFloat(el.value); view.opts.scale = S.ro.scale * Math.pow(10, S.ro.factor); el.previousElementSibling.textContent = `Überhöhung ×${g(view.opts.scale, 3)}`; view.draw(); return; }
       if (k === 'mode') S.ro.mode = parseInt(el.value, 10); else S.ro[k] = el.value;
-      if (k === 'which') { S.ro.mode = 0; }
+      if (k === 'which') { S.ro.mode = null; }
       await loadResults();
       if (k === 'which') await loadMemberChart();
       render();

@@ -2164,6 +2164,27 @@ def _theorie3_im_ergebnis(model, an) -> str:
     return "Theorie III. Ordnung: " + ", ".join(namen[:6]) if namen else ""
 
 
+def _theorie3_starrkoerper(model) -> bool:
+    """Ein Lastfall oder eine Kombination nach Theorie III. Ordnung, in deren
+    Situation ein Starrkoerper (RBE2/RBE3) oder eine starre Knotenkopplung
+    wirkt - Theorie III. Ordnung liess die Starrkoerper bis zum 15.11.2026
+    still weg und rechnete starre Kopplungen als Feder von 1e4 N/m (Runde k8).
+    Dieselbe Pruefung wie die Abweisung (theorie3.kopplung_sperre_modell)."""
+    if not (getattr(model, "starrkoerper", None) or getattr(model, "kopplungen", None)):
+        return False
+    try:
+        if not any(model.theorie_von(o) == "III"
+                   for o in list(model.load_cases.values()) + list(model.combinations.values())):
+            return False
+    except Exception:                       # noqa: BLE001 - Pruefung, nie Abbruch
+        return False
+    try:
+        from .theorie3 import kopplung_sperre_modell
+        return bool(kopplung_sperre_modell(model))
+    except Exception:                       # noqa: BLE001 - nicht pruefbar: möglicherweise betroffen
+        return True
+
+
 def _ergebnis_paare(an) -> list:
     try:
         return list(an.all_results().items()) + list((getattr(an, "alternativen", None) or {}).items())
@@ -3744,10 +3765,25 @@ MERKMALE: list = [
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Knickergebnis mit negativem ersten Faktor und positivem dahinter",
         im_ergebnis=_knicken_erster_nicht_positiv_im_ergebnis),
+    # Runde k8 (15.11.2026, vom Anwender freigegeben): Theorie III. Ordnung las
+    # die Starrkoerper nie (Kragstuetze mit RBE2-Arm 0,3 m: Theorie I. Ordnung
+    # 7,032 mm, Theorie III. Ordnung still 0,000 mm statt 8,23 mm wie mit Balken
+    # STARR oder Versatz) und rechnete starre Knotenkopplungen als Feder von
+    # 1e4 N/m (zwei Kragarme starr gekoppelt: 0,5329 statt 0,2679 mm). Seither
+    # mit Klartext abgewiesen (theorie3.kopplung_sperre). Fehlerkorrektur
+    Merkmal(
+        name="theorie3_starrkoerper", titel="Starrkörper und starre Kopplungen nach Theorie III. Ordnung",
+        texte={"alt": "Starrkörper (RBE2/RBE3) still weggelassen, starre Kopplungen als weiche Feder",
+               "neu": "Theorie III. Ordnung mit Starrkörpern oder starren Kopplungen abgewiesen (Klartext)"},
+        wechsel=(Wechsel(stand=64, datum="15.11.2026", commit="fix/k8-th3", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Lastfall oder Kombination nach Theorie III. Ordnung mit wirksamem Starrkörper "
+                      "(RBE2/RBE3) oder starrer Knotenkopplung",
+        betrifft=_theorie3_starrkoerper, im_ergebnis=_theorie3_im_ergebnis),
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 63
+VERFAHRENSSTAND = 64
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

@@ -37,6 +37,10 @@ zwischen seinen Stabenden (bis dahin fiel der Versatz still weg).
 
 Grenzen: nur Stab- und Fachwerkelemente (keine Schalen, Volumen), kein
 Kontakt, keine Zwangsverformungen; kleine Dehnungen (linear-elastisch).
+Keine Starrkoerper (RBE2/RBE3) und keine starren Knotenkopplungen: seit dem
+15.11.2026 mit Klartext abgewiesen (kopplung_sperre); bis dahin fielen die
+Starrkoerper still weg, und starre Kopplungen wirkten als Feder von 1e4 N/m.
+Federnde Kopplungen rechnet es mit.
 """
 from __future__ import annotations
 
@@ -477,6 +481,126 @@ def woelb_sperre(model: Model, aktiv=None) -> str:
             "Theorie II. Ordnung rechnen oder die Wölbkrafttorsion abschalten")
 
 
+def _wirksame_knoten_th3(model: Model, aktiv) -> np.ndarray:
+    """Maske (nn,): Knoten, an denen in der Rechnung mit ``aktiv`` ein
+    wirksames Element haengt (ohne Maske: irgendein Element)."""
+    from .situationen import aktive_knoten
+    maske = np.ones(len(model.elements), dtype=bool) if aktiv is None else np.asarray(aktiv, bool)
+    return aktive_knoten(model, maske)
+
+
+def _namen_liste(namen: list, n_max: int = 4) -> str:
+    teil = ", ".join(namen[:n_max])
+    return teil + (f" und {len(namen) - n_max} weitere" if len(namen) > n_max else "")
+
+
+def starrkoerper_sperre(model: Model, aktiv=None) -> str:
+    """Leer - oder der Grund, warum Theorie III. Ordnung nicht rechnet: ein
+    wirksamer Starrkoerper (Model.starrkoerper, RBE2 oder RBE3).
+
+    Das mitgehende System kennt nur Staebe, Seile, Federlager und die
+    Knotenkopplungen; die Starrkoerper (assemble.starrkoerper) las es nie.
+    Bis zum 15.11.2026 rechnete es sie still nicht mit: Kragstuetze 4 m mit
+    Arm 0,3 m quer als RBE2, Theorie I. Ordnung 7,032 mm, Theorie III. Ordnung
+    0,000 mm (der Kopfknoten hing an nichts); derselbe Arm als Balken STARR
+    oder als Versatz 8,23 mm. Entscheidung des Anwenders (Runde k8): mit
+    Klartext abweisen wie die Woelbkrafttorsion (:func:`woelb_sperre`).
+
+    Es zaehlen nur Starrkoerper, an deren Knoten ein in der Rechnung
+    wirksames Element haengt (Master oder ein Slave; bei der verteilenden
+    Kopplung eines Stabendes ein Slave, wie situationen.kopplung_bleibt)."""
+    sk_liste = getattr(model, "starrkoerper", None) or []
+    if not sk_liste:
+        return ""
+    from . import stabeinleitung as _se
+    kn = _wirksame_knoten_th3(model, aktiv)
+    nn = len(kn)
+    namen = []
+    for sk in sk_liste:
+        slaves = [int(x) for x in (sk.slaves or []) if 0 <= int(x) < nn and int(x) != int(sk.master)]
+        if not slaves:
+            continue
+        master = int(sk.master)
+        wirksam = any(kn[s] for s in slaves)
+        if not _se.ist_verteilkopplung(sk) and 0 <= master < nn:
+            wirksam = wirksam or bool(kn[master])
+        if wirksam:
+            namen.append(str(sk.name or "ohne Namen"))
+    if not namen:
+        return ""
+    return (f"Theorie III. Ordnung rechnet keine Starrkörper (RBE2/RBE3: {_namen_liste(namen)}). "
+            "Starrkörper durch Balken mit Querschnitt STARR oder Versatz der Stabenden ersetzen "
+            "oder Theorie II. Ordnung wählen.")
+
+
+def starre_kopplung_sperre(model: Model, aktiv=None) -> str:
+    """Leer - oder der Grund, warum Theorie III. Ordnung nicht rechnet: eine
+    wirksame starre Knotenkopplung (Model.kopplungen mit Steifigkeit ``inf``).
+
+    asm.kopplungen setzt starre Richtungen als Straffeder mit 1e4-mal der
+    groessten Hauptdiagonale der uebergebenen Matrix; Theorie III. Ordnung
+    uebergibt eine leere Matrix, die Straffeder hat dort 1e4 N/m. Zwei
+    Kragarme 3 m, im Feldpunkt starr gekoppelt, 1 kN: Theorie I. Ordnung und
+    Hand 0,2679 mm, Theorie III. Ordnung bis zum 15.11.2026 0,5329 mm (nur
+    ein Kragarm traegt). Kopplungen mit endlicher Federsteifigkeit rechnet sie
+    richtig (wie Theorie I. Ordnung und Hand); sie bleiben. Es zaehlen nur
+    Kopplungen, die in der Rechnung wirken (situationen.kopplung_bleibt)."""
+    kopp = getattr(model, "kopplungen", None) or []
+    if not kopp:
+        return ""
+    from .situationen import kopplung_bleibt
+    kn = _wirksame_knoten_th3(model, aktiv)
+    starr, gruppen = 0, []
+    for kp in kopp:
+        if not any(not np.isfinite(w) for _r, w in kp.paare()):
+            continue
+        if not kopplung_bleibt(model, kp, kn):
+            continue
+        starr += 1
+        g = str(getattr(kp, "gruppe", "") or "").strip()
+        if g and g not in gruppen:
+            gruppen.append(g)
+    if not starr:
+        return ""
+    wo = f"{starr} Kopplung" if starr == 1 else f"{starr} Kopplungen"
+    if gruppen:
+        wo += (", Gruppe " if len(gruppen) == 1 else ", Gruppen ") + _namen_liste(gruppen)
+    return (f"Theorie III. Ordnung rechnet keine starren Knotenkopplungen ({wo}). Die Kopplung mit "
+            "endlicher Federsteifigkeit ansetzen, durch Balken mit Querschnitt STARR ersetzen oder "
+            "Theorie II. Ordnung wählen.")
+
+
+def kopplung_sperre(model: Model, aktiv=None) -> str:
+    """Starrkoerper und starre Knotenkopplungen (Runde k8, 15.11.2026):
+    leer, oder der Text der Abweisung."""
+    return " ".join(t for t in (starrkoerper_sperre(model, aktiv), starre_kopplung_sperre(model, aktiv)) if t)
+
+
+def kopplung_sperre_modell(model: Model) -> dict:
+    """{Text der Abweisung: [Lastfaelle und Kombinationen]} fuer alles, was
+    nach Theorie III. Ordnung gestellt ist - je in seiner Situation (nur dort
+    wirksame Starrkoerper und Kopplungen zaehlen). Fuer die Modellpruefung
+    (Model.check) und die Verfahrenstabelle; leer, wenn nichts abgewiesen wird."""
+    if not (getattr(model, "starrkoerper", None) or getattr(model, "kopplungen", None)):
+        return {}
+    objekte = [o for o in list(model.load_cases.values()) + list(model.combinations.values())
+               if model.theorie_von(o) == "III"]
+    out: dict = {}
+    je_situation: dict = {}
+    for o in objekte:
+        sit = str(getattr(o, "situation", "") or "")
+        if sit not in je_situation:
+            try:
+                aktiv = model.aktive_elemente(sit)
+            except KeyError:                 # unbekannte Situation: wie die Grundstellung
+                aktiv = None
+            je_situation[sit] = kopplung_sperre(model, aktiv)
+        text = je_situation[sit]
+        if text:
+            out.setdefault(text, []).append(str(o.name))
+    return out
+
+
 def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
                    max_iter: int = 30, tol: float = 1e-6, imperfektionen: bool = None,
                    elastisch: bool = True, richtung=None, alle_vorkruemmungen: bool = False,
@@ -493,6 +617,15 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
     sperre_w = woelb_sperre(model, aktiv)
     if sperre_w:
         raise ValueError(sperre_w)
+    # Starrkoerper und starre Kopplungen rechnet das mitgehende System nicht
+    # (Runde k8, 15.11.2026): abweisen statt still ohne sie. Mit Flaechen-,
+    # Volumen- oder Federelementen sagt die Pruefung „nur Stabtragwerke“ unten
+    # den eigentlichen Grund (die Einleitungen dort sind auch Starrkoerper)
+    if not any((aktiv is None or aktiv[i]) and e.typ not in asm.LINE_TYPES
+               for i, e in enumerate(model.elements)):
+        sperre_k = kopplung_sperre(model, aktiv)
+        if sperre_k:
+            raise ValueError(sperre_k)
     ll_hinweise = []
     if stabteilung:
         from .stabteilung import (teilen, zurueck, teilzahlen, kraefte_theorie1, FAKTOR_THEORIE3,
