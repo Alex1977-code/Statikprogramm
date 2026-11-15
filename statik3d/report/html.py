@@ -3263,9 +3263,15 @@ class Report:
                     rows.append([str(k + 1), fmt(f, 3)])
                 b.append(("table", rows, "Knicklastfaktoren α_cr = F_cr / F_Ed (lineares "
                                          "Verzweigungsproblem)", None, ""))
-                a1 = float(res.buckling_factors[0]) if len(res.buckling_factors) else np.inf
+                # massgebend ist der kleinste positive Faktor, nicht der erste
+                # der Liste (nach Betrag geordnet, negative davor moeglich):
+                # bis zum 15.11.2026 (Runde k8) entfiel der Hinweis bei -3 / 6
+                from ..solver import massgebende_knickform
+                j = massgebende_knickform(res.buckling_factors)
+                a1 = float(res.buckling_factors[j]) if j is not None else np.inf
                 if 0 < a1 < 10:
-                    b.append(("note", f"α_cr = {a1:.2f} < 10: Einfluss der Verformungen auf das "
+                    form = f" (kleinster positiver Faktor, Knickform {j + 1})" if j else ""
+                    b.append(("note", f"α_cr = {a1:.2f} < 10{form}: Einfluss der Verformungen auf das "
                                       "Gleichgewicht (Theorie II. Ordnung) nach DIN EN 1993-1-1, "
                                       "5.2.1 zu berücksichtigen."))
                     self._warnings.append(f"{name}: α_cr = {a1:.2f} < 10 (Theorie II. Ordnung)")

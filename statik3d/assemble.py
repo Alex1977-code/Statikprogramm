@@ -1691,8 +1691,13 @@ def kopplungen(model: Model, K: sparse.spmatrix = None, aktiv=None) -> sparse.sp
     rows, cols, vals = [], [], []
     kn_aktiv = None
     if aktiv is not None:
-        from .situationen import aktive_knoten, kopplung_bleibt
-        kn_aktiv = aktive_knoten(model, aktiv)
+        # Die Huelle ueber Ketten (Starrkoerper und Kopplungen, 15.11.2026):
+        # eine Kopplung an einem Knoten ohne Element, der ueber einen
+        # Starrkoerper oder eine zweite Kopplung an einem wirksamen Element
+        # haengt, bleibt - dieselbe Maske wie fuer die Knotenlasten
+        # (load_vector); bis dahin zaehlten nur Knoten mit Element
+        from .situationen import wirksame_knoten, kopplung_bleibt
+        kn_aktiv = wirksame_knoten(model, aktiv)
     from .fugen import STABENDE_GRUPPE, STARR_GRUPPE
     scheiben: dict = {}                   # Gruppe -> [Kopplung]
     enden: dict = {}                      # Stabknoten -> [Kopplung]
@@ -2667,7 +2672,9 @@ def load_vector(model: Model, case: LoadCase = None, aktiv=None) -> np.ndarray:
     ``aktiv``: abgeschaltete Elemente einer Situation tragen keine Last;
     Knotenlasten an Knoten ohne wirksames Element und ohne wirksame Kopplung
     entfallen (situationen.wirksame_knoten; bis zum 14.10.2026 auch die an
-    einem gekoppelten Last- oder Lagerknoten ohne eigenes Element)."""
+    einem gekoppelten Last- oder Lagerknoten ohne eigenes Element, bis zum
+    15.11.2026 die an einem Knoten, der ueber einen Starrkoerper oder eine
+    Kette angebunden ist)."""
     if case is None:
         case = model.case()
     elif isinstance(case, str):

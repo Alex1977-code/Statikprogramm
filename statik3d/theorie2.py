@@ -832,6 +832,10 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
 
     info = Th2Info(kombination=name, u_max_I=float(np.abs(u1).max()))
     info.hinweise.extend(ll_hinweise)
+    # Stab mit Druck und Biegung, Biegedrillknicken nicht anderweitig erfasst:
+    # K_G hat kein Momentenglied - Hinweis, kein geaenderter Wert (Runde k8)
+    from .bdk_hinweis import hinweis_th2 as bdk_hinweis, merken as bdk_merken
+    bdk_merken(info, *bdk_hinweis(model, aktiv, res=res1))
     ac = alpha_cr(model, system, u1, n_anfang=n_anf, feq=feq)
     info.alpha_cr = ac["alpha_cr"]
     info.stab_aus(ac)
@@ -1112,6 +1116,11 @@ def check_theorie2(model: Model, analysis, combos: list = None, system=None,
             res, info = gemerkt[schluessel]
             out.kombinationen[zeile] = replace(info, kombination=zeile,
                                                hinweise=list(info.hinweise))
+            # die Staebe des Hinweises Biegedrillknicken sind keine Felder:
+            # replace nimmt sie nicht mit (Gegenpruefung k8, 15.11.2026)
+            for _attr in ("bdk_staebe", "bdk_ec3_staebe"):
+                if hasattr(info, _attr):
+                    setattr(out.kombinationen[zeile], _attr, list(getattr(info, _attr)))
             if res is not None and analysis is not None:
                 _alternative_ablegen(analysis, zeile, res)
             continue
@@ -1159,6 +1168,9 @@ def check_theorie2(model: Model, analysis, combos: list = None, system=None,
                 info.hinweise.append(ac["hinweis_teilung"])
             info.hinweise.extend(ll_hinweise)
             if ac["alpha_cr"] >= grenze:
+                # nur alpha_cr: Hinweis Biegedrillknicken wie in solve_theorie2 (Runde k8)
+                from .bdk_hinweis import hinweis_th2 as bdk_hinweis, merken as bdk_merken
+                bdk_merken(info, *bdk_hinweis(m_a, getattr(s_a, "aktiv", None), u=u1, feq=_feq, q=_q))
                 out.kombinationen[zeile] = info
                 if schluessel is not None:
                     gemerkt[schluessel] = (None, info)

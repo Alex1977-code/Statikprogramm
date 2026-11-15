@@ -25536,6 +25536,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _design_done(self, res):
         self.analysis.design = res
+        # Hinweis Biegedrillknicken nach den Nachweisen neu bilden (Runde k8)
+        try:
+            from .. import solver as _slv
+            _slv._bdk_hinweise_sammeln(self.analysis)
+        except Exception:                      # noqa: BLE001 - ein Hinweis sperrt nie
+            pass
         self.info(res.summary())
         self.show_results()
         self._nachweise_melden()
@@ -27652,6 +27658,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cb_mode.blockSignals(True)
         self.cb_mode.clear()
         self.cb_mode.addItems(self._formtexte(r))
+        # Knicken: vorgewaehlt die massgebende Form (kleinster positiver
+        # Faktor), nicht Form 1 - die Liste ist nach Betrag geordnet, davor
+        # stehen negative (gezogene Staebe). Dieselbe Form nehmen die
+        # Knicklaengen nach dem Rechnen (_knicklaengen_auswerten); bis zum
+        # 15.11.2026 (Runde k8) „α_cr ≤ 0“ an jedem Stab. Nur die Vorgabe beim
+        # Fuellen - die Wahl des Anwenders danach gilt (wie bisher bis zum
+        # naechsten Fuellen).
+        if r is not None and getattr(r, "buckling_factors", None) is not None:
+            j = solver.massgebende_knickform(r.buckling_factors)
+            if j and j < self.cb_mode.count():
+                self.cb_mode.setCurrentIndex(j)
         self.cb_mode.blockSignals(False)
         self._lastwahl_nachziehen()     # die Form steht jetzt fest
         if r is None:

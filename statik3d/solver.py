@@ -1885,6 +1885,8 @@ class Results:
         s += seil_querlast_gebuendelt([(self.name, self)])
         # Knicken: Last in Stabrichtung, Stab in weniger als vier Elementen (Runde k7)
         s += [f"Hinweis: {z}" for z in (self.info.get("laengslast_teilung") or [])]
+        # Knicken: kein Biegedrillknicken in K_G (Runde k8, 15.11.2026)
+        s += [f"Hinweis: {z}" for z in (self.info.get("bdk_hinweis") or [])]
         # Knicken: kein positiver Faktor unter den angeforderten Formen (Stand 62)
         if self.info.get("knickfaktor_hinweis"):
             s.append(f"Hinweis: {self.info['knickfaktor_hinweis']}")
@@ -2019,6 +2021,13 @@ class Results:
         if self.buckling_factors is not None:
             s.append("Knicklastfaktoren       : "
                      + ", ".join(f"{f:.3f}" for f in self.buckling_factors[:10]))
+            # Erster Faktor nicht positiv (Runde k8, 15.11.2026): der
+            # massgebende eigens - er stand sonst nur als zweiter Wert oder,
+            # nach dem Nachfordern (Form 35), gar nicht in der Zeile
+            j = massgebende_knickform(self.buckling_factors)
+            if j is not None and j > 0:
+                s.append(f"α_cr maßgebend          : {float(self.buckling_factors[j]):.3f} "
+                         f"(Form {j + 1}, kleinster positiver Faktor)")
         return "\n".join(s)
 
 
@@ -10883,6 +10892,8 @@ class Analysis:
         s += [f"WARNUNG: {z}" for z in (self.info.get("anschluesse_uebersprungen") or {}).values()]
         # Last in Stabrichtung, Stab in weniger als vier Elementen (Runde k7, 14.11.2026)
         s += [f"Hinweis: {z}" for z in (self.info.get("laengslast_teilung") or [])]
+        # kein Biegedrillknicken in Theorie II. Ordnung und alpha_cr (Runde k8, 15.11.2026)
+        s += [f"Hinweis: {z}" for z in (self.info.get("bdk_hinweis") or [])]
         # die Iteration „gemeinsam“ ist ein Versuch (Fehlerliste F12, 06.10.2026)
         s += [f"WARNUNG: {z}" for z in gemeinsam_gebuendelt(self.all_results().items())]
         # verteilend eingeleitete Stabenden: eine Zeile ueber alle Ergebnisse (13.10.2026)
@@ -11159,6 +11170,12 @@ def _teilanalyse(ex, an: Analysis, model: Model, systeme: dict, t0: float) -> No
     an.info.setdefault("parallel", parallel.describe())
     an.info.setdefault("ndof", model.ndof)
     try:
+        # die Zeile „… enthalten kein Biegedrillknicken“ auch im Teilergebnis;
+        # Nachweise gibt es hier nicht (Gegenpruefung k8, 15.11.2026)
+        _bdk_hinweise_sammeln(an)
+    except Exception:                # noqa: BLE001 - ein Hinweis sperrt nie das Retten
+        pass
+    try:
         ex.teilanalyse = an
     except Exception:                # noqa: BLE001 - das Retten darf nie selbst scheitern
         pass
@@ -11223,6 +11240,54 @@ def _laengslast_hinweise_sammeln(an, progress=None) -> None:
         an.info["laengslast_teilung"] = texte
         for t in texte:
             _melde(progress, "Hinweis: " + t)
+
+
+def _bdk_hinweise_sammeln(an, progress=None) -> None:
+    """Der Hinweis „Theorie II. Ordnung und α_cr enthalten kein
+    Biegedrillknicken“ (statik3d.bdk_hinweis, Runde k8, 15.11.2026): eine
+    Zeile je Rechnung ueber alle Lastfaelle und Kombinationen nach Theorie II.
+    Ordnung und alpha_cr - die Staebe aller Kombinationen zusammen, ins
+    Protokoll und nach an.info["bdk_hinweis"] und damit in die Zusammenfassung.
+
+    Laeuft nach den Nachweisen: Ein Stab mit den Haken EC3 und
+    Biegedrillknicken gilt nur als erfasst, wenn sein Nachweis in dieser
+    Rechnung gefuehrt wurde (an.design, ohne „nicht gefuehrt“); sonst kommt er
+    in den Hinweis der Kombination (Th2Info.hinweise, Theoriekapitel) und in
+    die Zeile (Gegenpruefung k8, 15.11.2026).
+
+    Wiederholbar: auch nach einem Abbruch (_teilanalyse) und nach
+    nachtraeglich gestarteten Nachweisen (Oberflaeche _design_done, Web
+    start_design) - die Staebe ohne Haken stehen fest in
+    ``bdk_staebe_direkt``, die Haken-Staebe kommen je nach an.design dazu
+    oder fallen wieder weg."""
+    from .bdk_hinweis import BDK_KENNUNG, bdk_text
+    gefuehrt = set()
+    if getattr(an, "design", None) is not None:
+        gefuehrt = {k for k, mc in an.design.members.items() if not getattr(mc, "fehler", "")}
+    for info in (getattr(an.theorie2, "kombinationen", None) or {}).values():
+        ec3 = list(getattr(info, "bdk_ec3_staebe", None) or [])
+        if not ec3:
+            continue
+        if getattr(info, "bdk_staebe_direkt", None) is None:
+            info.bdk_staebe_direkt = list(getattr(info, "bdk_staebe", None) or [])
+        direkt = list(info.bdk_staebe_direkt)
+        info.bdk_staebe = direkt + [n for n in ec3 if n not in gefuehrt and n not in direkt]
+        info.hinweise[:] = ([h for h in info.hinweise if BDK_KENNUNG not in h]
+                            + ([bdk_text(info.bdk_staebe)] if info.bdk_staebe else []))
+    namen, texte = [], []
+    for info in (getattr(an.theorie2, "kombinationen", None) or {}).values():
+        for n in getattr(info, "bdk_staebe", None) or []:
+            if n not in namen:
+                namen.append(n)
+        for h in getattr(info, "hinweise", None) or []:
+            if BDK_KENNUNG in h and h not in texte:
+                texte.append(h)
+    zeile = bdk_text(namen) if namen else (texte[0] if texte else "")
+    if zeile:
+        an.info["bdk_hinweis"] = [zeile]
+        _melde(progress, "Hinweis: " + zeile)
+    else:
+        an.info.pop("bdk_hinweis", None)
 
 
 def _solve_all_rumpf(model: Model, an: Analysis, systeme: dict, workers, progress, combinations,
@@ -11420,6 +11485,9 @@ def _solve_all_rumpf(model: Model, an: Analysis, systeme: dict, workers, progres
     if design and model.volumenbereiche:
         from .ec3.volumen import check_volumen
         an.volumen = check_volumen(model, an, progress=progress)
+    # nach den Nachweisen: ob der Ersatzstabnachweis das Biegedrillknicken
+    # erfasst, steht erst in an.design (Gegenpruefung k8)
+    _bdk_hinweise_sammeln(an, progress)
     an.info.update({"time": time.time() - t0, "parallel": parallel.describe(),
                     "solver": system.backend, "ndof": model.ndof,
                     "nfree": len(system.fi)})
@@ -11690,6 +11758,27 @@ def _soll_endkraefte(model: Model, res, factors: dict, aktiv=None) -> dict:
     return aus
 
 
+def massgebende_knickform(faktoren):
+    """Index der massgebenden Knickform: des kleinsten positiven (endlichen)
+    Verzweigungslastfaktors in ``faktoren`` (Results.buckling_factors), None
+    ohne positiven.
+
+    Die Liste ist aufsteigend nach Betrag, beiderlei Vorzeichens; vor dem
+    ersten positiven koennen negative stehen (gezogene Staebe, die bei
+    umgekehrter Last knicken; seit Stand 62 auch nachgeforderte Formen). Bis
+    zum 15.11.2026 (Runde k8, Stand 63) nahmen Bericht und Knicklaengen den
+    Faktor mit Index 0: zwei Kragstuetzen mit -3 / 6 / -12 - kein Hinweis
+    „α_cr < 10“, Knicklaengen „α_cr ≤ 0“ statt β = 2."""
+    if faktoren is None:
+        return None
+    f = np.asarray(faktoren, float).ravel()
+    ok = np.isfinite(f) & (f > 0)
+    if not ok.any():
+        return None
+    idx = np.flatnonzero(ok)
+    return int(idx[int(np.argmin(f[idx]))])
+
+
 #: Hoechstens so viele Knickformen fordert solve_buckling nach, wenn unter den
 #: angeforderten kein positiver Faktor ist (:func:`_positiven_nachfordern`)
 KNICK_FORMEN_MAX = 100
@@ -11813,6 +11902,10 @@ def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = Non
     # Stab mit Last in Stabrichtung in weniger als vier gerechneten Elementen
     # (samt interner Teilung, wie Theorie II. Ordnung): Hinweis (Runde k7)
     ll_hinweise = laengslast_hinweise(model, faktoren, system.aktiv, 1, kraefte=kraefte)
+    # Stab mit Druck und Biegung, Biegedrillknicken nicht anderweitig erfasst:
+    # K_G hat kein Momentenglied (Runde k8, 15.11.2026) - am Grundzustand des Modells
+    from .bdk_hinweis import hinweis as bdk_hinweis, KNICK_WO
+    bdk_zeile, _bdk_namen = bdk_hinweis(model, system.aktiv, KNICK_WO, res=static)
     if fein is not None:
         modell_grob = model
         model, system, abb = fein
@@ -11838,6 +11931,8 @@ def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = Non
                                  feq=feq, symmetrisch=True, endkraefte=end)
     for t in ll_hinweise:
         _melde(progress, "Hinweis: " + t)
+    if bdk_zeile:
+        _melde(progress, "Hinweis: " + bdk_zeile)
     fi = system.fi
     Kff = system.Kff
     Kgff = Kg[fi][:, fi].tocsc()
@@ -11878,6 +11973,8 @@ def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = Non
     res.info["time"] = time.time() - t0
     if ll_hinweise:
         res.info["laengslast_teilung"] = list(ll_hinweise)
+    if bdk_zeile:
+        res.info["bdk_hinweis"] = [bdk_zeile]
     if knick_hinweis:
         res.info["knickfaktor_hinweis"] = knick_hinweis
         _melde(progress, "Hinweis: " + knick_hinweis)
