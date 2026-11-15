@@ -1962,6 +1962,8 @@ class Results:
                          f"{'Bedingung' if self.info.get('kontakt_aktiv', 0) == 1 else 'Bedingungen'} aktiv")
             if self.info.get("moden_hinweis"):
                 s.append(f"Eigenformen             : {self.info['moden_hinweis']}")
+            if self.info.get("frei_hinweis"):
+                s.append(f"Freie Teile             : {self.info['frei_hinweis']}")
             if self.info.get("loeser"):
                 s.append(f"Löser                   : {NAMEN.get(self.info['loeser'], self.info['loeser'])}")
         pz = self.info.get("plastizitaet")
@@ -11621,28 +11623,43 @@ def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = Non
                          f"Masse; bei mehr als {MODAL_DICHT_MAX} Freiheitsgraden mit Masse rechnet der "
                          f"Eigenlöser in einem Lauf höchstens die unteren {k}. Weniger Formen anfordern "
                          f"oder die Massen vereinfachen.")
+    # Regulaer? K - sigma M mit sigma < 0 ist nur dann singulaer, wenn sich
+    # ein Teil ohne Masse ohne Steifigkeit bewegen kann (A z = 0 heisst
+    # K z = 0 und M z = 0). Geprueft wird wie in der Statik: eine Loesung mit
+    # Residuumspruefung, mit einer rechten Seite, die jede Richtung enthaelt.
+    # Ist A singulaer, haelt _MasselosFrei die freien Richtungen numerisch fest
+    # (wie die Statik den freien Teil haelt): die Eigenfrequenzen haengen von
+    # ihnen nicht ab, weil sie keine Masse tragen; der Teil wird genannt.
+    # Bis k10b kam dort „ARPACK error -9999" oder eine Form, in der der lose
+    # Teil beliebig mitlief, am Stand f537ead4 eine Abweisung des rechenbaren
+    # Modells (Gegenpruefung k10b, Befund 1).
+    frei = None
     try:
-        loeser = LinearSolver(A)
+        loeser, ursache = LinearSolver(A), None
     except (RuntimeError, ValueError) as ex:
-        raise RuntimeError(_modal_singulaer_text(model, K, fi, ex, progress)) from None
-    # Die Modalanalyse faktorisiert selbst, ohne StaticSystem - das Ausweichen
-    # meldete hier bis zum 22.09.2026 nur warnings.warn (Befund K2).
-    if loeser.ausweichgrund:
-        _melde(progress, f"Gleichungslöser ausgewichen - {loeser.ausweichgrund}")
-    try:
-        # Regulaer? K - sigma M mit sigma < 0 ist nur dann singulaer, wenn sich
-        # ein Teil ohne Masse ohne Steifigkeit bewegen kann (A z = 0 heisst
-        # K z = 0 und M z = 0). Dann ist die Eigenform dort unbestimmt: bis
-        # k10b kam „ARPACK error -9999" oder, auf dem dichten Weg, eine Form,
-        # in der ein loser RBE3-Slave beliebig mitlief - ohne Wort. Geprueft
-        # wird wie in der Statik: eine Loesung mit Residuumspruefung, mit
-        # einer rechten Seite, die jede Richtung enthaelt.
+        loeser, ursache = None, ex
+    if loeser is not None:
+        # Die Modalanalyse faktorisiert selbst, ohne StaticSystem - das Ausweichen
+        # meldete hier bis zum 22.09.2026 nur warnings.warn (Befund K2).
+        if loeser.ausweichgrund:
+            _melde(progress, f"Gleichungslöser ausgewichen - {loeser.ausweichgrund}")
         try:
             loeser.solve(np.random.default_rng(0).standard_normal(A.shape[0]), check=True)
         except RuntimeError as ex:
-            raise RuntimeError(_modal_singulaer_text(model, K, fi, ex, progress)) from None
+            ursache = ex
+    if ursache is not None:
+        # Die Zerlegung von A (falls es eine gibt) geht an _MasselosFrei ueber
+        eigene = loeser is None
+        try:
+            loeser, frei = None, _MasselosFrei(A, Mff, loeser, progress)
+            loeser = frei
+        except (RuntimeError, ValueError) as ex2:
+            raise RuntimeError(_modal_singulaer_text(model, K, fi, ursache, progress, ex2)) from None
+        if eigene and frei.ausweichgrund:
+            _melde(progress, f"Gleichungslöser ausgewichen - {frei.ausweichgrund}")
+    try:
         if dicht:
-            vals_, vecs = _modal_kondensiert(loeser, Mff, mdf, sigma, k, rang)
+            vals_, vecs = _modal_kondensiert(loeser, Mff, mdf, sigma, k, rang, lform=frei is not None)
         else:
             op = LinearOperator(A.shape, dtype=float,
                                 matvec=lambda x: loeser.solve(np.asarray(x, float).ravel(), check=False))
@@ -11656,6 +11673,18 @@ def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = Non
                     f"Eigenformen ({str(ex)[:160]}). Das System hat {n_masse} Freiheitsgrade mit Masse in "
                     f"{rang} unabhängigen Richtungen. Weniger Eigenformen anfordern; bleibt die Meldung, "
                     f"Lagerung und Massen prüfen.") from None
+        if frei is not None:
+            # ARPACK beginnt mit einem Zufallsvektor - die Formen ohne Anteil der
+            # freien Bewegung (die Loesungen selbst liefern keinen)
+            vecs = frei.ohne_frei(vecs)
+            # Eigenwert als Rayleigh-Quotient v^T K v / v^T M v (Fehler quadratisch
+            # im Fehler der Form) statt sigma + 1/nu: bei angehobenen Pivots sind
+            # die Loesungen nur auf etwa 0,00000002 genau, und sigma + 1/nu traegt
+            # das mit |sigma| in den Eigenwert - am losen RBE3-Slave mit Zusatzmasse
+            # kam die Starrkoerperform mit 0,063 statt 0 Hz heraus.
+            den = np.einsum("ij,ij->j", vecs, Mff @ vecs)
+            num = np.einsum("ij,ij->j", vecs, Kff @ vecs)
+            vals_ = np.where(den > 0, num / np.where(den > 0, den, 1.0), vals_)
     finally:
         loeser.freigeben()
     # Der dichte Weg liefert nur die Formen, die es gibt (Rang von M) und die
@@ -11688,6 +11717,11 @@ def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = Non
                 "loeser": loeser.backend}
     if rang < n_masse:
         res.info["massenrang"] = int(rang)
+    if frei is not None and frei.richtungen:
+        res.info["frei_ohne_masse"] = {"richtungen": int(frei.richtungen), "knoten": frei.knoten(model, fi),
+                                       **({"mindestens": True} if frei.mehr else {})}
+        res.info["frei_hinweis"] = frei_hinweis(res.info["frei_ohne_masse"])
+        _melde(progress, res.info["frei_hinweis"])
     if k < nmodes:
         res.info["moden_hinweis"] = grenz_hinweis or moden_hinweis(k, nmodes, n_masse, rang)
         _melde(progress, res.info["moden_hinweis"])
@@ -11731,6 +11765,181 @@ MODAL_DICHT_MAX = 2000
 #: Millionenfachen der Grundfrequenz (sigma < 0).
 MODAL_NU_REL = 1e-12
 
+#: Freie Teile ohne Masse in der Modalanalyse (k10b, Befund 1 der Gegenpruefung).
+#: Hilfszerlegung nur, wenn sich A selbst nicht zerlegen liess: A + eps ·
+#: max|diag A| · I (ein gleichmaessiger Shift dreht die Eigenvektoren nicht).
+MODAL_FREI_EPS = 1e-12
+#: Eine Ritz-Richtung z gilt als frei, wenn A z bis auf Rundung null ist
+#: (‖A z‖ hoechstens dieser Bruchteil von ‖|A| |z|‖ - komponentenweise, damit
+#: Straffedern den Massstab nicht verschieben) ...
+MODAL_FREI_A = 1e-10
+#: ... und sie keine Masse traegt (z^T M z hoechstens dieser Bruchteil der
+#: groessten Hauptdiagonale von M, z Einheitsvektor). Weiche Formen mit Masse
+#: haben unter starren Kopplungen Ritz-Werte bis 1e-11 · max diag A (gemessen am
+#: Kragarm mit 300 Staeben und RBE3) - am Ritz-Wert allein sind sie nicht von
+#: freien Richtungen zu trennen, an der Masse schon.
+MODAL_FREI_M = 1e-12
+#: Hoechstens so viele freie Richtungen sucht _MasselosFrei (Speicher n mal
+#: diese Zahl); gibt es mehr, rechnet es mit den gefundenen und sagt „mindestens“.
+MODAL_FREI_MAX = 512
+#: Ziel-Residuum der Nachiteration von _MasselosFrei (relativ); die Schranke
+#: der Statik (genauigkeit) muss in jedem Fall halten.
+MODAL_FREI_RES = 1e-13
+
+
+class _MasselosFrei:
+    """Loeser fuer A = K - sigma M, wenn ein Teil ohne Masse ohne Steifigkeit
+    beweglich ist (A z = 0 heisst K z = 0 und M z = 0, weil sigma < 0 und M
+    positiv semidefinit). Gegenpruefung k10b, Befund 1: solche Modelle sind
+    rechenbar - die Statik haelt den Teil numerisch, und keine Eigenfrequenz
+    haengt von ihm ab, weil er keine Masse traegt.
+
+    ``loeser``: die Zerlegung von A (PARDISO hebt die Pivots der freien
+    Richtungen an, wie in der Statik); ohne sie eine Hilfszerlegung von
+    A + eps · max|diag A| · I. Sie dient als Vorkonditionierer: jede Loesung
+    wird gegen A selbst nachiteriert und muss die Schranke der Statik halten.
+    Die rechten Seiten des Eigenloesers (M x) liegen im Bild von A, weil M die
+    freien Richtungen nicht beruehrt.
+
+    Der Nullraum Z (orthonormal) kommt aus inverser Iteration mit der Zerlegung
+    und Rayleigh-Ritz; frei ist eine Ritz-Richtung nur, wenn A z bis auf Rundung
+    null ist und z keine Masse traegt. Z wird aus jeder Loesung genommen: die
+    Eigenformen zeigen den losen Teil ohne seine (unbestimmte) freie Bewegung,
+    und der Hinweis nennt seine Knoten."""
+
+    def __init__(self, A, M, loeser: "LinearSolver" = None, progress=None):
+        try:
+            self.A = sparse.csr_matrix(A)
+            self.M = sparse.csr_matrix(M)
+            n = self.A.shape[0]
+            if loeser is None:
+                d = np.abs(np.asarray(self.A.diagonal(), float).ravel())
+                dmax = float(d.max()) if d.size else 0.0
+                if not dmax > 0:
+                    raise ValueError("die Matrix hat keine Steifigkeit")
+                shift = sparse.identity(n, format="csr") * (MODAL_FREI_EPS * dmax)
+                loeser = LinearSolver((self.A + shift).tocsc(), progress=progress)
+        except BaseException:
+            if loeser is not None:
+                loeser.freigeben()
+            raise
+        self._ls = loeser
+        self.backend = loeser.backend
+        self.ausweichgrund = loeser.ausweichgrund
+        self.grenze = float(LinearSolver.genauigkeit()[0])
+        self.residuum = float("nan")
+        self.mehr = False
+        self.Z = np.zeros((n, 0))
+        try:
+            self.Z = self._nullraum(n)
+            # Pruefung: eine rechte Seite aus dem Bild von M, wie sie der
+            # Eigenloeser stellt, mit jeder Richtung mit Masse
+            self.solve(self.M @ np.random.default_rng(0).standard_normal(n))
+        except BaseException:
+            self.freigeben()
+            raise
+        self.richtungen = int(self.Z.shape[1])
+
+    def _nullraum(self, n: int) -> np.ndarray:
+        absA = abs(self.A)
+        mmax = float(np.abs(self.M.diagonal()).max()) if n else 0.0
+        rng = np.random.default_rng(20261115)
+        p = min(n, 8, MODAL_FREI_MAX)
+        while True:
+            X = rng.standard_normal((n, p))
+            for _ in range(4):
+                X = np.column_stack([self._ls.solve(X[:, j], check=False) for j in range(p)])
+                if not np.all(np.isfinite(X)):
+                    raise RuntimeError("die Zerlegung lieferte keine endliche Lösung")
+                X, _r = np.linalg.qr(X)
+            H = X.T @ (self.A @ X)
+            _th, W = np.linalg.eigh(0.5 * (H + H.T))
+            V = X @ W
+            a_rel = (np.linalg.norm(self.A @ V, axis=0)
+                     / np.maximum(np.linalg.norm(absA @ np.abs(V), axis=0), 1e-300))
+            m_rel = np.abs(np.einsum("ij,ij->j", V, self.M @ V)) / max(mmax, 1e-300)
+            frei = (a_rel <= MODAL_FREI_A) & (m_rel <= MODAL_FREI_M)
+            c = int(frei.sum())
+            if c < p or p >= n:
+                break
+            if p >= MODAL_FREI_MAX:
+                # Mehr freie Richtungen, als die Suche haelt: die gefundenen
+                # werden herausgenommen; die uebrigen beruehren die Frequenzen
+                # nicht (die Nachiteration prueft jede Loesung), der Hinweis
+                # sagt „mindestens“.
+                self.mehr = True
+                break
+            p = min(n, 2 * p, MODAL_FREI_MAX)
+        if not c:
+            return np.zeros((n, 0))
+        Z, _r = np.linalg.qr(V[:, frei])
+        return Z
+
+    def ohne_frei(self, x: np.ndarray) -> np.ndarray:
+        """``x`` (Vektor oder Spalten) ohne Anteil im Nullraum."""
+        if not self.Z.shape[1]:
+            return x
+        return x - self.Z @ (self.Z.T @ x)
+
+    def solve(self, b: np.ndarray, check: bool = False) -> np.ndarray:
+        """A^+ b mit Nachiteration gegen A; haelt sie die Schranke der Statik
+        nicht, RuntimeError. ``check`` nur der Form halber: geprueft wird immer."""
+        b = self.ohne_frei(np.asarray(b, float).ravel())
+        nb = float(np.linalg.norm(b))
+        if nb == 0.0:
+            return np.zeros_like(b)
+        x = self._ls.solve(b, check=False)
+        r = b - self.A @ x
+        rn = float(np.linalg.norm(r)) / nb
+        # Nachiteration, solange sie hilft (hoechstens 3 Schritte): unter
+        # Straffedern liegt die erreichbare Genauigkeit bei etwa 0,00000001 -
+        # genauer rechnet auch der regulaere Weg nicht. Mehr Aufwand (GMRES bis
+        # 0,0000000000001) kostete am Kragarm mit 300 Staeben je Loesung bis zu
+        # 160 Zerlegungsloesungen ohne Gewinn; die Eigenwerte kommen ohnehin
+        # aus dem Rayleigh-Quotienten (solve_modal).
+        for _ in range(3):
+            if not rn > MODAL_FREI_RES:
+                break
+            x2 = x + self._ls.solve(r, check=False)
+            r2 = b - self.A @ x2
+            rn2 = float(np.linalg.norm(r2)) / nb
+            if not rn2 < 0.5 * rn:
+                if rn2 < rn:
+                    x, r, rn = x2, r2, rn2
+                break
+            x, r, rn = x2, r2, rn2
+        self.residuum = rn
+        if not (np.isfinite(rn) and rn <= self.grenze):
+            raise RuntimeError(f"Gleichungssystem numerisch singulär (Residuum {_zt(rn, 2)}, "
+                               f"Schranke {_zt(self.grenze, 2)}) auch ohne die freien Richtungen")
+        return self.ohne_frei(x)
+
+    def knoten(self, model, fi: np.ndarray) -> list:
+        """Die Knoten, an denen sich die freien Richtungen bewegen."""
+        if not self.Z.shape[1]:
+            return []
+        a = np.abs(self.Z).max(axis=1)
+        sel = np.asarray(fi)[a > 1e-6 * float(a.max())]
+        sel = sel[sel < NDOF * int(model.nn)]
+        return sorted(int(k) for k in np.unique(sel // NDOF))
+
+    def freigeben(self) -> None:
+        self._ls.freigeben()
+
+
+def frei_hinweis(info: dict) -> str:
+    """Klartext zu frei beweglichen Teilen ohne Masse in der Modalanalyse
+    (Gegenpruefung k10b, Befund 1)."""
+    c = int(info.get("richtungen", 0) or 0)
+    kn = list(info.get("knoten") or [])
+    wo = ", ".join(f"K{k}" for k in kn[:8]) + (f" … ({len(kn)} Knoten)" if len(kn) > 8 else "")
+    return (f"Frei beweglich ohne Masse: {'mindestens ' if info.get('mindestens') else ''}"
+            f"{'eine Richtung' if c == 1 else f'{c} Richtungen'}"
+            + (f" an {'Knoten' if len(kn) == 1 else 'den Knoten'} {wo}" if kn else "")
+            + " (etwa ein loser Knoten an einem RBE3 oder ein gewichtsloser Körper ohne Halt). Wie in der "
+              "statischen Rechnung numerisch gehalten; die Eigenfrequenzen hängen davon nicht ab, die "
+              "Eigenformen zeigen dort nur den Anteil ohne die freie Bewegung.")
+
 
 def _massenrang(Mff, fi: np.ndarray, nn: int) -> int:
     """Zahl der unabhaengigen Richtungen der Massenmatrix (freie FHG).
@@ -11766,11 +11975,11 @@ def _massenrang(Mff, fi: np.ndarray, nn: int) -> int:
     return rang
 
 
-def _modal_singulaer_text(model, K, fi, ex, progress=None) -> str:
-    """Klartext, wenn K - sigma M singulaer ist: ein Teil ohne Masse ist ohne
-    Steifigkeit beweglich (Runde k10b). Die Ursachenzeilen kommen aus der
-    Diagnose der Statik (diagnose.singulaer_text), der Kopf sagt, was das fuer
-    die Schwingung heisst."""
+def _modal_singulaer_text(model, K, fi, ex, progress=None, grund=None) -> str:
+    """Klartext, wenn K - sigma M singulaer ist und sich auch ohne die freien
+    Richtungen ohne Masse nicht loesen laesst (_MasselosFrei scheiterte mit
+    ``grund``). Die Ursachenzeilen kommen aus der Diagnose der Statik
+    (diagnose.singulaer_text)."""
     from types import SimpleNamespace
     try:
         from .diagnose import singulaer_text
@@ -11778,15 +11987,15 @@ def _modal_singulaer_text(model, K, fi, ex, progress=None) -> str:
         rumpf = text.split("\n", 1)[1] if "\n" in text else ""
     except Exception as ex2:              # noqa: BLE001 - die Meldung darf nie sperren
         rumpf = f"Diagnose nicht möglich: {type(ex2).__name__}: {ex2}"
-    return ("Eigenschwingungen nicht berechenbar: Ein Teil des Modells ohne Masse ist ohne Steifigkeit "
-            "beweglich (etwa ein loser Knoten an einem RBE3 oder ein gewichtsloser Körper ohne Halt). Seine "
-            "Bewegung ist in jeder Eigenform unbestimmt; die statische Rechnung bricht am selben Modell mit "
-            "„Gleichungssystem singulär“ ab. Teil anschließen, lagern oder entfernen."
+    return ("Eigenschwingungen nicht berechenbar: Das Gleichungssystem der Schwingung ist singulär, und "
+            "es ließ sich nicht auf frei bewegliche Teile ohne Masse zurückführen, die das Programm halten "
+            "könnte (etwa ein loser Knoten an einem RBE3 oder ein gewichtsloser Körper ohne Halt)"
+            + (f" – {grund}" if grund else "") + ". Lagerung, Kopplungen und freie Bauteile prüfen."
             + ("\n" + rumpf if rumpf else ""))
 
 
 def _modal_kondensiert(loeser: "LinearSolver", Mff, mdf: np.ndarray, sigma: float, k: int,
-                       rang: int = None) -> tuple:
+                       rang: int = None, lform: bool = False) -> tuple:
     """(Eigenwerte, Eigenvektoren) von Kff v = lambda Mff v, wenn nur wenige
     Freiheitsgrade Masse tragen: exakt statisch kondensiert auf diese.
 
@@ -11800,7 +12009,14 @@ def _modal_kondensiert(loeser: "LinearSolver", Mff, mdf: np.ndarray, sigma: floa
     Es kommen hoechstens ``k`` Paare, und nur die, die es gibt: hoechstens
     ``rang`` (Rang von M_mm) und nur nu ueber MODAL_NU_REL · nu_max - darunter
     ist nu Rundungsrauschen. Speicher: F (n_masse²) und je Form ein Vektor;
-    bis k10b hielt die Funktion die volle Matrix n x n_masse."""
+    bis k10b hielt die Funktion die volle Matrix n x n_masse.
+
+    ``lform`` (frei bewegliche Teile ohne Masse, ``loeser`` = _MasselosFrei):
+    F = (A^+)[m, m] kann dann singulaer sein, wenn eine freie Richtung einen
+    Knoten mit Masse in einer anderen Richtung beruehrt. Dann ohne Inverse:
+    M_mm = L L^T (L aus den Eigenvektoren von M_mm ueber MODAL_NU_REL), die
+    Eigenwerte nu von L^T F L (dieselben von Null verschiedenen wie A^+ M) und
+    die Form v = A^+ (E_m L psi)."""
     import scipy.linalg as sla
     m = np.where(mdf > 0)[0]
     n = Mff.shape[0]
@@ -11811,6 +12027,29 @@ def _modal_kondensiert(loeser: "LinearSolver", Mff, mdf: np.ndarray, sigma: floa
         F[:, j] = loeser.solve(e, check=False)[m]
         e[i] = 0.0
     F = 0.5 * (F + F.T)
+    if lform:
+        Mmm = sparse.csr_matrix(Mff)[m][:, m].toarray()
+        w, U = np.linalg.eigh(0.5 * (Mmm + Mmm.T))
+        behalten = w > MODAL_NU_REL * max(float(w.max()), 0.0)
+        Lm = U[:, behalten] * np.sqrt(w[behalten])
+        G = Lm.T @ F @ Lm
+        del F
+        nu, psi = np.linalg.eigh(0.5 * (G + G.T))
+        nu_max = float(nu.max()) if nu.size else 0.0
+        if nu_max <= 0:
+            raise RuntimeError("Eigenschwingungen nicht berechenbar: die Massenmatrix hat keine wirksame Richtung.")
+        gut = np.where(nu > MODAL_NU_REL * nu_max)[0]
+        gut = gut[np.argsort(-nu[gut])]
+        if rang is not None:
+            gut = gut[:max(1, int(rang))]
+        gut = gut[:k]
+        lam = sigma + 1.0 / nu[gut]
+        vecs = np.empty((n, len(gut)))
+        rhs = np.zeros(n)
+        for j, g in enumerate(gut):
+            rhs[m] = Lm @ psi[:, g]
+            vecs[:, j] = loeser.solve(rhs, check=False)
+        return lam, vecs
     A_red = np.linalg.inv(F)
     del F
     A_red = 0.5 * (A_red + A_red.T)

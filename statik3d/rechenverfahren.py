@@ -2675,7 +2675,9 @@ def _modal_masselos_betroffen(model) -> bool:
     ohne Element, den ein RBE3 oder eine Kopplung nicht voll haelt. Nur dann kann die
     Massenmatrix weniger Richtungen haben als Freiheitsgrade mit Masse
     (Zusatzmasse auf masselosen Teilen) oder K - sigma M singulaer sein
-    (masseloser Mechanismus); beides hat sich in solve_modal geaendert."""
+    (frei beweglicher Teil ohne Masse: seither numerisch gehalten, Eigenformen
+    dort ohne die freie Bewegung, Teil im Hinweis genannt); beides hat sich in
+    solve_modal geaendert."""
     try:
         mats = getattr(model, "materials", None) or {}
         im_element = set()
@@ -4138,8 +4140,8 @@ MERKMALE: list = [
     Merkmal(
         name="modal_massenrang", titel="Eigenformen bei Teilen ohne Masse",
         texte={"alt": "so viele Eigenformen wie Freiheitsgrade mit Masse; masseloser Mechanismus ungeprüft",
-               "neu": "so viele Eigenformen, wie die Massenmatrix Richtungen hat; masseloser Mechanismus "
-                      "wird gemeldet"},
+               "neu": "so viele Eigenformen, wie die Massenmatrix Richtungen hat; frei bewegliche Teile ohne "
+                      "Masse numerisch gehalten und genannt"},
         wechsel=(Wechsel(stand=68, datum="15.11.2026", commit="fix/k10-num", alt="alt", neu="neu",
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Teile ohne Masse (gewichtsloser Werkstoff, Knoten ohne Element an einem RBE3 oder an einer Kopplung in weniger als drei Richtungen)",

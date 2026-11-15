@@ -39,9 +39,14 @@ Runde k10b (zweite Runde Modalanalyse, nur Absturz und Meldung, kein Stand):
 * Der dichte Weg hielt eine volle Matrix n x n_masse (1 Mio. FHG, 201 Spalten:
   1,6 GB); seither nur n_masse² und je Form einen Vektor, Grenze
   MODAL_DICHT_MAX = 2000 Massen-FHG, darueber ARPACK mit Klartext.
-* Ein loser RBE3-Slave (ohne Masse, ohne Halt) gab „ARPACK error -9999" oder
-  still eine Form mit beliebig mitlaufendem Slave; seither Klartext wie in
-  der Statik.
+* Ein frei beweglicher Teil ohne Masse (loser RBE3-Slave, gewichtsloser Stab
+  ohne Halt) wurde am Stand f537ead4 mit „Eigenschwingungen nicht
+  berechenbar" abgewiesen, obwohl das Modell rechenbar ist (Gegenpruefung
+  k10b, Befund 1). Seither haelt die Modalanalyse ihn wie die Statik numerisch
+  fest (_MasselosFrei: Nullraum aus Zerlegung und Rayleigh-Ritz, frei nur ohne
+  Masse; Loesungen mit Nachiteration auf dem Komplement) und nennt ihn im
+  Hinweis. Sollwerte: der Kragarm ohne den losen Teil (gleichwertiges Modell)
+  und dicht eigh auf dem Komplement des Nullraums (scipy.linalg.null_space).
 
 Aufruf:  python -m tests.test_numerik_k10
 """
@@ -575,38 +580,276 @@ def _rbe3_lose(teile, halten=False):
     return m
 
 
-def test_rbe3_lose_schwingung():
-    """Loser RBE3-Slave: die Schwingung meldet wie die Statik im Klartext
-    (vorher ARPACK -9999 oder, dicht, eine Form mit beliebig mitlaufendem
-    Slave ohne Wort)."""
-    from statik3d import solver
-    for teile, weg in ((1, "dichter Weg"), (8, "ARPACK-Weg")):
-        m = _rbe3_lose(teile)
-        try:
-            _still(solver.solve_modal, m, 8, workers=1)
-            ok, txt = False, "keine Meldung, Ergebnis geliefert"
-        except RuntimeError as ex:
-            txt = str(ex)
-            ok = txt.startswith("Eigenschwingungen nicht berechenbar") and "ohne Masse" in txt
-        except Exception as ex:          # noqa: BLE001
-            ok, txt = False, f"{type(ex).__name__}: {ex}"
-        check(f"Loser RBE3-Slave, {weg}: Klartext „Eigenschwingungen nicht berechenbar … ohne Masse“", ok,
-              txt[:200])
-        try:
-            _still(solver.solve_static, m, case="LF1")
-            st = "rechnet"
-        except RuntimeError as ex:
-            st = str(ex)
-        check(f"Loser RBE3-Slave, {weg}: die Statik meldet am selben Modell „singulär“", "singulär" in st, st[:120])
-    # Gegenprobe: haengt d ueber einen Stab an b, rechnet die Schwingung
+def _lose_modell(art, teile, last_am_losen=False):
+    """Kragarm (Dichte 7850, L = 3 m, ``teile`` Stäbe, eingespannt) mit einem
+    frei beweglichen Teil ohne Masse (Gegenprüfung k10b, Befund 1):
+
+    'rbe3'  loser RBE3-Slave d (ohne Element) mit Master P, Slaves Ende b und d
+    'stab'  gewichtsloser Stab ohne Lager neben dem Kragarm (schwebend)
+    'ohne'  der reine Kragarm - das gleichwertige Modell ohne den losen Teil
+    Last 1 kN am Kragarmende, mit ``last_am_losen`` am Master P."""
+    from statik3d.model import Model, Material, Section
+    m = Model("lose_" + art)
+    m.add_material(Material("ST", E=E, nu=0.3, rho=7850.0, fy=355e6))
+    m.add_material(Material("LEER", E=E, nu=0.3, rho=0.0, fy=355e6))
+    m.add_section(Section("Q", A=A, Iy=I, Iz=I, It=1e-5, zmax=0.1, ymax=0.1))
+    m.design.imperfektionen = False
+    m.netz.stabteilung = 1
+    kn = [m.add_node(L * i / teile, 0, 0) for i in range(teile + 1)]
+    for i in range(teile):
+        m.add_element("beam", [kn[i], kn[i + 1]], "ST", "Q")
+    m.fix(kn[0], "all")
+    lose, last = [], kn[-1]
+    if art == "rbe3":
+        d = m.add_node(L, 2, 0)
+        p = m.add_node(L, 1, 0)
+        m.add_starrkoerper(p, [kn[-1], d], "RBE3", name="H")
+        lose = [d, p]
+        if last_am_losen:
+            last = p
+    elif art == "stab":
+        a2 = m.add_node(0, 3, 0)
+        b2 = m.add_node(L, 3, 0)
+        m.add_element("beam", [a2, b2], "LEER", "Q")
+        lose = [a2, b2]
+    m.add_load_case("LF1", "G")
+    m.load_cases["LF1"].gravity = [0.0, 0.0, 0.0]
+    m.load_node(last, Fz=-F, case="LF1")
+    return m, lose
+
+
+def _dicht_nullraum(m):
+    """Zweiter Weg ohne Eigenloeser und ohne Zerlegung des Programms: dicht auf
+    den freien FHG den Nullraum Z von K + c M (frei beweglich ohne Masse) mit
+    scipy.linalg.null_space bestimmen und das Eigenproblem auf dem Komplement W
+    loesen (W^T K W positiv definit). Rueckgabe (Frequenzen aufsteigend, Z, fi)."""
+    import scipy.linalg as sla
+    from statik3d import assemble as asm
+    K = asm.stiffness(m)
+    M = asm.mass(m)
+    fixed, _v = asm.constrained_dofs(m, K)
+    fi = np.where(~fixed)[0]
+    Kd = K[fi][:, fi].toarray()
+    Md = M[fi][:, fi].toarray()
+    c = float(np.abs(np.diag(Kd)).mean() / np.diag(Md)[np.diag(Md) > 0].mean())
+    Z = sla.null_space(Kd + 1e-6 * c * Md, rcond=1e-13)
+    W = sla.null_space(Z.T) if Z.shape[1] else np.eye(len(fi))
+    nu = sla.eigh(W.T @ Md @ W, W.T @ Kd @ W, eigvals_only=True)
+    nu = np.sort(nu[nu > 1e-9 * nu.max()])[::-1]
+    return np.sqrt(1.0 / nu) / (2 * math.pi), Z, fi
+
+
+def _dicht_starr(m, Zm):
+    """Wie _dicht_nullraum mit Zusatzmasse Zm und Starrkoerperformen mit Masse:
+    nu von (M_W, K_W + s M_W), lambda = 1/nu - s. Rueckgabe (Frequenzen, dim Z)."""
+    import scipy.linalg as sla
+    from statik3d import assemble as asm
+    K = asm.stiffness(m)
+    M = (asm.mass(m) + Zm).tocsr()
+    fixed, _v = asm.constrained_dofs(m, K)
+    fi = np.where(~fixed)[0]
+    Kd = K[fi][:, fi].toarray()
+    Md = M[fi][:, fi].toarray()
+    c = float(np.abs(np.diag(Kd)).mean() / np.diag(Md)[np.diag(Md) > 0].mean())
+    Z = sla.null_space(Kd + 1e-6 * c * Md, rcond=1e-13)
+    W = sla.null_space(Z.T) if Z.shape[1] else np.eye(len(fi))
+    s = 1e-6 * c
+    nu = sla.eigh(W.T @ Md @ W, W.T @ Kd @ W + s * (W.T @ Md @ W), eigvals_only=True)
+    nu = np.sort(nu[nu > 1e-9 * nu.max()])[::-1]
+    return np.sqrt(np.maximum(1.0 / nu - s, 0.0)) / (2 * math.pi), Z.shape[1]
+
+
+def test_lose_teile_ohne_masse():
+    """Frei beweglicher Teil ohne Masse (Gegenprüfung k10b, Befund 1): das
+    Modell rechnet wie in der Statik, die Eigenfrequenzen gleichen dem
+    gleichwertigen Modell ohne den losen Teil und der dichten Gegenrechnung
+    auf dem Komplement des Nullraums; der Teil wird im Hinweis genannt.
+    Am Stand f537ead4 kam „Eigenschwingungen nicht berechenbar“ (falsche
+    Abweisung), bis c0dc985c rechnete es ohne Hinweis mit beliebig
+    mitlaufendem Teil."""
+    from statik3d import solver, assemble as asm
+    for art, name in (("rbe3", "loser RBE3-Slave"), ("stab", "gewichtsloser Stab ohne Halt")):
+        for teile in (1, 8):
+            m, lose = _lose_modell(art, teile)
+            ref, Z, fi = _dicht_nullraum(m)
+            m0, _l = _lose_modell("ohne", teile)
+            r0 = _still(solver.solve_modal, m0, 12, workers=1)
+            f0 = np.asarray(r0.freqs, float)
+            check(f"{name}, {teile} Stäbe: Gegenrechnung dicht hat einen Nullraum ohne Masse",
+                  Z.shape[1] >= 1, Z.shape[1])
+            K = asm.stiffness(m)
+            M = asm.mass(m)
+            for nm in (4, 8, 12):
+                was = f"{name}, {teile} Stäbe, {nm} Formen"
+                try:
+                    res = _still(solver.solve_modal, m, nm, workers=1)
+                except Exception as ex:          # noqa: BLE001
+                    check(f"{was}: rechnet", False, f"{type(ex).__name__}: {str(ex)[:160]}")
+                    continue
+                fr = np.asarray(res.freqs, float)
+                soll = min(nm, len(ref))
+                check(f"{was}: rechnet, {soll} Formen ({str(res.info.get('eigenloeser', ''))[:6]})",
+                      len(fr) == soll, np.round(fr, 4))
+                check(f"{was}: gleich der dichten Gegenrechnung auf dem Komplement (relativ 0,000001)",
+                      len(fr) == soll and np.allclose(fr, ref[:soll], rtol=1e-6),
+                      np.round(fr / ref[:len(fr)] - 1, 9))
+                n0 = min(len(fr), len(f0))
+                check(f"{was}: gleich dem Kragarm ohne den losen Teil (relativ 0,000001)",
+                      n0 == soll and np.allclose(fr[:n0], f0[:n0], rtol=1e-6), np.round(f0[:n0], 4))
+                # Eigenformen: K v = lambda M v, ohne Anteil der freien Bewegung
+                ok_form, ok_frei, worst = True, True, 0.0
+                for i in range(len(fr)):
+                    v = np.asarray(res.modes[i], float).ravel()
+                    v = np.concatenate([v, np.zeros(max(0, m.ndof - v.size))])[:m.ndof]
+                    lam = (2 * math.pi * fr[i]) ** 2
+                    Kv, Mv = K @ v, M @ v
+                    rel = np.linalg.norm((Kv - lam * Mv)[fi]) / max(np.linalg.norm(Kv[fi]), 1e-300)
+                    worst = max(worst, rel)
+                    # 0,00001: der regulaere Weg erreicht am gleichwertigen Modell mit
+                    # gehaltenem Slave (_rbe3_lose(8, halten=True)) 0,0000033 - die
+                    # Straffedern des RBE3 begrenzen die Genauigkeit, nicht der lose Teil
+                    ok_form &= rel <= 1e-5
+                    ok_frei &= float(np.abs(Z.T @ v[fi]).max()) <= 1e-6 * float(np.abs(v[fi]).max())
+                check(f"{was}: Eigenformen erfüllen K v = λ M v (relativ 0,00001)", ok_form, f"{worst:.2e}")
+                check(f"{was}: Eigenformen ohne Anteil der freien Bewegung", ok_frei)
+                fo = res.info.get("frei_ohne_masse") or {}
+                kn = set(fo.get("knoten") or [])
+                check(f"{was}: Hinweis nennt den freien Teil (Knoten {', '.join(f'K{k}' for k in lose)})",
+                      set(lose) <= kn and "ohne Masse" in str(res.info.get("frei_hinweis", ""))
+                      and "ohne Masse" in res.summary(),
+                      f"{sorted(kn)} {str(res.info.get('frei_hinweis', ''))[:120]}")
+    # Zusatzmasse 50 kg · n nᵀ am losen Teil: frei bleiben nur die Richtungen
+    # senkrecht zu n (F = (A^+)[m, m] singulaer, L-Form), in Richtung n eine
+    # Starrkoerperform mit Masse (0 Hz)
+    n = np.array([0.36, 0.48, 0.8])
+    for art, name in (("rbe3", "loser RBE3-Slave"), ("stab", "gewichtsloser Stab ohne Halt")):
+        for teile in (1, 8):
+            m, lose = _lose_modell(art, teile)
+            Zm = _zusatz(m, [lose[0]], n, 50.0)
+            ref, nz = _dicht_starr(m, Zm)
+            was = f"{name} mit Zusatzmasse n nᵀ, {teile} Stäbe"
+            try:
+                res = _still(solver.solve_modal, m, 8, workers=1, zusatzmasse=Zm)
+            except Exception as ex:          # noqa: BLE001
+                check(f"{was}: rechnet", False, f"{type(ex).__name__}: {str(ex)[:160]}")
+                continue
+            fr = np.asarray(res.freqs, float)
+            soll = min(8, len(ref))
+            ok = (len(fr) == soll and ref[0] < 1e-3 and fr[0] < solver.STARR_HZ
+                  and np.allclose(fr[1:], ref[1:soll], rtol=1e-6))
+            check(f"{was}: eine Starrkörperform (0 Hz), übrige gleich der dichten Gegenrechnung (relativ 0,000001)",
+                  ok and res.info.get("starrkoerper") == 1, f"{np.round(fr, 5)} / {np.round(ref[:soll], 5)}")
+            check(f"{was}: Hinweis nennt den freien Teil", lose[0] in set((res.info.get("frei_ohne_masse") or {})
+                                                                         .get("knoten") or []), nz)
+    # Statik am selben Modell (Last am Kragarmende): rechnet, w = F L³/(3EI)
+    m, _l = _lose_modell("rbe3", 8)
+    st = _still(solver.solve_static, m, case="LF1")
+    uz = float(np.asarray(st.u).reshape(-1, 6)[8, 2])
+    close("Loser RBE3-Slave, Statik mit Last am Kragarmende: w = F L³/(3EI)", -uz * 1e3, HAND * 1e3, 1e-6)
+    # Last am losen Master: die Statik meldet singulär, die Schwingung (ohne Last) rechnet
+    m, _l = _lose_modell("rbe3", 1, last_am_losen=True)
+    try:
+        _still(solver.solve_static, m, case="LF1")
+        sttxt = "rechnet"
+    except RuntimeError as ex:
+        sttxt = str(ex)
+    check("Last am losen Master: die Statik meldet „singulär“", "singulär" in sttxt, sttxt[:120])
+    ref, _Z, _fi = _dicht_nullraum(m)
+    try:
+        res = _still(solver.solve_modal, m, 8, workers=1)
+        fr = np.asarray(res.freqs, float)
+        check("Last am losen Master: die Schwingung rechnet, gleich der Gegenrechnung",
+              len(fr) == len(ref[:8]) and np.allclose(fr, ref[:len(fr)], rtol=1e-6), np.round(fr, 4))
+    except Exception as ex:              # noqa: BLE001
+        check("Last am losen Master: die Schwingung rechnet, gleich der Gegenrechnung", False,
+              f"{type(ex).__name__}: {str(ex)[:160]}")
+    # Gegenprobe: haengt d ueber einen Stab an b, rechnet die Schwingung ohne Hinweis
     m = _rbe3_lose(8, halten=True)
     try:
         res = _still(solver.solve_modal, m, 4, workers=1)
-        check("Gegenprobe: loser Knoten über einen Stab gehalten - rechnet, 4 Formen", len(res.freqs) == 4,
-              np.round(res.freqs, 3))
+        check("Gegenprobe: loser Knoten über einen Stab gehalten - rechnet, 4 Formen, kein Hinweis",
+              len(res.freqs) == 4 and not res.info.get("frei_ohne_masse"), np.round(res.freqs, 3))
     except Exception as ex:              # noqa: BLE001
-        check("Gegenprobe: loser Knoten über einen Stab gehalten - rechnet, 4 Formen", False,
+        check("Gegenprobe: loser Knoten über einen Stab gehalten - rechnet, 4 Formen, kein Hinweis", False,
               f"{type(ex).__name__}: {ex}"[:200])
+    # Mehr freie Richtungen, als die Suche haelt (3 > 2): rechnet mit den
+    # gefundenen, Frequenzen unveraendert, Hinweis „mindestens“
+    m, _l = _lose_modell("rbe3", 1)
+    ref, _Z, _fi = _dicht_nullraum(m)
+    if hasattr(solver, "MODAL_FREI_MAX"):
+        alt = solver.MODAL_FREI_MAX
+        solver.MODAL_FREI_MAX = 2
+        try:
+            res = _still(solver.solve_modal, m, 4, workers=1)
+            fr = np.asarray(res.freqs, float)
+            hw = str(res.info.get("frei_hinweis", ""))
+            ok = len(fr) == 4 and np.allclose(fr, ref[:4], rtol=1e-6) and "mindestens 2 Richtungen" in hw
+            txt = f"{np.round(fr, 4)} {hw[:120]}"
+        except Exception as ex:          # noqa: BLE001
+            ok, txt = False, f"{type(ex).__name__}: {str(ex)[:160]}"
+        finally:
+            solver.MODAL_FREI_MAX = alt
+    else:
+        ok, txt = False, "MODAL_FREI_MAX fehlt"
+    check("Mehr freie Richtungen ohne Masse als MODAL_FREI_MAX: rechnet, Hinweis „mindestens 2 Richtungen“", ok,
+          txt[:200])
+
+
+def test_lose_teile_klartext():
+    """Laesst sich auch ohne die freien Richtungen nicht auf die Schranke der
+    Statik loesen (hier erzwungen: Schranke 0), kommt Klartext statt eines
+    Absturzes oder eines ungeprueften Ergebnisses."""
+    from statik3d import solver
+    if not hasattr(solver, "_MasselosFrei"):
+        check("Klartext, wenn auch ohne freie Richtungen nicht lösbar", False, "_MasselosFrei fehlt")
+        return
+    echt = solver.LinearSolver.__dict__["genauigkeit"]          # staticmethod selbst
+    m, _l = _lose_modell("rbe3", 1)
+    solver.LinearSolver.genauigkeit = staticmethod(lambda: (0.0, 0))
+    try:
+        _still(solver.solve_modal, m, 4, workers=1)
+        ok, txt = False, "keine Meldung"
+    except RuntimeError as ex:
+        txt = str(ex)
+        ok = txt.startswith("Eigenschwingungen nicht berechenbar") and "ohne Masse" in txt
+    except Exception as ex:              # noqa: BLE001
+        ok, txt = False, f"{type(ex).__name__}: {ex}"
+    finally:
+        solver.LinearSolver.genauigkeit = echt
+    check("Klartext „Eigenschwingungen nicht berechenbar … ohne Masse“, wenn auch ohne freie Richtungen nicht lösbar",
+          ok, txt[:200])
+
+
+def test_lform_gleich():
+    """Der kondensierte Weg mit Zerlegung M_mm = L Lᵀ (bei freien Teilen ohne
+    Masse) gleicht dem bisherigen Weg eigh(M_mm, A_red) an der schrägen Wand."""
+    import inspect
+    from statik3d import solver, assemble as asm
+    if "lform" not in inspect.signature(solver._modal_kondensiert).parameters:
+        check("Kondensierter Weg mit M_mm = L Lᵀ vorhanden", False, "fehlt")
+        return
+    m, Zm = wand(8)
+    K = asm.stiffness(m)
+    M = (asm.mass(m) + Zm).tocsr()
+    fixed, _v = asm.constrained_dofs(m, K)
+    fi = np.where(~fixed)[0]
+    Kff, Mff = K[fi][:, fi].tocsc(), M[fi][:, fi].tocsc()
+    mdf = np.asarray(Mff.diagonal()).ravel()
+    sigma = -1e-6 * float(np.abs(Kff.diagonal()).mean() / mdf.mean())
+    rang = solver._massenrang(Mff, fi, m.nn)
+    ls = solver.LinearSolver((Kff - sigma * Mff).tocsc())
+    try:
+        l1, _v1 = solver._modal_kondensiert(ls, Mff, mdf, sigma, 8, rang)
+        l2, v2 = solver._modal_kondensiert(ls, Mff, mdf, sigma, 8, rang, lform=True)
+    finally:
+        ls.freigeben()
+    o1, o2 = np.argsort(l1), np.argsort(l2)
+    check("L-Form: gleiche Eigenwerte wie eigh(M_mm, A_red) (relativ 0,000000001)",
+          len(l1) == len(l2) == 8 and np.allclose(l1[o1], l2[o2], rtol=1e-9),
+          np.round(np.sqrt(np.abs(l2[o2])) / 2 / math.pi, 4))
+    rs = max(np.linalg.norm(Kff @ v2[:, j] - l2[j] * (Mff @ v2[:, j])) / np.linalg.norm(Kff @ v2[:, j])
+             for j in range(len(l2)))
+    check("L-Form: Eigenvektoren erfüllen K v = λ M v (relativ 0,000001)", rs <= 1e-6, f"{rs:.2e}")
 
 
 def test_speicher_dicht():
@@ -682,7 +925,7 @@ def main():
     tests = [test_starre_kopplung_rbe2, test_strafbeiwert, test_bitgleich, test_ruecknahme, test_merkmal,
              test_punktmasse_kragarm, test_punktmasse_feder, test_schutz_arpack,
              test_zusatzmasse_rang1, test_kleinmasse, test_wand_rang, test_grenze_dicht,
-             test_rbe3_lose_schwingung, test_speicher_dicht, test_merkmal_modal]
+             test_lose_teile_ohne_masse, test_lose_teile_klartext, test_lform_gleich, test_speicher_dicht, test_merkmal_modal]
     fehl = []
     for t in tests:
         print(f"\n--- {t.__name__} ---")
