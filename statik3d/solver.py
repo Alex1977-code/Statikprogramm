@@ -11170,6 +11170,12 @@ def _teilanalyse(ex, an: Analysis, model: Model, systeme: dict, t0: float) -> No
     an.info.setdefault("parallel", parallel.describe())
     an.info.setdefault("ndof", model.ndof)
     try:
+        # die Zeile „… enthalten kein Biegedrillknicken“ auch im Teilergebnis;
+        # Nachweise gibt es hier nicht (Gegenpruefung k8, 15.11.2026)
+        _bdk_hinweise_sammeln(an)
+    except Exception:                # noqa: BLE001 - ein Hinweis sperrt nie das Retten
+        pass
+    try:
         ex.teilanalyse = an
     except Exception:                # noqa: BLE001 - das Retten darf nie selbst scheitern
         pass
@@ -11247,18 +11253,27 @@ def _bdk_hinweise_sammeln(an, progress=None) -> None:
     Biegedrillknicken gilt nur als erfasst, wenn sein Nachweis in dieser
     Rechnung gefuehrt wurde (an.design, ohne „nicht gefuehrt“); sonst kommt er
     in den Hinweis der Kombination (Th2Info.hinweise, Theoriekapitel) und in
-    die Zeile (Gegenpruefung k8, 15.11.2026)."""
+    die Zeile (Gegenpruefung k8, 15.11.2026).
+
+    Wiederholbar: auch nach einem Abbruch (_teilanalyse) und nach
+    nachtraeglich gestarteten Nachweisen (Oberflaeche _design_done, Web
+    start_design) - die Staebe ohne Haken stehen fest in
+    ``bdk_staebe_direkt``, die Haken-Staebe kommen je nach an.design dazu
+    oder fallen wieder weg."""
     from .bdk_hinweis import BDK_KENNUNG, bdk_text
     gefuehrt = set()
     if getattr(an, "design", None) is not None:
         gefuehrt = {k for k, mc in an.design.members.items() if not getattr(mc, "fehler", "")}
     for info in (getattr(an.theorie2, "kombinationen", None) or {}).values():
-        offen = [n for n in getattr(info, "bdk_ec3_staebe", None) or [] if n not in gefuehrt]
-        if not offen:
+        ec3 = list(getattr(info, "bdk_ec3_staebe", None) or [])
+        if not ec3:
             continue
-        alt = list(getattr(info, "bdk_staebe", None) or [])
-        info.bdk_staebe = alt + [n for n in offen if n not in alt]
-        info.hinweise[:] = [h for h in info.hinweise if BDK_KENNUNG not in h] + [bdk_text(info.bdk_staebe)]
+        if getattr(info, "bdk_staebe_direkt", None) is None:
+            info.bdk_staebe_direkt = list(getattr(info, "bdk_staebe", None) or [])
+        direkt = list(info.bdk_staebe_direkt)
+        info.bdk_staebe = direkt + [n for n in ec3 if n not in gefuehrt and n not in direkt]
+        info.hinweise[:] = ([h for h in info.hinweise if BDK_KENNUNG not in h]
+                            + ([bdk_text(info.bdk_staebe)] if info.bdk_staebe else []))
     namen, texte = [], []
     for info in (getattr(an.theorie2, "kombinationen", None) or {}).values():
         for n in getattr(info, "bdk_staebe", None) or []:
@@ -11271,6 +11286,8 @@ def _bdk_hinweise_sammeln(an, progress=None) -> None:
     if zeile:
         an.info["bdk_hinweis"] = [zeile]
         _melde(progress, "Hinweis: " + zeile)
+    else:
+        an.info.pop("bdk_hinweis", None)
 
 
 def _solve_all_rumpf(model: Model, an: Analysis, systeme: dict, workers, progress, combinations,

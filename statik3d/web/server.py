@@ -2323,6 +2323,12 @@ def start_design(st: State, fatigue: bool = False) -> dict:
                 res = check_members(m, an, progress=progress)
                 with st.lock:
                     an.design = res
+                    # Hinweis Biegedrillknicken nach den Nachweisen neu bilden (Runde k8)
+                    try:
+                        from .. import solver as _slv
+                        _slv._bdk_hinweise_sammeln(an)
+                    except Exception:          # noqa: BLE001 - ein Hinweis sperrt nie
+                        pass
             st.touch()
             st.info(res.summary())
             return res.summary()

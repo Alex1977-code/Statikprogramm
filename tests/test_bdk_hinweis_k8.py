@@ -274,6 +274,57 @@ def test_ersatzstab():
           any("1 Stab mit Druck und Biegung: T1." in x for x in _h(z)), " | ".join(_h(z))[:200])
 
 
+def test_nach_den_nachweisen():
+    """Gegenpruefung von 7574f6fc: Abbruch in den Nachweisen, nachtraeglich
+    gestartete Nachweise (GUI do_design, Web start_design) und gleiche
+    Alternativen zweier Ergebniskombinationen."""
+    from statik3d import solver
+    from statik3d.ec3.design import check_members
+
+    class Halt(Exception):
+        pass
+
+    def p(t, *a):
+        if str(t).startswith("Nachweise EC3"):
+            raise Halt("Abbruch in den Nachweisen")
+    teil = None
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            solver.solve_all(_ipe(), workers=1, design=True, progress=p)
+    except Halt as ex:
+        teil = getattr(ex, "teilanalyse", None)
+    zeile = (teil.info.get("bdk_hinweis") or []) if teil is not None else []
+    check("Abbruch in den Nachweisen: Teilanalyse nennt T1 (kein Nachweis gelaufen)",
+          teil is not None and any("T1" in x for x in zeile) and "T1" in teil.summary(), zeile)
+    # nachtraeglich: erst ohne Nachweise (Hinweis T1), dann Nachweise allein
+    m = _ipe()
+    an, z = _rechnen(m)
+    vorher = list(an.info.get("bdk_hinweis") or [])
+    with contextlib.redirect_stdout(io.StringIO()):
+        an.design = check_members(m, an)
+    solver._bdk_hinweise_sammeln(an)
+    check("Nachweise nachträglich gestartet: Hinweis zu T1 verschwindet aus Zeile, Kombination und Zusammenfassung",
+          any("T1" in x for x in vorher) and not an.info.get("bdk_hinweis")
+          and KENNUNG not in an.summary() and not any(KENNUNG in h for i in _infos(an) for h in i.hinweise),
+          f"vorher {vorher} | nachher {an.info.get('bdk_hinweis')}")
+    an.design = None
+    solver._bdk_hinweise_sammeln(an)
+    check("... und kommt ohne Nachweis wieder (einmal, nicht doppelt)",
+          an.info.get("bdk_hinweis") == vorher
+          and all(sum(KENNUNG in h for h in i.hinweise) == 1 for i in _infos(an)), an.info.get("bdk_hinweis"))
+    # gleiche Alternativen: die Kopie behaelt die Staebe
+    m = _ipe()
+    lf = m.active_case
+    m.load_cases[lf].theorie = ""
+    m.add_combination("EK1", {}, "ULS", theorie="II", alternativen=[{lf: 1.0}, {lf: 1.2}])
+    m.add_combination("EK2", {}, "ULS", theorie="II", alternativen=[{lf: 1.0}])
+    an, z = _rechnen(m)
+    th = {k: v for k, v in an.theorie2.kombinationen.items()}
+    check("Gleiche Alternativen zweier Ergebniskombinationen: jede Alternative nennt T1",
+          len(th) >= 3 and all(any("T1" in h and KENNUNG in h for h in i.hinweise) for i in th.values()),
+          {k: [h[-60:] for h in i.hinweise if KENNUNG in h] for k, i in th.items()})
+
+
 def test_woelb():
     """Woelbkrafttorsion (7. FHG) erfasst das Biegedrillknicken nicht: K_G
     ohne Normalkraft ist null, auch unter Biegung."""
@@ -336,7 +387,7 @@ def test_theorie3():
 def main():
     for t in (test_formel, test_theorie2, test_mehrere_kombinationen, test_alpha_cr,
               test_grundzustand_zwei_wege, test_knicken,
-              test_ersatzstab, test_woelb, test_schutz, test_theorie3):
+              test_ersatzstab, test_nach_den_nachweisen, test_woelb, test_schutz, test_theorie3):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

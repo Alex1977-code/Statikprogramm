@@ -25536,6 +25536,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _design_done(self, res):
         self.analysis.design = res
+        # Hinweis Biegedrillknicken nach den Nachweisen neu bilden (Runde k8)
+        try:
+            from .. import solver as _slv
+            _slv._bdk_hinweise_sammeln(self.analysis)
+        except Exception:                      # noqa: BLE001 - ein Hinweis sperrt nie
+            pass
         self.info(res.summary())
         self.show_results()
         self._nachweise_melden()

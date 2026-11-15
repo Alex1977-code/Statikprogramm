@@ -234,7 +234,10 @@ def hinweis_th2(model, aktiv=None, **grund) -> tuple:
     alle = bdk_staebe(model, aktiv, ec3=False, **grund)
     if not alle:
         return "", [], []
-    ohne_ec3 = {k[0] for k in kandidaten(model, aktiv, True)}
+    try:
+        ohne_ec3 = {k[0] for k in kandidaten(model, aktiv, True)}
+    except Exception:                       # noqa: BLE001 - ein Hinweis sperrt keine Rechnung
+        return "", [], []
     namen = [n for n in alle if n in ohne_ec3]
     ec3 = [n for n in alle if n not in ohne_ec3]
     return (bdk_text(namen) if namen else ""), namen, ec3

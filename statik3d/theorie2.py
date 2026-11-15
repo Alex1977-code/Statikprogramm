@@ -1116,6 +1116,11 @@ def check_theorie2(model: Model, analysis, combos: list = None, system=None,
             res, info = gemerkt[schluessel]
             out.kombinationen[zeile] = replace(info, kombination=zeile,
                                                hinweise=list(info.hinweise))
+            # die Staebe des Hinweises Biegedrillknicken sind keine Felder:
+            # replace nimmt sie nicht mit (Gegenpruefung k8, 15.11.2026)
+            for _attr in ("bdk_staebe", "bdk_ec3_staebe"):
+                if hasattr(info, _attr):
+                    setattr(out.kombinationen[zeile], _attr, list(getattr(info, _attr)))
             if res is not None and analysis is not None:
                 _alternative_ablegen(analysis, zeile, res)
             continue
