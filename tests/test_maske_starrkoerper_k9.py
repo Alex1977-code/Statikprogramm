@@ -19,6 +19,13 @@ Sollwerte, je zwei Wege:
 * Gegenrechnung: dasselbe Modell ohne das abgeschaltete Element (der zweite
   Kragarm ist nicht da) und ohne Maske.
 
+Nach der Gegenpruefung vom 15.11.2026 in derselben Runde: die RBE3 loest wie
+jeder Starrkoerper ueber Master oder Slave aus (test_rbe3_slave: Last an einem
+Slave ohne Element bzw. am Ende des abgeschalteten Arms; Gegenrechnung und
+Hand mit Verdrehung des Kragarms), und das Merkmal erfasst auch die Masken des
+Spannschritts (test_merkmal_spannschritt) und die neue RBE3-Regel
+(test_merkmal_rbe3).
+
 Schutz: ein Starrkoerper am ganz abgeschalteten Nebenarm bleibt unwirksam
 (seine Last wirkt nicht, wie bisher); Eigenformen mit der Punktmasse an
 einem solchen Knoten waren nicht betroffen (die Massenmatrix maskiert die
@@ -333,9 +340,160 @@ def test_merkmal():
           f"{mk.im_ergebnis(m, an)!r} / {mk.im_ergebnis(m_tot, an2)!r}")
 
 
+def _torsion_hand(hebel):
+    """w am Ende eines starren Arms der Laenge ``hebel`` quer am Kragarmende:
+    Biegung F L³/(3 E I) plus Verdrehung F hebel L/(G I_t) mal hebel."""
+    g_mod = E / (2.0 * 1.3)
+    return HAND + F * hebel * L / (g_mod * 1e-5) * hebel
+
+
+def _rbe3_modell(art, maske, mit_arm=True):
+    """Kragarm a-b, zweiter Kragarm c-d bei y = 2 m (abgeschaltet), eine RBE3
+    mit Master b (wirksames Kragarmende) und einem einzigen Slave:
+    art 'frei' - Slave Q = (L, 0, 0,5) ohne jedes Element, Last 1 kN an Q;
+    art 'arm'  - Slave d (Ende des abgeschalteten Arms), Last 1 kN an d.
+    Gegenrechnung (mit_arm False): der zweite Kragarm ist geloescht, seine
+    Knoten bleiben. Rueckgabe (Modell, b, Lastknoten)."""
+    from statik3d.model import Model, Material, Section, Situation
+    m = Model("k9 rbe3")
+    m.add_material(Material("ST", E=E, nu=0.3, rho=0.0, fy=355e6))
+    m.add_section(Section("Q", A=1e-2, Iy=I, Iz=I, It=1e-5, zmax=0.1, ymax=0.1))
+    m.design.imperfektionen = False
+    m.netz.stabteilung = 1
+    a = m.add_node(0, 0, 0)
+    b = m.add_node(L, 0, 0)
+    m.add_element("beam", [a, b], "ST", "Q")
+    m.fix(a, "all")
+    c = m.add_node(0, 2, 0)
+    d = m.add_node(L, 2, 0)
+    e_arm = None
+    if mit_arm:
+        e_arm = m.add_element("beam", [c, d], "ST", "Q")
+        if maske == "aus":
+            m.add_member("S2", [e_arm], aus=True)
+    m.fix(c, "all")
+    p = m.add_node(L, 0, 0.5) if art == "frei" else d
+    m.add_starrkoerper(b, [p], "RBE3", name="R")
+    m.add_load_case("LF1", "G")
+    m.load_cases["LF1"].gravity = [0.0, 0.0, 0.0]
+    if maske == "situation" and mit_arm:
+        m.situationen["s"] = Situation("s", "", [e_arm])
+        m.load_cases["LF1"].situation = "s"
+    m.load_node(p, Fz=-F, case="LF1")
+    return m, b, p
+
+
+def test_rbe3_slave():
+    """Gegenpruefung vom 15.11.2026: Last an einem Slave einer gewoehnlichen
+    RBE3, deren Master wirksam ist. Im ersten Entwurf der Runde machte bei der
+    RBE3 nur ein wirksamer Slave den Master wirksam, nie umgekehrt - die Last
+    am Slave entfiel unter jeder Maske still (w = 0, Summe Rz = 0,
+    Gleichgewichtskontrolle „ok“). Jetzt wie theorie3._wirksame_knoten_th3:
+    Master oder Slave loest aus, dann alle Knoten des Starrkoerpers."""
+    from statik3d.situationen import wirksame_knoten
+    hand = {"frei": (HAND, HAND), "arm": (HAND, _torsion_hand(2.0))}
+    for art, text in (("frei", "RBE3-Slave ohne Element"), ("arm", "RBE3-Slave am abgeschalteten Arm")):
+        m0, b0, p0 = _rbe3_modell(art, "keine", mit_arm=False)
+        _an, u0, r0 = rechne(m0)
+        gegen_b, gegen_p = -u0[b0, 2], -u0[p0, 2]
+        hand_b, hand_p = hand[art]
+        for maske in ("situation", "aus"):
+            m, b, p = _rbe3_modell(art, maske)
+            aktiv = m.aktive_elemente("s" if maske == "situation" else "")
+            kn = wirksame_knoten(m, aktiv)
+            check(f"{text}, Maske {maske}: Master und Slave wirksam", bool(kn[b] and kn[p]),
+                  f"b {kn[b]}, Slave {kn[p]}")
+            an, u, r = rechne(m)
+            w_b, w_p = -u[b, 2], -u[p, 2]
+            # zwei Wege: Gegenrechnung (Element geloescht) und Hand
+            check(f"{text}, Maske {maske}: w(b) gleich Gegenrechnung und F L³/(3 E I)",
+                  abs(w_b - gegen_b) <= 1e-7 * abs(gegen_b) and abs(w_b - hand_b) <= 1e-5 * hand_b,
+                  f"ist {w_b * 1e3:.6f} mm, Gegenrechnung {gegen_b * 1e3:.6f} mm, Hand {hand_b * 1e3:.6f} mm")
+            check(f"{text}, Maske {maske}: w(Lastknoten) gleich Gegenrechnung und Hand (mit Verdrehung)",
+                  abs(w_p - gegen_p) <= 1e-7 * abs(gegen_p) and abs(w_p - hand_p) <= 1e-5 * hand_p,
+                  f"ist {w_p * 1e3:.6f} mm, Gegenrechnung {gegen_p * 1e3:.6f} mm, Hand {hand_p * 1e3:.6f} mm")
+            close(f"{text}, Maske {maske}: Summe der Auflagerkräfte Z = F", r[:, 2].sum(), F, 1e-6, "N")
+
+
+def _spannkette(art):
+    """Anker G-M (Fachwerkstab, Sollkraft 100 kN) am Quader; art 'kette': M
+    per Federkopplung an X ohne Element, X per RBE2 an den vier oberen
+    Quaderknoten; art 'direkt': M selbst Master des RBE2 (Gegenrechnung ohne
+    Kette). Keine Situation - die Maske kommt nur aus dem Spannschritt."""
+    from tests.test_spannschritt_kopplung import _quader, A_A
+    from statik3d.model import Model, Section, Kopplung
+    m = Model("Spannkette")
+    _unten, oben = _quader(m)
+    g_kn = m.add_node(0.5, 0.5, -1.0)
+    m_kn = m.add_node(0.5, 0.5, 1.0)
+    m.fix(g_kn, "all")
+    m.add_section(Section.circle("QA", float(np.sqrt(4.0 * A_A / np.pi))))
+    e = m.add_element("truss", [g_kn, m_kn], "S", "QA")
+    m.add_member("A1", [e])
+    if art == "kette":
+        x = m.add_node(0.5, 0.5, 1.0)
+        m.kopplungen.append(Kopplung(m_kn, x, [[1, 0, 0], [0, 1, 0], [0, 0, 1]], [1e12] * 3, "Feder"))
+        m.add_starrkoerper(x, oben, "RBE2", name="Deckel")
+    else:
+        m.add_starrkoerper(m_kn, oben, "RBE2", name="Deckel")
+    lc = m.add_load_case("V")
+    lc.gravity = [0.0, 0.0, 0.0]
+    m.add_vorspannung("A1", 100e3, case="V", sollkraft=True)
+    return m, int(e)
+
+
+def test_merkmal_spannschritt():
+    """Gegenpruefung vom 15.11.2026: das Merkmal sah nur die Masken der
+    Situationen. Im Spannschritt (Weg „spannen und verriegeln“) ist der Anker
+    inaktiv; bis Stand 64 entfiel dort die Kopplung M-X (X ohne Element, per
+    RBE2 am Quader): 76 775 N statt 100 000 N mit „Mechanismus“ - und das
+    Merkmal sagte „nicht betroffen“."""
+    from statik3d import solver, vorspannkraft as vk, rechenverfahren as rv
+    mk = rv.merkmal("maske_starrkoerper_last")
+    alt = vk.LINEAR_WEG
+    vk.LINEAR_WEG = vk.WEG_SPANNEN
+    try:
+        werte, meld = {}, {}
+        for art in ("kette", "direkt"):
+            m, e = _spannkette(art)
+            mm = []
+            r = _still(solver.solve_static, m, case="V", progress=lambda t, *a, _mm=mm: _mm.append(str(t)))
+            werte[art] = float(np.asarray(r.beam_forces[e]["N"], float)[0])
+            meld[art] = [z[:100] for z in mm if "Mechanismus" in z]
+        # 1e-5: die Sollkraft trifft der Spannschritt auf rund 0,5 N genau
+        close("Spannschritt Kette (Feder an X, X per RBE2): N_Anker = Sollkraft 100 kN", werte["kette"], 100e3,
+              1e-5, "N")
+        close("Spannschritt Kette: N_Anker gleich Gegenrechnung ohne Kette (M Master des RBE2)", werte["kette"],
+              werte["direkt"], 1e-5, "N")
+        check("Spannschritt Kette: keine Meldung „Mechanismus“", not meld["kette"], meld["kette"])
+        m, _e = _spannkette("kette")
+        an = _still(solver.solve_all, m, workers=1, design=False)
+        b_sp = bool(mk.betrifft(m)) if mk else False
+        im = (mk.im_ergebnis(m, an) or "") if mk else ""
+    finally:
+        vk.LINEAR_WEG = alt
+    m2, _e = _spannkette("kette")
+    b_einfluss = bool(mk.betrifft(m2)) if mk else None
+    check("Merkmal: Spannschritt mit Kette betroffen, über die Einflussmatrix (keine Maske) nicht",
+          b_sp and b_einfluss is False, f"Spannschritt {b_sp}, Einfluss {b_einfluss}")
+    check("Merkmal im Ergebnis: Lastfall V genannt", "V" in im.split(": ")[-1].split(", "), repr(im))
+
+
+def test_merkmal_rbe3():
+    from statik3d import rechenverfahren as rv
+    from statik3d import solver
+    mk = rv.merkmal("maske_starrkoerper_last")
+    for maske in ("situation", "aus"):
+        m, _b, _p = _rbe3_modell("frei", maske)
+        an = _still(solver.solve_all, m, workers=1, design=False)
+        check(f"Merkmal: Last am RBE3-Slave ohne Element, Maske {maske}, betroffen und LF1 im Ergebnis",
+              mk is not None and mk.betrifft(m) and "LF1" in (mk.im_ergebnis(m, an) or ""),
+              f"{mk and mk.betrifft(m)} {mk and mk.im_ergebnis(m, an)!r}")
+
+
 def main():
     for t in (test_rbe2_rbe3, test_ketten, test_theorie2, test_knicken, test_punktmasse, test_lager_ohne_element,
-              test_schutz_toter_arm, test_merkmal):
+              test_schutz_toter_arm, test_merkmal, test_rbe3_slave, test_merkmal_spannschritt, test_merkmal_rbe3):
         print(f"\n--- {t.__name__} ---")
         try:
             t()

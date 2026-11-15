@@ -2393,12 +2393,13 @@ BETROFFEN = "Ergebnis möglicherweise betroffen – neu rechnen"
 KEINE_REIBUNG = "keine_reibung"
 
 
-def _wirksame_knoten_bis_64(model, aktiv):
+def _wirksame_knoten_bis_64(model, aktiv, kn=None):
     """Die Knotenmaske der Lasten bis Verfahrensstand 64 (situationen.wirksame_knoten
     vor dem 15.11.2026): Knoten mit wirksamem Element und die beiden Knoten jeder
-    Kopplung an einem solchen - eine Stufe, ohne Starrkoerper."""
+    Kopplung an einem solchen - eine Stufe, ohne Starrkoerper. ``kn``: die Knoten
+    mit wirksamem Element (situationen.aktive_knoten), wenn schon bekannt."""
     from .situationen import aktive_knoten, kopplung_bleibt
-    kn = aktive_knoten(model, aktiv)
+    kn = aktive_knoten(model, aktiv) if kn is None else kn
     out = kn.copy()
     for kp in (getattr(model, "kopplungen", None) or []):
         if kopplung_bleibt(model, kp, kn):
@@ -2407,62 +2408,192 @@ def _wirksame_knoten_bis_64(model, aktiv):
     return kn, out
 
 
-def _maske_kette_je_situation(model) -> dict:
-    """{Situation: (Knoten, Kopplungen)} - je Situation mit Elementmaske (auch
-    Stab „aus“ in der Grundstellung) die Knoten, die seit Stand 65 mittragen und
-    vorher nicht (situationen.wirksame_knoten), und die Kopplungen, die seither
-    bleiben und vorher entfielen (assemble.kopplungen). Situationen ohne
-    Unterschied fehlen."""
-    if not (getattr(model, "starrkoerper", None) or getattr(model, "kopplungen", None)
-            or getattr(model, "supports", None)):
-        return {}
+def _maske_kette_moeglich(model) -> bool:
+    """Billige Vorpruefung (ohne Lauf ueber die Elemente): ob sich die Knotenmaske
+    seit Stand 65 (situationen.wirksame_knoten) bei irgendeiner Elementmaske von der
+    bis Stand 64 unterscheiden kann. Das geht nur
+
+    * mit einem Starrkoerper,
+    * mit einer Kette aus Kopplungen: ein Knoten, den eine Kopplung wirksam
+      machen kann und von dem eine zweite weiterreicht (die Kopplung eines
+      Stabendes reicht nur vom Koerperknoten node_b zum Stabknoten node_a), oder
+    * mit einem Lagerknoten (der ohne Element sein koennte) an einer Kopplung,
+      mit einer Knotenlast oder mit einer Punktmasse.
+
+    Sonst sind beide Masken bei jeder Elementmaske gleich, und die teure Pruefung
+    entfaellt."""
+    if getattr(model, "starrkoerper", None):
+        return True
+    from collections import Counter
+    from .situationen import _stabende_gruppe
+    gruppe = _stabende_gruppe()
+    ziel, quelle, anzahl = Counter(), Counter(), Counter()
+    for kp in (getattr(model, "kopplungen", None) or []):
+        a, b = int(kp.node_a), int(kp.node_b)
+        anzahl[a] += 1
+        anzahl[b] += 1
+        if str(getattr(kp, "gruppe", "") or "").startswith(gruppe):
+            ziel[a] += 1
+            quelle[b] += 1
+        else:
+            for n in (a, b):
+                ziel[n] += 1
+                quelle[n] += 1
+    if any(z >= 2 and ziel[n] and quelle[n] for n, z in anzahl.items()):
+        return True
+    lager = {int(s.node) for s in (getattr(model, "supports", None) or [])}
+    if not lager:
+        return False
+    if any(n in anzahl for n in lager):
+        return True
+    if any(int(p.node) in lager for p in (getattr(model, "punktmassen", None) or [])):
+        return True
+    return any(int(l.node) in lager for lc in (getattr(model, "load_cases", None) or {}).values()
+               for l in (getattr(lc, "nodal_loads", None) or []))
+
+
+def _maske_kette_masken(model) -> list:
+    """[(Maske, Lastfaelle, nur_kopplungen)] - die Elementmasken, unter denen die
+    Lastfaelle gerechnet werden:
+
+    * je Situation mit Elementmaske (auch Stab „aus“ in der Grundstellung) ihre
+      Maske, mit den Lastfaellen dieser Situation;
+    * je Spannschritt (vorspannkraft._spannzustand, Weg „spannen und
+      verriegeln“ nach vorspannkraft.weg: Kontakt, Plastizitaet, Ausfallstaebe,
+      mehrere Gruppen oder vorspannkraft.LINEAR_WEG) die Maske jeder Gruppe - die
+      Maske der Situation ohne die Staebe dieser und der spaeteren Gruppen -, je
+      Lastfall und je Kombination mit Sollkraft (direkt gerechnet: Kombinationen
+      mit mehreren Gruppen). Dort zaehlen nur die Kopplungen; das Kraeftepaar
+      rechnet vorspannkraft._stablast mit der Maske der Situation.
+
+    Gleiche Masken stehen einmal darin, mit allen ihren Lastfaellen."""
     import numpy as np
-    from .situationen import wirksame_knoten, kopplung_bleibt
-    out: dict = {}
+    from . import vorspannkraft as vk
+    je: dict = {}
+
+    def dazu(aktiv, lfs, nur_kopp):
+        if aktiv is None or not lfs or bool(aktiv.all()):
+            return
+        key = (aktiv.tobytes(), bool(nur_kopp))
+        if key in je:
+            je[key][1].update(lfs)
+        else:
+            je[key] = (aktiv, set(lfs), bool(nur_kopp))
+
+    lcs = getattr(model, "load_cases", None) or {}
+    masken_sit: dict = {}
+
+    def maske_sit(sit):
+        if sit not in masken_sit:
+            try:
+                m = model.aktive_elemente(sit)
+            except Exception:                           # noqa: BLE001
+                m = None
+            masken_sit[sit] = None if m is None else np.asarray(m, dtype=bool)
+        return masken_sit[sit]
+
     for sit in [""] + list(getattr(model, "situationen", None) or {}):
+        dazu(maske_sit(sit), {str(n) for n, lc in lcs.items() if str(getattr(lc, "situation", "") or "") == sit},
+             False)
+    # Spannschritt: Lastfaelle mit Sollkraft, dazu die Kombinationen aus ihnen
+    mit_soll = set()
+    faelle = []
+    for n, lc in lcs.items():
         try:
-            aktiv = model.aktive_elemente(sit)
+            soll = vk.sollkraefte(model, {n: 1.0})
         except Exception:                               # noqa: BLE001
             continue
-        if aktiv is None or bool(np.asarray(aktiv).all()):
+        if soll:
+            mit_soll.add(str(n))
+            faelle.append((str(getattr(lc, "situation", "") or ""), {n: 1.0}, soll))
+    if not mit_soll:
+        return list(je.values())
+    for c in (getattr(model, "combinations", None) or {}).values():
+        f = {lf: x for lf, x in (getattr(c, "factors", None) or {}).items() if x and str(lf) in mit_soll}
+        if len(f) > 1:
+            try:
+                faelle.append((str(getattr(c, "situation", "") or ""), f, vk.sollkraefte(model, f)))
+            except Exception:                           # noqa: BLE001
+                continue
+    from . import solver as sv
+    spannen = bool(sv._nichtlinear(model)) or vk.LINEAR_WEG == vk.WEG_SPANNEN
+    for sit, factors, soll in faelle:
+        gruppen = sorted({int(s.gruppe) for s in soll})
+        if not soll or (not spannen and len(gruppen) < 2):
             continue
-        kn, alt = _wirksame_knoten_bis_64(model, aktiv)
-        neu = wirksame_knoten(model, aktiv)
-        knoten = {int(n) for n in np.flatnonzero(neu & ~alt)}
-        kopp = [i for i, kp in enumerate(getattr(model, "kopplungen", None) or [])
-                if kopplung_bleibt(model, kp, neu) and not kopplung_bleibt(model, kp, kn)]
-        if knoten or kopp:
-            out[sit] = (knoten, kopp)
-    return out
+        basis = maske_sit(sit)
+        basis = np.ones(len(model.elements), dtype=bool) if basis is None else basis
+        els = {s.stab: vk._elemente(model, s.stab, basis) for s in soll}
+        for g in gruppen:
+            m = basis.copy()
+            for s in soll:
+                if s.gruppe >= g:
+                    m[els[s.stab]] = False
+            dazu(m, {str(lf) for lf in factors}, True)
+    return list(je.values())
 
 
-def _maske_kette_lastfaelle(model, je_sit: Optional[dict] = None) -> set:
-    """Lastfaelle, deren Ergebnis die Maske der Ketten (Stand 65) aendern kann: in
-    einer Situation aus :func:`_maske_kette_je_situation`, mit einer Knotenlast
-    oder (bei Eigengewicht) einer Punktmasse an einem dort neu wirksamen Knoten -
-    oder in einer Situation, in der eine Kopplung neu bleibt."""
-    je_sit = _maske_kette_je_situation(model) if je_sit is None else je_sit
-    if not je_sit:
+def _element_knoten(model) -> tuple:
+    """(Knoten aller Elemente hintereinander, Knotenzahl je Element) - einmal je
+    Pruefung, damit jede Maske ohne Lauf ueber die Elemente auskommt."""
+    import numpy as np
+    listen = [e.nodes for e in (getattr(model, "elements", None) or [])]
+    zahl = np.fromiter((len(x) for x in listen), dtype=np.int64, count=len(listen))
+    flach = np.fromiter((int(n) for x in listen for n in x), dtype=np.int64, count=int(zahl.sum()))
+    return flach, zahl
+
+
+def _maske_kette_lastfaelle(model) -> set:
+    """Lastfaelle, deren Ergebnis die Maske der Ketten (Stand 65) aendern kann:
+    unter einer Maske aus :func:`_maske_kette_masken` eine Kopplung, die seither
+    bleibt und vorher entfiel (assemble.kopplungen) - oder, unter der Maske einer
+    Situation, eine Knotenlast oder (bei Eigengewicht) eine Punktmasse an einem
+    Knoten, der seither mittraegt und vorher nicht (situationen.wirksame_knoten).
+
+    Zuerst die billige Vorpruefung :func:`_maske_kette_moeglich`; bis zur
+    Gegenpruefung vom 15.11.2026 nur die Masken der Situationen, nicht die des
+    Spannschritts (Anker mit Sollkraft 100 kN, Ende per Federkopplung an einem
+    Knoten ohne Element, der per RBE2 am Koerper haengt: Stand 64 76 775 N
+    statt 100 000 N mit „Mechanismus“, das Merkmal sagte „nicht betroffen“)."""
+    if not _maske_kette_moeglich(model):
         return set()
+    masken = _maske_kette_masken(model)
+    if not masken:
+        return set()
+    import numpy as np
+    from .situationen import wirksame_knoten, kopplung_bleibt
+    flach, zahl = _element_knoten(model)
+    nn = int(model.nn)
+    kopplungen = list(getattr(model, "kopplungen", None) or [])
     pm = {}
     for p in getattr(model, "punktmassen", None) or []:
-        pm.setdefault(int(p.node), 0.0)
-        pm[int(p.node)] += abs(float(p.masse))
+        pm[int(p.node)] = pm.get(int(p.node), 0.0) + abs(float(p.masse))
+    lcs = getattr(model, "load_cases", None) or {}
     out = set()
-    for name, lc in (getattr(model, "load_cases", None) or {}).items():
-        sit = str(getattr(lc, "situation", "") or "")
-        if sit not in je_sit:
+    for aktiv, lfs, nur_kopp in masken:
+        offen = lfs - out
+        if not offen:
             continue
-        knoten, kopp = je_sit[sit]
-        if kopp:
-            out.add(str(name))
+        kn = np.zeros(nn, dtype=bool)
+        kn[flach[np.repeat(aktiv, zahl)]] = True
+        kn, alt = _wirksame_knoten_bis_64(model, aktiv, kn)
+        neu = wirksame_knoten(model, aktiv, kn)
+        if any(kopplung_bleibt(model, kp, neu) and not kopplung_bleibt(model, kp, kn) for kp in kopplungen):
+            out |= offen
             continue
-        last = {int(l.node) for l in getattr(lc, "nodal_loads", None) or []
-                if any(float(x) for x in (l.F or []))}
-        if any(float(x) for x in (getattr(lc, "gravity", None) or [])):
-            last |= {n for n, m in pm.items() if m > 0}
-        if last & knoten:
-            out.add(str(name))
+        if nur_kopp:
+            continue
+        knoten = {int(n) for n in np.flatnonzero(neu & ~alt)}
+        if not knoten:
+            continue
+        for name in offen:
+            lc = lcs.get(name)
+            last = {int(l.node) for l in getattr(lc, "nodal_loads", None) or []
+                    if any(float(x) for x in (l.F or []))}
+            if any(float(x) for x in (getattr(lc, "gravity", None) or [])):
+                last |= {n for n, m in pm.items() if m > 0}
+            if last & knoten:
+                out.add(name)
     return out
 
 
@@ -3845,18 +3976,24 @@ MERKMALE: list = [
     # Kopplungen und nur eine Stufe): Kragarm 3 m, 1 kN per RBE2 am Ende,
     # w = 0,0000 statt 0,5357 mm. Mit der Kette entfiel auch die Steifigkeit
     # einer Kopplung hinter einem Knoten ohne Element. Stand 64 belegt auf
-    # fix/k8-th3 ein anderes Merkmal (theorie3_starrkoerper). Fehlerkorrektur
+    # fix/k8-th3 ein anderes Merkmal (theorie3_starrkoerper). Fehlerkorrektur.
+    # Nach der Gegenpruefung (15.11.2026) in derselben Runde: die RBE3 loest wie
+    # jeder Starrkoerper ueber Master oder Slave aus (Last an einem Slave ohne
+    # Element fiel sonst weiter weg), und das Merkmal erfasst auch die Masken
+    # des Spannschritts.
     Merkmal(
         name="maske_starrkoerper_last", titel="Knotenlast über Starrkörper bei abgeschalteten Elementen",
         texte={"alt": "nur Knoten mit wirksamem Element und ihre Kopplungen (eine Stufe): Last an einem "
-                      "Knoten, der über einen Starrkörper oder eine Kette angebunden ist, entfiel",
+                      "Knoten, der über einen Starrkörper oder eine Kette angebunden ist, entfiel; im "
+                      "Spannschritt entfiel die Kopplung eines Ankerendes an einem Knoten ohne Element",
                "neu": "Hülle über Starrkörper und Kopplungen bis zum Fixpunkt: die Last wirkt, die Kopplungen "
                       "der Kette bleiben"},
         wechsel=(Wechsel(stand=65, datum="15.11.2026", commit="fix/k9-rbe2", alt="alt", neu="neu",
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Elementmaske in einer Situation (oder Stab „aus“) und eine Knotenlast oder Punktmasse "
                       "an einem Knoten ohne Element, der über einen Starrkörper oder eine Kette (Starrkörper, "
-                      "Kopplung) an einem wirksamen Element hängt",
+                      "Kopplung) an einem wirksamen Element hängt - oder eine Kopplung an einem solchen Knoten, "
+                      "auch im Spannschritt (Anker mit Sollkraft, Weg „spannen und verriegeln“)",
         betrifft=_maske_starrkoerper_betroffen, im_ergebnis=_maske_starrkoerper_im_ergebnis),
 ]
 
@@ -4025,11 +4162,15 @@ def aeltere(model, merkmale: dict) -> list:
     ihren Status sagt das Modell selbst (:func:`modell_teile`), nicht das Alter der Datei."""
     aus = []
     for mk in MERKMALE:
-        if mk.import_korrektur or mk.im_modell is not None or not _sicher(lambda: mk.betrifft(model)):
+        if mk.import_korrektur or mk.im_modell is not None:
             continue
         wert = (merkmale or {}).get(mk.name)
         jetzt = _sicher(lambda: mk.aktuell(model))
-        if jetzt is None or wert == jetzt:
+        # erst der Wertvergleich, dann ``betrifft`` (15.11.2026): dasselbe
+        # Ergebnis, aber eine Datei, die schon mit dem heutigen Wert gerechnet
+        # ist, kostet die Pruefung am Modell nicht mehr (am Drehlager bis zu
+        # 2,8 s je Merkmal und Auswertung)
+        if jetzt is None or wert == jetzt or not _sicher(lambda: mk.betrifft(model)):
             continue
         w = next((w for w in mk.wechsel if w.alt == wert), mk.wechsel[-1])
         aus.append((mk, wert, jetzt, w))

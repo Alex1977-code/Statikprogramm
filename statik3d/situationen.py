@@ -99,41 +99,52 @@ def _stabende_gruppe() -> str:
     return STABENDE_GRUPPE
 
 
-def wirksame_knoten(model: Model, aktiv) -> np.ndarray:
+def wirksame_knoten(model: Model, aktiv, kn: np.ndarray = None) -> np.ndarray:
     """Maske (nn,): Knoten, die in der Rechnung mit ``aktiv`` mittragen. Nur
     dort wirken Knotenlasten und Punktmassen (assemble.load_vector), und nur
     Kopplungen an ihnen bleiben (assemble.kopplungen).
 
     Ausgangspunkt sind die Knoten mit einem wirksamen Element
-    (:func:`aktive_knoten`) und die Lagerknoten, an denen im ganzen Modell
-    kein Element haengt - sie tragen selbst. Von dort die Huelle ueber
-    Kopplungen und Starrkoerper bis zum Fixpunkt:
+    (:func:`aktive_knoten`, als ``kn`` mitzugeben, wenn schon bekannt) und die
+    Lagerknoten, an denen im ganzen Modell kein Element haengt - sie tragen
+    selbst. Von dort die Huelle ueber Kopplungen und Starrkoerper bis zum
+    Fixpunkt:
 
     * eine Kopplung, die bleibt (:func:`kopplung_bleibt`): beide Knoten;
-    * ein Starrkoerper RBE2 mit einem wirksamen Knoten (Master oder Slave):
-      alle seine Knoten - sie folgen einander starr;
-    * ein Starrkoerper RBE3 (auch die verteilende Kopplung eines Stabendes,
-      stabeinleitung.ist_verteilkopplung) mit einem wirksamen Slave: der
-      Master, der den Slaves folgt. Die Slaves selbst nicht - die RBE3
-      versteift sie nicht, ein Slave ohne eigenes Element haette nur die
-      Strafsteifigkeit der sechs Zeilen.
+    * ein Starrkoerper (RBE2 oder RBE3), an dem der Master oder ein Slave
+      wirksam ist: alle seine Knoten. Bei der verteilenden Kopplung eines
+      Stabendes (stabeinleitung.ist_verteilkopplung) loest nur ein wirksamer
+      Slave aus - wie bei der Kopplung eines Stabendes, die einen wirksamen
+      Koerperknoten braucht (:func:`kopplung_bleibt`): Ist der Koerper
+      abgeschaltet, lebt er ueber den Stab nicht wieder auf. Dieselbe Regel
+      wie theorie3._wirksame_knoten_th3.
 
     Ein Starrkoerper oder eine Kopplung, deren ganze Kette an keinem
     wirksamen Element und keinem solchen Lagerknoten haengt (ein ganz
     abgeschalteter Nebenarm), bleibt unwirksam wie bisher.
+
+    Massstab ist die Gegenrechnung, in der die abgeschalteten Elemente
+    geloescht sind und alles andere bleibt; in allen Sonden der Gegenpruefung
+    vom 15.11.2026 mit loesbarer Gegenrechnung stimmt die Regel mit ihr
+    ueberein. Die Steifigkeit der Starrkoerper baut assemble.starrkoerper
+    ohnehin immer ein, die Maske entscheidet nur ueber Lasten und Kopplungen.
 
     Bis zum 15.11.2026 (Verfahrensstand 64) zaehlten nur die Kopplungen und
     nur eine Stufe: Eine Last an einem Knoten ohne Element, der ueber einen
     Starrkoerper (oder eine Kette Knoten ohne Element - Starrkoerper -
     Kopplung - Element) angebunden ist, fiel bei jeder Elementmaske still weg
     (Situation mit abgeschaltetem Element, Stab „aus“): Kragarm 3 m, Last
-    1 kN per RBE2 am Ende, w = 0,0000 statt 0,5357 mm."""
-    kn = aktive_knoten(model, aktiv)
+    1 kN per RBE2 am Ende, w = 0,0000 statt 0,5357 mm. Im ersten Entwurf
+    derselben Runde loeste bei der RBE3 nur ein wirksamer Slave aus, und nur
+    der Master wurde wirksam: Last 1 kN an einem Slave Q ohne Element, Master
+    am wirksamen Kragarmende - w = 0 statt 0,5357 mm, Summe der
+    Auflagerkraefte 0 (Gegenpruefung vom 15.11.2026)."""
     if aktiv is None:
-        return kn
+        return aktive_knoten(model, aktiv) if kn is None else np.array(kn, dtype=bool, copy=True)
+    kn = aktive_knoten(model, aktiv) if kn is None else np.asarray(kn, dtype=bool)
     out = kn.copy()
     nn = len(out)
-    out |= _lagerknoten_ohne_element(model, nn)
+    out |= _lagerknoten_ohne_element(model, kn, aktiv)
     kopp = list(getattr(model, "kopplungen", None) or [])
     # kopplung_bleibt fuer alle Kopplungen auf einmal (am Drehlager Tausende,
     # je Lastfall ein Aufruf): Stabende nur ueber node_b, sonst eine Seite
@@ -142,44 +153,49 @@ def wirksame_knoten(model: Model, aktiv) -> np.ndarray:
     gruppe = _stabende_gruppe()
     nur_b = np.fromiter((str(getattr(kp, "gruppe", "") or "").startswith(gruppe) for kp in kopp),
                         dtype=bool, count=len(kopp))
-    sk_liste = []
+    sk_liste = []                         # (Ausloeser, alle Knoten) je Starrkoerper
     from .stabeinleitung import ist_verteilkopplung
     for sk in (getattr(model, "starrkoerper", None) or []):
         master = int(sk.master)
         slaves = [int(x) for x in (sk.slaves or []) if 0 <= int(x) < nn and int(x) != master]
-        if not slaves or not 0 <= master < nn:
+        if not slaves:
             continue
-        rbe2 = str(getattr(sk, "art", "RBE2")).upper() == "RBE2" and not ist_verteilkopplung(sk)
-        sk_liste.append((master, slaves, rbe2))
+        alle = np.array(slaves + ([master] if 0 <= master < nn else []), dtype=np.int64)
+        ausloeser = np.array(slaves, dtype=np.int64) if ist_verteilkopplung(sk) else alle
+        sk_liste.append((ausloeser, alle))
     while True:
         vorher = int(out.sum())
         if len(kopp):
             bleibt = np.where(nur_b, out[kb], out[ka] | out[kb])
             out[ka[bleibt]] = True
             out[kb[bleibt]] = True
-        for master, slaves, rbe2 in sk_liste:
-            if rbe2:
-                if out[master] or out[slaves].any():
-                    out[master] = True
-                    out[slaves] = True
-            elif out[slaves].any():
-                out[master] = True
+        for ausloeser, alle in sk_liste:
+            if out[ausloeser].any():
+                out[alle] = True
         if int(out.sum()) == vorher:
             return out
 
 
-def _lagerknoten_ohne_element(model: Model, nn: int) -> np.ndarray:
+def _lagerknoten_ohne_element(model: Model, kn: np.ndarray, aktiv) -> np.ndarray:
     """Maske (nn,): Knoten mit Lager, an denen im ganzen Modell kein Element
     haengt (Lager ueber einen Starrkoerper oder eine Kopplung angebunden).
-    Ein Lagerknoten eines abgeschalteten Elements zaehlt nicht."""
+    Ein Lagerknoten eines abgeschalteten Elements zaehlt nicht.
+
+    ``kn`` sind die Knoten mit wirksamem Element (:func:`aktive_knoten`): Ein
+    Lagerknoten ausserhalb davon hat hoechstens abgeschaltete Elemente, darum
+    genuegt der Blick auf die abgeschalteten (bis zum 15.11.2026 ein Lauf
+    ueber alle Elemente, am Drehlager rund 0,4 s je Aufruf)."""
+    nn = len(kn)
     out = np.zeros(nn, dtype=bool)
     lager = {int(s.node) for s in (getattr(model, "supports", None) or [])
-             if 0 <= int(getattr(s, "node", -1)) < nn}
+             if 0 <= int(getattr(s, "node", -1)) < nn and not kn[int(s.node)]}
     if not lager:
         return out
-    mit_element = set()
-    for e in model.elements:
-        mit_element.update(int(n) for n in e.nodes)
-    for n in lager - mit_element:
+    els = model.elements
+    for i in np.flatnonzero(~np.asarray(aktiv, dtype=bool)):
+        lager.difference_update(int(n) for n in els[int(i)].nodes)
+        if not lager:
+            return out
+    for n in lager:
         out[n] = True
     return out
