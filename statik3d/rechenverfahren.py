@@ -2637,6 +2637,59 @@ def _maske_starrkoerper_im_ergebnis(model, an) -> str:
     return ("Knotenlast über Starrkörper oder Kette bei abgeschalteten Elementen: " + ", ".join(namen[:6])
             + (" …" if len(namen) > 6 else "")) if namen else ""
 
+#: Ab so vielen Staeben mit Nachweis lief der EC3-Nachweis bei mehreren
+#: Arbeitern von selbst ueber Arbeitsprozesse (ec3.design.check_members)
+EC3_AUFTRAEGE_AB = 24
+
+
+def _ec3_staebe_mit_nachweis(model) -> int:
+    ne = len(getattr(model, "elements", None) or [])
+    return sum(1 for mem in (getattr(model, "members", None) or {}).values()
+               if getattr(mem, "design", False)
+               and any(0 <= int(e) < ne for e in (getattr(mem, "elements", None) or [])))
+
+
+def _ec3_auftraege_moeglich(model) -> bool:
+    """Ob der EC3-Nachweis dieses Modells ueber Arbeitsprozesse gelaufen sein
+    kann: ab 24 Staeben mit Nachweis (bei mehreren Arbeitern) oder ueber die
+    Rechnerfarm (jede Stabzahl)."""
+    n = _ec3_staebe_mit_nachweis(model)
+    if n >= EC3_AUFTRAEGE_AB:
+        return True
+    if not n:
+        return False
+    try:
+        from . import parallel
+        return parallel.settings().backend == "farm"
+    except Exception:                       # noqa: BLE001 - nicht pruefbar: möglicherweise betroffen
+        return True
+
+
+def _ec3_auftraege_th2_betroffen(model) -> bool:
+    """Modellmerkmal ec3_auftraege_th2: ein EC3-Nachweis, der ueber
+    Arbeitsprozesse laufen kann, und ein Lastfall oder eine Kombination nach
+    Theorie II. oder III. Ordnung. Bis Stand 68 liess ec3.design._strip beim
+    Versand an die Arbeitsprozesse die Felder beam_th2 und beam_teile weg
+    (Runde k10, Stand 69)."""
+    if not _ec3_auftraege_moeglich(model):
+        return False
+    try:
+        return any(model.theorie_von(o) in ("II", "III")
+                   for o in list(model.load_cases.values()) + list(model.combinations.values()))
+    except Exception:                       # noqa: BLE001 - nicht pruefbar: möglicherweise betroffen
+        return True
+
+
+def _ec3_auftraege_th2_im_ergebnis(model, an) -> str:
+    """Ergebnisse nach Theorie II./III. Ordnung, gegen die ein EC3-Nachweis
+    im Ergebnis steht - nur, wenn er ueber Arbeitsprozesse gelaufen sein kann."""
+    if getattr(an, "design", None) is None or not _ec3_auftraege_moeglich(model):
+        return ""
+    namen = sorted({str(n) for n, r in _ergebnis_paare(an)
+                    if str((getattr(r, "info", None) or {}).get("theorie", "")).startswith("II")})
+    return ("EC3-Nachweis über Arbeitsprozesse nach Theorie II./III. Ordnung: " + ", ".join(namen[:6])
+            + (" …" if len(namen) > 6 else "")) if namen else ""
+
 #: Die Tabelle (Einstufung des Anwenders vom 16.10.2026). Stand 1: Abbruch der
 #: Plastizitaet (a1194ef, 13.10.2026 19:32); Stand 1.5: die Korrekturen dazwischen
 #: (13.10. 23:09 bis 15.10. 12:56) - eine Datei ohne Angabe erkennt sie nur an
@@ -4031,10 +4084,27 @@ MERKMALE: list = [
                       "Kopplung) an einem wirksamen Element hängt - oder eine Kopplung an einem solchen Knoten, "
                       "auch im Spannschritt (Anker mit Sollkraft, Weg „spannen und verriegeln“)",
         betrifft=_maske_starrkoerper_betroffen, im_ergebnis=_maske_starrkoerper_im_ergebnis),
+    # Runde k10 (15.11.2026, vom Anwender freigegeben): der EC3-Nachweis ueber
+    # Arbeitsprozesse (ab 24 Staeben bei mehreren Arbeitern, oder Farm) bekam
+    # die Ergebnisse ohne beam_th2 und beam_teile (ec3.design._strip) und wies
+    # nach Theorie II. Ordnung das Moment ohne den Anteil N·w im Feld nach:
+    # IPE 300, ein Element, M_Ed 60,0 statt 63,2 kNm (Handrechnung 63,21),
+    # Ausnutzung 2,399 statt 2,480; Geschossrahmen mit 87 Staeben 0,8590 statt
+    # 0,8666. Seriell war richtig. Fehlerkorrektur
+    Merkmal(
+        name="ec3_auftraege_th2", titel="EC3-Nachweis über Arbeitsprozesse nach Theorie II. Ordnung",
+        texte={"alt": "Arbeitsprozesse bekamen die Ergebnisse ohne beam_th2 und beam_teile: Feldmomente "
+                      "nach Theorie II. Ordnung ohne den Anteil der Stabkraft an der Durchbiegung",
+               "neu": "Arbeitsprozesse bekommen jedes Feld, das der Stabnachweis liest: gleich wie seriell"},
+        wechsel=(Wechsel(stand=69, datum="15.11.2026", commit="fix/k10-ec3", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="EC3-Nachweis mit mindestens 24 Stäben (oder über die Rechnerfarm) und ein Lastfall "
+                      "oder eine Kombination nach Theorie II. oder III. Ordnung",
+        betrifft=_ec3_auftraege_th2_betroffen, im_ergebnis=_ec3_auftraege_th2_im_ergebnis),
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 65
+VERFAHRENSSTAND = 69
 
 
 def merkmal(name: str) -> Optional[Merkmal]:
