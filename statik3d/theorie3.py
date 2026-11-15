@@ -505,25 +505,31 @@ def _wirksame_knoten_th3(model: Model, aktiv) -> np.ndarray:
     deren ganze Kette an keinem wirksamen Element haengt, traegt nichts und
     bleibt weiter ungezaehlt (Situation mit abgeschaltetem Nebenarm).
 
-    Ausloeser wie bisher: beim Starrkoerper Master oder ein Slave, bei der
-    verteilenden Kopplung eines Stabendes nur ein Slave
-    (stabeinleitung.ist_verteilkopplung); bei Kopplungen
-    situationen.kopplung_bleibt."""
-    from .situationen import aktive_knoten, kopplung_bleibt
+    Ausloeser wie situationen.wirksame_knoten: beim Starrkoerper Master oder
+    ein Slave, bei der verteilenden Kopplung eines Stabendes
+    (stabeinleitung.ist_verteilkopplung) ein Slave - der Master nur, wenn
+    keiner ihrer Slaves Knoten eines abgeschalteten Elements ist (seit Runde
+    k10, 15.11.2026; bis dahin nie: Master am Kragarmende, einziger Slave Q
+    ohne Element, Last an Q - die Sperre schwieg, auch ohne Maske, und die
+    Last an Q blieb ohne Bauteil); bei Kopplungen situationen.kopplung_bleibt."""
+    from .situationen import aktive_knoten, kopplung_bleibt, abgeschaltete_knoten
     from . import stabeinleitung as _se
     maske = np.ones(len(model.elements), dtype=bool) if aktiv is None else np.asarray(aktiv, bool)
     kn = np.array(aktive_knoten(model, maske), dtype=bool, copy=True)
     nn = len(kn)
-    # Ein Lagerknoten, an dem ueberhaupt kein Element haengt, traegt selbst:
-    # P (Last) per RBE2 an den eingespannten Knoten Q, beide ohne Element -
-    # Theorie III. Ordnung verlor die Last an P still (Summe Rz 1000 statt
-    # 2000 N, Restluecke R1 der Gegenpruefung vom 15.11.2026). Ein Knoten mit
-    # abgeschalteten Elementen zaehlt dagegen nicht (Situation).
-    ueberhaupt = np.asarray(aktive_knoten(model, np.ones(len(model.elements), dtype=bool)), bool)
+    # Ein Lagerknoten ohne wirksames Element traegt selbst: P (Last) per RBE2
+    # an den eingespannten Knoten Q, beide ohne Element - Theorie III. Ordnung
+    # verlor die Last an P still (Summe Rz 1000 statt 2000 N, Restluecke R1 der
+    # Gegenpruefung vom 15.11.2026). Seit Runde k10 (15.11.2026) auch ein
+    # Lagerknoten, an dem nur abgeschaltete Elemente haengen - in der
+    # Gegenrechnung mit geloeschten Elementen ist er einer ohne Element (wie
+    # situationen._lagerknoten_ohne_element); bis dahin zaehlte er nicht, und
+    # eine starre Kopplung an ihm entging der Sperre.
     for sp in (getattr(model, "supports", None) or []):
         n = int(sp.node)
-        if 0 <= n < nn and not ueberhaupt[n]:
+        if 0 <= n < nn:
             kn[n] = True
+    tot = abgeschaltete_knoten(model, maske, nn)
     gruppen = []                         # (Ausloeser, alle Knoten) je Starrkoerper
     for sk in (getattr(model, "starrkoerper", None) or []):
         master = int(sk.master)
@@ -531,7 +537,8 @@ def _wirksame_knoten_th3(model: Model, aktiv) -> np.ndarray:
         if not slaves:
             continue
         alle = slaves + ([master] if 0 <= master < nn else [])
-        gruppen.append((slaves if _se.ist_verteilkopplung(sk) else alle, alle))
+        verteil = _se.ist_verteilkopplung(sk) and any(tot[x] for x in slaves)
+        gruppen.append((slaves if verteil else alle, alle))
     kopp = [kp for kp in (getattr(model, "kopplungen", None) or [])
             if 0 <= int(kp.node_a) < nn and 0 <= int(kp.node_b) < nn]
     geaendert = True

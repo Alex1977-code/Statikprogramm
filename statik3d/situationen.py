@@ -106,22 +106,25 @@ def wirksame_knoten(model: Model, aktiv, kn: np.ndarray = None) -> np.ndarray:
 
     Ausgangspunkt sind die Knoten mit einem wirksamen Element
     (:func:`aktive_knoten`, als ``kn`` mitzugeben, wenn schon bekannt) und die
-    Lagerknoten, an denen im ganzen Modell kein Element haengt - sie tragen
-    selbst. Von dort die Huelle ueber Kopplungen und Starrkoerper bis zum
-    Fixpunkt:
+    Lagerknoten ohne wirksames Element - auch die, an denen nur abgeschaltete
+    Elemente haengen: Sie tragen selbst, wie in der Gegenrechnung mit
+    geloeschten Elementen, in der sie Lagerknoten ohne Element sind. Von dort
+    die Huelle ueber Kopplungen und Starrkoerper bis zum Fixpunkt:
 
     * eine Kopplung, die bleibt (:func:`kopplung_bleibt`): beide Knoten;
     * ein Starrkoerper (RBE2 oder RBE3), an dem der Master oder ein Slave
       wirksam ist: alle seine Knoten. Bei der verteilenden Kopplung eines
-      Stabendes (stabeinleitung.ist_verteilkopplung) loest nur ein wirksamer
-      Slave aus - wie bei der Kopplung eines Stabendes, die einen wirksamen
-      Koerperknoten braucht (:func:`kopplung_bleibt`): Ist der Koerper
-      abgeschaltet, lebt er ueber den Stab nicht wieder auf. Dieselbe Regel
+      Stabendes (stabeinleitung.ist_verteilkopplung) loest ein wirksamer
+      Slave aus - der Master nur, wenn keiner ihrer Slaves Knoten eines
+      abgeschalteten Elements ist: Ist der Koerper abgeschaltet, lebt er ueber
+      den Stab nicht wieder auf (wie bei der Kopplung eines Stabendes, die
+      einen wirksamen Koerperknoten braucht, :func:`kopplung_bleibt`); ein
+      Slave ohne jedes Element ist aber kein Koerperknoten. Dieselbe Regel
       wie theorie3._wirksame_knoten_th3.
 
     Ein Starrkoerper oder eine Kopplung, deren ganze Kette an keinem
-    wirksamen Element und keinem solchen Lagerknoten haengt (ein ganz
-    abgeschalteter Nebenarm), bleibt unwirksam wie bisher.
+    wirksamen Element und keinem Lagerknoten haengt (ein ganz abgeschalteter
+    Nebenarm), bleibt unwirksam wie bisher.
 
     Massstab ist die Gegenrechnung, in der die abgeschalteten Elemente
     geloescht sind und alles andere bleibt; in allen Sonden der Gegenpruefung
@@ -138,13 +141,30 @@ def wirksame_knoten(model: Model, aktiv, kn: np.ndarray = None) -> np.ndarray:
     derselben Runde loeste bei der RBE3 nur ein wirksamer Slave aus, und nur
     der Master wurde wirksam: Last 1 kN an einem Slave Q ohne Element, Master
     am wirksamen Kragarmende - w = 0 statt 0,5357 mm, Summe der
-    Auflagerkraefte 0 (Gegenpruefung vom 15.11.2026)."""
+    Auflagerkraefte 0 (Gegenpruefung vom 15.11.2026).
+
+    Bis Verfahrensstand 66 (Runde k10, 15.11.2026) zaehlte ein Lagerknoten
+    nur, wenn im ganzen Modell kein Element an ihm haengt, und die
+    verteilende Kopplung loeste nur ueber einen Slave aus. Toter Arm c-d mit
+    Lager an c, Y per Feder an c, 5 kN an Y: Summe Rz 1 000 statt 6 000 N
+    (Fall M8); Stabende-Kopplung mit Master am wirksamen Kragarmende b und
+    einzigem Slave Q ohne Element, 1 kN an Q: w = 0 statt 0,5357 mm (Fall V1)
+    - beide Male mit Gleichgewichtskontrolle „ok“. Die Maske bis Stand 66
+    liefert :func:`huelle` mit ``bis_66=True`` (rechenverfahren, Merkmal
+    maske_lager_verteilung)."""
+    return huelle(model, aktiv, kn)
+
+
+def huelle(model: Model, aktiv, kn: np.ndarray = None, bis_66: bool = False) -> np.ndarray:
+    """:func:`wirksame_knoten`; ``bis_66``: die Regel bis Verfahrensstand 66 -
+    Lagerknoten nur ohne jedes Element, verteilende Kopplung nur ueber einen
+    Slave (fuer das Merkmal maske_lager_verteilung)."""
     if aktiv is None:
         return aktive_knoten(model, aktiv) if kn is None else np.array(kn, dtype=bool, copy=True)
     kn = aktive_knoten(model, aktiv) if kn is None else np.asarray(kn, dtype=bool)
     out = kn.copy()
     nn = len(out)
-    out |= _lagerknoten_ohne_element(model, kn, aktiv)
+    out |= _lagerknoten_ohne_element(model, kn, aktiv, abgeschaltete=not bis_66)
     kopp = list(getattr(model, "kopplungen", None) or [])
     # kopplung_bleibt fuer alle Kopplungen auf einmal (am Drehlager Tausende,
     # je Lastfall ein Aufruf): Stabende nur ueber node_b, sonst eine Seite
@@ -155,13 +175,20 @@ def wirksame_knoten(model: Model, aktiv, kn: np.ndarray = None) -> np.ndarray:
                         dtype=bool, count=len(kopp))
     sk_liste = []                         # (Ausloeser, alle Knoten) je Starrkoerper
     from .stabeinleitung import ist_verteilkopplung
+    tot = None                            # Knoten abgeschalteter Elemente (erst bei Bedarf)
     for sk in (getattr(model, "starrkoerper", None) or []):
         master = int(sk.master)
         slaves = [int(x) for x in (sk.slaves or []) if 0 <= int(x) < nn and int(x) != master]
         if not slaves:
             continue
         alle = np.array(slaves + ([master] if 0 <= master < nn else []), dtype=np.int64)
-        ausloeser = np.array(slaves, dtype=np.int64) if ist_verteilkopplung(sk) else alle
+        ausloeser = alle
+        if ist_verteilkopplung(sk):
+            if tot is None and not bis_66:
+                tot = abgeschaltete_knoten(model, aktiv, nn)
+            # Slaves ohne jedes Element (kein Koerperknoten): auch der Master loest aus
+            if bis_66 or tot[np.array(slaves, dtype=np.int64)].any():
+                ausloeser = np.array(slaves, dtype=np.int64)
         sk_liste.append((ausloeser, alle))
     while True:
         vorher = int(out.sum())
@@ -176,26 +203,48 @@ def wirksame_knoten(model: Model, aktiv, kn: np.ndarray = None) -> np.ndarray:
             return out
 
 
-def _lagerknoten_ohne_element(model: Model, kn: np.ndarray, aktiv) -> np.ndarray:
-    """Maske (nn,): Knoten mit Lager, an denen im ganzen Modell kein Element
-    haengt (Lager ueber einen Starrkoerper oder eine Kopplung angebunden).
-    Ein Lagerknoten eines abgeschalteten Elements zaehlt nicht.
+def abgeschaltete_knoten(model: Model, aktiv, nn: int = None) -> np.ndarray:
+    """Maske (nn,): Knoten, an denen ein abgeschaltetes Element haengt."""
+    nn = int(model.nn) if nn is None else nn
+    out = np.zeros(nn, dtype=bool)
+    if aktiv is None:
+        return out
+    els = model.elements
+    for i in np.flatnonzero(~np.asarray(aktiv, dtype=bool)):
+        for n in els[int(i)].nodes:
+            if 0 <= int(n) < nn:
+                out[int(n)] = True
+    return out
 
-    ``kn`` sind die Knoten mit wirksamem Element (:func:`aktive_knoten`): Ein
-    Lagerknoten ausserhalb davon hat hoechstens abgeschaltete Elemente, darum
-    genuegt der Blick auf die abgeschalteten (bis zum 15.11.2026 ein Lauf
-    ueber alle Elemente, am Drehlager rund 0,4 s je Aufruf)."""
+
+def _lagerknoten_ohne_element(model: Model, kn: np.ndarray, aktiv, abgeschaltete: bool = True) -> np.ndarray:
+    """Maske (nn,): Knoten mit Lager, an denen kein wirksames Element haengt
+    (``kn`` sind die Knoten mit wirksamem Element, :func:`aktive_knoten`).
+
+    ``abgeschaltete`` (seit Verfahrensstand 67, Runde k10, 15.11.2026): auch
+    ein Lagerknoten, an dem nur abgeschaltete Elemente haengen, traegt selbst -
+    in der Gegenrechnung mit geloeschten Elementen ist er ein Lagerknoten ohne
+    Element. Bis dahin (``abgeschaltete=False``, die Regel bis Stand 66) zaehlte
+    er nicht, und eine Last, die ueber eine Kopplung an ihm haengt, entfiel
+    still: toter Arm c-d, Lager an c, Y per Feder an c, 5 kN an Y - Summe Rz
+    1 000 statt 6 000 N, Gleichgewichtskontrolle „ok“ (Fall M8 der zweiten
+    Gegenpruefung k9).
+
+    Mit ``abgeschaltete=False`` genuegt der Blick auf die abgeschalteten
+    Elemente (bis zum 15.11.2026 ein Lauf ueber alle Elemente, am Drehlager
+    rund 0,4 s je Aufruf)."""
     nn = len(kn)
     out = np.zeros(nn, dtype=bool)
     lager = {int(s.node) for s in (getattr(model, "supports", None) or [])
              if 0 <= int(getattr(s, "node", -1)) < nn and not kn[int(s.node)]}
     if not lager:
         return out
-    els = model.elements
-    for i in np.flatnonzero(~np.asarray(aktiv, dtype=bool)):
-        lager.difference_update(int(n) for n in els[int(i)].nodes)
-        if not lager:
-            return out
+    if not abgeschaltete:
+        els = model.elements
+        for i in np.flatnonzero(~np.asarray(aktiv, dtype=bool)):
+            lager.difference_update(int(n) for n in els[int(i)].nodes)
+            if not lager:
+                return out
     for n in lager:
         out[n] = True
     return out
