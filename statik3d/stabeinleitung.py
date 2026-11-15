@@ -788,6 +788,11 @@ def pruefen(model, res, F_norm: float = None) -> dict:
     if not sks:
         return {}
     k = getattr(model, "_stabende_strafe", None)
+    # Seit Runde k10c (15.11.2026) hat jede Kopplung ihren eigenen Strafbeiwert
+    # (assemble.rbe3_strafe, bezogen auf die Steifigkeit ihrer Knoten).
+    # Fehlt er fuer eine Kopplung, bleibt sie ungeprueft - der Wert fuer das
+    # ganze Modell gaebe eine falsche Kraft.
+    k_je = getattr(model, "_stabende_strafe_je", None)
     aus = {"anzahl": len(sks), "geprueft": 0, "abweichend": [], "ungeprueft": [], "je_stabende": [],
            "max_dF": 0.0, "max_dM": 0.0, "max_rel": 0.0}
     u = getattr(res, "u", None)
@@ -813,7 +818,11 @@ def pruefen(model, res, F_norm: float = None) -> dict:
         if G is None or fhg.max() >= len(uf):
             aus["ungeprueft"].append(str(sk.name))
             continue
-        f = float(k) * (G.T @ (G @ uf[fhg]))
+        k_sk = k if k_je is None else k_je.get((str(sk.name), int(sk.master)))
+        if k_sk is None:
+            aus["ungeprueft"].append(str(sk.name))
+            continue
+        f = float(k_sk) * (G.T @ (G @ uf[fhg]))
         # Kraft der Kopplung auf die Flaechenknoten (ein Element wirkt mit -f)
         fs = -f[6:].reshape(-1, 3)
         S = wk["slaves"]
