@@ -13,6 +13,16 @@ Runde k10d (16.11.2026), Theorie III. Ordnung: Restschranke und Konvergenz.
     0,158730 mm), mit Koordinaten um 100 km schon bei 0,001 N. Ursache: die
     Laengung L - L0 als Differenz zweier Laengen aus X0 + u; deren Rundung
     gab eine Normalkraft, die nicht unter die Schranke 1e-6 der Last fiel.
+(c) Mit Vorverformungen meldete Theorie III. Ordnung „keine Konvergenz“ am
+    IPE 300, 6 m, N = 100 kN mit 15 kN/m bzw. Endmomenten 60 kNm (etwa
+    0,29 N_cr,z, nahe am Biegedrillknicken) und bei LK1 einer Hallenreihe
+    (Schiefstellung quer). Ursachen: die genaeherte Tangente
+    T^T (k_l + k_g(N)) T konvergiert bei grosser Verdrehung nur linear, und
+    die Vorkruemmung schaltete sich je Iteration mit der Normalkraft der
+    Zwischenlage ein und aus (Grenze 5.3.2(6) bei 86,9 kN). Jetzt rechnet
+    eine stockende Laststufe neu mit der vollen Tangente und mit der
+    Entscheidung 5.3.2(6) aus der vollen Last nach Theorie I. Ordnung; was
+    vorher konvergierte, rechnet unveraendert.
 
 Aufruf:  python -m tests.test_th3_konvergenz_k10d
 """
@@ -161,7 +171,127 @@ def test_b_kleine_last():
               f"Th III {w3 * 1e3:.6f}, Th I {w1 * 1e3:.6f}, Hand {hand * 1e3:.6f} mm")
 
 
-TESTS = [test_a_restschranke, test_b_kleine_last]
+# --------------------------------------------------------------------------
+# (c) Vorverformungen, Biegedrillnaehe, Hallenreihe
+# --------------------------------------------------------------------------
+def ipe(last="linie", N=100e3, imp=True):
+    from statik3d.model import Model, Material
+    from statik3d.profiles import make_section
+    from statik3d import mesher
+    m = Model("IPE")
+    m.add_material(Material.steel("S235"))
+    m.add_section(make_section("IPE 300"))
+    ids = mesher.line_of_beams(m, "S235", "IPE 300", (0, 0, 0), (6.0, 0, 0), 1)
+    m.fix(ids[0], [0, 1, 2, 3])
+    m.fix(ids[-1], [1, 2, 3])
+    m.load_node(ids[-1], Fx=-N)
+    if last == "moment":
+        m.load_node(ids[0], My=60e3)
+        m.load_node(ids[-1], My=-60e3)
+    else:
+        m.load_beam(0, qz=-15e3)
+    m.add_member("T1", [0])
+    m.design.imperfektionen = imp
+    m.add_combination("K1", {m.active_case: 1.0}, "ULS", theorie="III")
+    return m
+
+
+def test_c_ipe_vorverformung():
+    import math
+    for last in ("linie", "moment"):
+        m = ipe(last)
+        r, f = _rechne(m, "K1")
+        th = str((r.info or {}).get("theorie", ""))
+        check(f"(c) IPE 300, N = 100 kN, {last}, mit Vorverformung: Theorie III. Ordnung konvergiert",
+              not f and th.startswith("III"), f"{f!r} {th}")
+        if f:
+            continue
+        R = np.asarray(r.reactions).reshape(-1, 6)
+        qz = 15e3 * 6.0 if last == "linie" else 0.0
+        check("… Gleichgewicht: Summe Rx = N, Summe Rz = q L (auf 1 N)",
+              abs(R[:, 0].sum() - 100e3) <= 1.0 and abs(R[:, 2].sum() - qz) <= 1.0,
+              f"Rx {R[:, 0].sum():.3f} N, Rz {R[:, 2].sum():.3f} N")
+        from statik3d import solver
+        an = _still(solver.solve_all, m, workers=1, design=False)
+        vk = an.theorie3.kombinationen["K1"].vorkruemmung
+        sec = m.sections["IPE 300"]
+        fy = 235e6
+        grenze = 0.5 * math.sqrt(sec.A * fy / 100e3)
+        js = vk.get("je_stab") or []
+        check("… Vorkruemmung nach 5.3.2(6) mit N_Ed der vollen Last (Theorie I. Ordnung): "
+              f"Grenze 0,5 √(A f_y/N_Ed) = {grenze:.3f}",
+              len(js) == 1 and abs(js[0]["grenze"] - grenze) <= 1e-3, js[:1])
+
+
+def halle(n_rahmen=3):
+    """Reihe von Zweigelenkrahmen HEB 400 / IPE 600 mit Laengsriegeln IPE
+    200 (Hallenreihe der EC3-Gegenpruefung), Schiefstellung quer (y)."""
+    from statik3d.model import Model, Material, Section
+    from statik3d import mesher
+    m = Model("Halle")
+    m.add_material(Material.steel("S355"))
+    for p in ("HEB 400", "IPE 600", "IPE 200"):
+        m.add_section(Section.from_profile(p))
+    m.case().category = "G"
+    a, b, h = 5.0, 15.0, 6.0
+    staebe, riegel = [], []
+
+    def stab(p, q, sec, nel):
+        e0 = len(m.elements)
+        mesher.line_of_beams(m, "S355", sec, p, q, nel)
+        staebe.append(list(range(e0, len(m.elements))))
+        return staebe[-1]
+    for i in range(n_rahmen):
+        y = i * a
+        stab((0, y, 0), (0, y, h), "HEB 400", 3)
+        stab((b, y, 0), (b, y, h), "HEB 400", 3)
+        riegel.append(stab((0, y, h), (b, y, h), "IPE 600", 4))
+    for i in range(n_rahmen - 1):
+        for x in (0.0, b):
+            stab((x, i * a, h), (x, (i + 1) * a, h), "IPE 200", 1)
+    mesher.merge_nodes(m)
+    for k, els in enumerate(staebe):
+        m.add_member(f"S{k + 1}", els)
+    for n in mesher.select_nodes(m, zmin=-1e-6, zmax=1e-6):
+        m.fix(int(n), [0, 1, 2, 5])
+    for els in riegel:
+        for e in els:
+            m.load_beam(e, qz=-6e3)
+    m.add_load_case("LF2", "S", "Schnee", nummer=2)
+    for els in riegel:
+        for e in els:
+            m.load_beam(e, qz=-5e3)
+    m.add_load_case("LF3", "W", "Wind x", nummer=3)
+    for n in range(m.nn):
+        if abs(m.nodes[n][0]) < 1e-9 and m.nodes[n][2] > 1e-6:
+            m.load_node(n, Fx=8e3)
+    m.active_case = "LF1"
+    m.add_combination("LK1", {"LF1": 1.35, "LF2": 1.5}, "ULS", theorie="III")
+    m.add_combination("LK2", {"LF1": 1.35, "LF2": 0.75, "LF3": 1.5}, "ULS", theorie="III")
+    m.design.th2_richtung = [0.0, 1.0]
+    return m
+
+
+def test_c_hallenreihe():
+    m = halle()
+    r1, f1 = _rechne(m, "LK1")
+    th = str((r1.info or {}).get("theorie", ""))
+    check("(c) Hallenreihe 3 Rahmen, LK1 mit Schiefstellung quer: Theorie III. Ordnung konvergiert",
+          not f1 and th.startswith("III"), f"{f1!r} {th}")
+    if not f1:
+        R = np.asarray(r1.reactions).reshape(-1, 6)
+        F = (1.35 * 6e3 + 1.5 * 5e3) * 15.0 * 3
+        check("… Gleichgewicht: Summe Rz = Summe der Lasten (auf 1 N)",
+              abs(R[:, 2].sum() - F) <= 1.0, f"{R[:, 2].sum():.3f} N, Last {F:.3f} N")
+    m = halle()
+    r2, f2 = _rechne(m, "LK2")
+    u2 = np.asarray(r2.u).reshape(-1, 6)
+    # LK2 konvergierte schon vorher: Ergebnis unveraendert (Wert auf 81d2ce1b)
+    check("… LK2 (konvergierte schon vorher) rechnet unveraendert: uy(Knoten 31) = 3,638048 mm",
+          not f2 and abs(u2[31, 1] * 1e3 - 3.63804835) <= 1e-6, f"{f2!r} {u2[31, 1] * 1e3:.8f} mm")
+
+
+TESTS = [test_a_restschranke, test_b_kleine_last, test_c_ipe_vorverformung, test_c_hallenreihe]
 
 
 def main():

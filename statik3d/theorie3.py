@@ -72,6 +72,11 @@ def rot_exp(theta) -> np.ndarray:
     return np.eye(3) + math.sin(a) / a * K + (1.0 - math.cos(a)) / a ** 2 * K @ K
 
 
+def _kreuz(a, b) -> np.ndarray:
+    """Kreuzprodukt zweier 3-Vektoren (schneller als np.cross)."""
+    return np.array([a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]])
+
+
 def rot_log(R) -> np.ndarray:
     """Drehvektor zur Drehmatrix (Umkehrung von rot_exp), auch nahe 0 und π."""
     R = np.asarray(R, float)
@@ -251,7 +256,7 @@ class _Stab:
             aus.append((n, np.cross(a_r - self.arm[k], F), bm._skew(F) @ bm._skew(a_r)))
         return aus
 
-    def zustand(self, U: np.ndarray, R: np.ndarray):
+    def zustand(self, U: np.ndarray, R: np.ndarray, mit_kg: bool = True):
         """(f_l, T, k_g, N, L) im mitgehenden System der aktuellen Lage
         (Verschiebungen ``U`` (nn, 3), Drehungen ``R``); f_l ist der
         elastische Anteil k_l d_l, N die Normalkraft mit der Anfangsdehnung.
@@ -285,17 +290,19 @@ class _Stab:
         n = float(np.linalg.norm(e2))
         if n < 1e-9:
             q3 = Qm[:, 2]
-            e2 = np.cross(q3, e1)
+            e2 = _kreuz(q3, e1)
             n = float(np.linalg.norm(e2))
         e2 /= n
-        e3 = np.cross(e1, e2)
+        e3 = _kreuz(e1, e2)
         E = np.column_stack([e1, e2, e3])
         th1 = rot_log(E.T @ Q1)
         th2 = rot_log(E.T @ Q2)
         dl = np.concatenate([[0.0, 0.0, 0.0], th1, [dL, 0.0, 0.0], th2])
         fl = self.kl @ dl
         N = float(fl[6]) if self.f_anf is None else float(fl[6] - self.f_anf[6])
-        if self.typ == "truss":
+        if not mit_kg:
+            kg = None
+        elif self.typ == "truss":
             # Saite N/L - dieselbe Form wie asm.geometric_stiffness (14.10.2026)
             kg = bm.kg_local_saite(N, L)
         else:
@@ -322,6 +329,53 @@ class _Stab:
             B[6 * k:6 * k + 3, 6 * k + 3:6 * k + 6] = -Sa
             Ka[6 * k + 3:6 * k + 6, 6 * k + 3:6 * k + 6] = bm._skew(f_e[6 * k:6 * k + 3]) @ Sa
         return B.T @ f_e, B.T @ K_e @ B + Ka
+
+    def kraft(self, U: np.ndarray, R: np.ndarray) -> np.ndarray:
+        """Innere Kraefte (global, 12) auf die Knoten in der Lage ``U``, ``R``
+        - dieselben wie in solve_theorie3.aufbau."""
+        fl, T, _kg, _N, _L = self.zustand(U, R, mit_kg=False)
+        f_e = T.T @ (fl if self.f_anf is None else fl - self.f_anf)
+        if self.arm is None:
+            return f_e
+        return self.knoten(R, f_e, np.zeros((12, 12)))[0]
+
+    def tangente_voll(self, U: np.ndarray, R: np.ndarray) -> np.ndarray:
+        """Die volle Tangente (12, 12) der inneren Knotenkraefte als zentrale
+        Differenz von :meth:`kraft` - nach denselben Zuwaechsen, mit denen
+        solve_theorie3 die Lage fortschreibt (Verschiebung u + δu, Drehung
+        R <- exp(δθ) R). Sie enthaelt alles, was die genaeherte Tangente
+        T^T (k_l + k_g(N)) T weglaesst (Endmomente und Querkraefte in der
+        Drehung des mitgehenden Systems, Kopplung Biegung-Torsion bei grosser
+        Verdrehung). Die Kraefte haengen von den Verschiebungen nur ueber
+        u2 - u1 ab: die Spalten der Verschiebungen am Stabanfang sind die
+        negativen derer am Stabende. Runde k10d (16.11.2026)."""
+        n1, n2 = self.nodes
+        U2 = np.array([U[n1], U[n2]], float)
+        R2 = np.array([R[n1], R[n2]], float)
+        h_u = 1e-6 * max(self.Ld0, 1e-6)
+        h_r = 1e-6
+        K = np.empty((12, 12))
+        knoten = self.nodes
+        self.nodes = [0, 1]
+        try:
+            for j in (6, 7, 8, 3, 4, 5, 9, 10, 11):
+                k, c = divmod(j, 6)
+                Up, Um, Rp, Rm = U2.copy(), U2.copy(), R2.copy(), R2.copy()
+                if c < 3:
+                    Up[k, c] += h_u
+                    Um[k, c] -= h_u
+                    h = h_u
+                else:
+                    th = np.zeros(3)
+                    th[c - 3] = h_r
+                    Rp[k] = rot_exp(th) @ R2[k]
+                    Rm[k] = rot_exp(-th) @ R2[k]
+                    h = h_r
+                K[:, j] = (self.kraft(Up, Rp) - self.kraft(Um, Rm)) / (2.0 * h)
+            K[:, 0:3] = -K[:, 6:9]
+        finally:
+            self.nodes = knoten
+        return K
 
 
 class _Seil:
@@ -1117,8 +1171,9 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
             d[n, 3:] = rot_log(R[n])
         return d.ravel()
 
-    def aufbau():
-        """Innere Kraefte und Tangente in der aktuellen Lage."""
+    def aufbau(voll: bool = False):
+        """Innere Kraefte und Tangente in der aktuellen Lage; ``voll``: die
+        Tangente der Staebe als volle Ableitung (_Stab.tangente_voll)."""
         X = X0 + u
         f_int = np.zeros(ndof)
         rows, cols, vals = [], [], []
@@ -1140,6 +1195,8 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
             zust[st.i] = (fl, N)
             f_e, Ke = st.knoten(R, T.T @ (fl if st.f_anf is None else fl - st.f_anf),
                                 T.T @ (st.kl + kg) @ T)
+            if voll:
+                Ke = st.tangente_voll(u, R)
             d = st.dofs
             f_int[d] += f_e
             r, c = np.meshgrid(d, d, indexing="ij")
@@ -1208,16 +1265,87 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
     f_int = _f0
     F_ges = np.zeros(ndof)
     gesamt_it = 0
-    for schritt in range(1, schritte + 1):
-        lam = schritt / schritte
+    # Stockt eine Laststufe (nach max_iter Iterationen nicht konvergiert),
+    # rechnet sie von ihrem Anfang neu, und zwar fuer den Rest der Rechnung
+    # „voll“, mit eigenen max_iter Iterationen:
+    # * mit der vollen Tangente der Staebe (_Stab.tangente_voll) statt der
+    #   genaeherten T^T (k_l + k_g(N)) T;
+    # * mit Imperfektionen: welche Staebe eine Vorkruemmung bekommen
+    #   (5.3.2(6)), entscheidet die Normalkraft der vollen Last nach Theorie
+    #   I. Ordnung, einmal statt in jeder Iteration mit der Normalkraft der
+    #   Zwischenlage; die Groesse der Ersatzlast folgt weiter der aktuellen
+    #   Normalkraft. Am Ende prueft die Rechnung die Entscheidung mit der
+    #   Normalkraft nach Theorie III. Ordnung und rechnet mit ihr nach, wenn
+    #   sie anders ausfaellt (beim zweiten Mal mit beiden Saetzen zusammen, auf
+    #   der sicheren Seite).
+    # Was ohne das konvergiert, rechnet wie bisher. Bis zur Runde k10d
+    # (16.11.2026) endete eine solche Stufe mit „keine Konvergenz“: bei
+    # grosser Verdrehung (IPE 300, 6 m, 100 kN und 15 kN/m mit Vorkruemmung,
+    # nahe am Biegedrillknicken) konvergierte die genaeherte Tangente nur
+    # linear (Faktor etwa 0,85 je Schritt), und die Vorkruemmung schaltete
+    # sich von Iteration zu Iteration ein und aus (Grenze 5.3.2(6) bei
+    # 86,9 kN, die Normalkraft der Zwischenlagen schwankte zwischen 50 und
+    # 90 kN); ebenso LK1 einer Hallenreihe (Schiefstellung quer).
+    voll = False
+    entscheid = None
+    res_t = None
+
+    def entscheid_theorie1():
+        """{Stab: Kriterium 5.3.2(6)} mit der Normalkraft der vollen Last
+        nach Theorie I. Ordnung (oder None: wie bisher je Iteration)."""
+        if not imperfektionen or alle_vorkruemmungen:
+            return None
+        try:
+            from .theorie2 import vorkruemmung_entscheid
+            from .solver import postprocess
+            res_I = Results(name=name, kind="combination", model=model)
+            res_I.u = u1.reshape(-1, NDOF).copy()
+            postprocess(model, u1, res_I, feq, q, temp, aktiv=aktiv)
+            return vorkruemmung_entscheid(model, res_I)
+        except Exception:                      # noqa: BLE001 - dann wie bisher je Iteration
+            return None
+    schritt = 0
+    nachrechnen = 0
+    while True:
+        schritt += 1
+        if schritt > schritte:
+            # die Entscheidung mit der Normalkraft nach Theorie III. Ordnung
+            if entscheid is None or res_t is None or nachrechnen >= 2:
+                break
+            from .theorie2 import vorkruemmung_entscheid, vorkruemmung_staebe
+            neu = vorkruemmung_entscheid(model, res_t)
+            if vorkruemmung_staebe(neu) == vorkruemmung_staebe(entscheid):
+                break
+            nachrechnen += 1
+            if nachrechnen == 2:
+                neu = {n: (entscheid[n] if entscheid.get(n, {}).get("noetig") else k)
+                       for n, k in neu.items()}
+            entscheid = neu
+        lam = min(schritt / schritte, 1.0)
         konv = math.inf
-        for it in range(1, max_iter + 1):
-            f_int, K, zust = aufbau()
+        u_anf, R_anf = u.copy(), R.copy()
+        grenze_it = max_iter
+        it = 0
+        while True:
+            it += 1
+            if it > grenze_it:
+                if voll:
+                    it -= 1
+                    konvergiert = False
+                    break
+                # die Stufe von ihrem Anfang an „voll“ neu rechnen
+                voll = True
+                entscheid = entscheid_theorie1()
+                u[:] = u_anf
+                R[:] = R_anf
+                grenze_it = it - 1 + max_iter
+            f_int, K, zust = aufbau(voll)
             if imperfektionen:
                 from .theorie2 import ersatzlasten_schiefstellung, ersatzlasten_vorkruemmung
                 res_t = ergebnis(zust, np.zeros(ndof), f_int)
                 Fs, s_info = ersatzlasten_schiefstellung(model, res_t, richtung)
-                Fv, v_info = ersatzlasten_vorkruemmung(model, res_t, elastisch, alle=alle_vorkruemmungen)
+                Fv, v_info = ersatzlasten_vorkruemmung(model, res_t, elastisch, alle=alle_vorkruemmungen,
+                                                       entscheid=entscheid)
                 F_imp = Fs + Fv
                 info.schiefstellung, info.vorkruemmung = s_info, v_info
             F_stufe = stufenlast(F_ref, F_S, lam)
@@ -1248,11 +1376,13 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
             konv = float(np.linalg.norm(r[fi])) / bezug
             gesamt_it += 1
             if konv < tol:
+                konvergiert = True
                 break
             try:
                 dd = splu(K[fi][:, fi].tocsc()).solve(r[fi])
             except Exception as ex:            # noqa: BLE001
                 info.fehler = f"Laststufe {schritt}: Gleichungssystem singulär ({ex})"
+                konvergiert = True             # der Fehler steht schon da
                 break
             delta = np.zeros(ndof)
             delta[fi] = dd
@@ -1262,16 +1392,16 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
                 dth = delta[n, 3:]
                 if np.any(dth):
                     R[n] = rot_exp(dth) @ R[n]
-        else:
+        if not konvergiert:
             info.hinweise.append(
-                f"Laststufe {schritt}: nach {max_iter} Iterationen nicht konvergiert "
+                f"Laststufe {schritt}: nach {it} Iterationen nicht konvergiert "
                 f"(Residuum {konv * 100:.3g} % der Last) - mehr Laststufen wählen")
             info.fehler = info.fehler or "keine Konvergenz"
         info.konvergenz = konv
         if info.fehler:
             break
         if progress:
-            progress(f"{name}: Laststufe {schritt}/{schritte} ({it} Iterationen)")
+            progress(f"{name}: Laststufe {min(schritt, schritte)}/{schritte} ({it} Iterationen)")
     info.schritte = schritte
     info.iterationen = gesamt_it
     info.gerechnet = not info.fehler
