@@ -734,8 +734,8 @@ def _versatz_achsen_arm(model) -> bool:
             return True
         # das Eigengewicht eines Stabs mit Versatz (asm.element_equivalent_loads)
         try:
-            schwer = any(np.any(np.asarray(getattr(lc, "gravity", None) or [0.0, 0.0, 0.0], float))
-                         for lc in faelle.values())
+            from .model import hat_erdbeschleunigung
+            schwer = any(hat_erdbeschleunigung(lc) for lc in faelle.values())
             if not schwer:
                 return False
             mats = getattr(model, "materials", None) or {}
@@ -1931,9 +1931,9 @@ def _fachwerk_mit_querlast(model) -> bool:
     if _staebe_mit_last(model, ("truss", "seil")):
         return True
     import numpy as np
-    g = [np.asarray(getattr(lc, "gravity", None) or [0, 0, 0], float)
-         for lc in (getattr(model, "load_cases", None) or {}).values()]
-    g = [x for x in g if x.size == 3 and np.linalg.norm(x) > 0]
+    from .model import erdbeschleunigung
+    g = [erdbeschleunigung(lc) for lc in (getattr(model, "load_cases", None) or {}).values()]
+    g = [x for x in g if np.linalg.norm(x) > 0]
     if not g:
         return False
     X = np.asarray(getattr(model, "nodes", None), float).reshape(-1, 3)
@@ -2017,6 +2017,7 @@ def _querlast_lastfaelle(model) -> set:
     """Lastfaelle mit einer Querlast auf einem Fachwerkstab oder Seil: Stablast oder
     Eigengewicht quer zur Stabachse."""
     import numpy as np
+    from .model import erdbeschleunigung
     st = _staebe(model)
     stset = set(st)
     X = np.asarray(getattr(model, "nodes", None), float).reshape(-1, 3)
@@ -2025,8 +2026,8 @@ def _querlast_lastfaelle(model) -> set:
         if any(int(getattr(b, "elem", -1)) in stset for b in getattr(lc, "beam_loads", None) or []):
             out.add(n)
             continue
-        g = np.asarray(getattr(lc, "gravity", None) or [0, 0, 0], float)
-        if g.size != 3 or np.linalg.norm(g) <= 0:
+        g = erdbeschleunigung(lc)
+        if np.linalg.norm(g) <= 0:
             continue
         for i in st:
             e = model.elements[i]
@@ -2825,6 +2826,7 @@ def _maske_vergleich(model, alt, neu, stabende_neu: bool = False, einser: bool =
     if not masken:
         return set()
     import numpy as np
+    from .model import hat_erdbeschleunigung
     from .situationen import kopplung_bleibt
     flach, zahl = _element_knoten(model)
     nn = int(model.nn)
@@ -2859,7 +2861,7 @@ def _maske_vergleich(model, alt, neu, stabende_neu: bool = False, einser: bool =
             lc = lcs.get(name)
             last = {int(l.node) for l in getattr(lc, "nodal_loads", None) or []
                     if any(float(x) for x in (l.F or []))}
-            if any(float(x) for x in (getattr(lc, "gravity", None) or [])):
+            if hat_erdbeschleunigung(lc):
                 last |= {n for n, m in pm.items() if m > 0}
             if last & knoten:
                 out.add(name)

@@ -56,7 +56,7 @@ from scipy.sparse.linalg import splu
 
 from . import assemble as asm
 from .elements import beam3d as bm
-from .model import Model
+from .model import Model, erdbeschleunigung
 
 NDOF = 6
 
@@ -763,12 +763,10 @@ def _lastknoten(model: Model, nn: int, factors: dict = None) -> np.ndarray:
                     F[:len(w)] = w
                     eingaben.append((n, (f,), F))
             # gravity ist eine Liste oder ein numpy-Feld (Model.set_gravity,
-            # Model.gravity); ``Feld or Liste`` waere mehrdeutig (ValueError)
-            g_lc = getattr(lc, "gravity", None)
+            # Model.gravity); ``Feld or Liste`` waere mehrdeutig (ValueError) -
+            # gelesen ueber model.erdbeschleunigung wie an den uebrigen Stellen
             g = np.zeros(6)
-            if g_lc is not None:
-                w = np.asarray(g_lc, float).ravel()[:3]
-                g[:len(w)] = w
+            g[:3] = erdbeschleunigung(lc)
             if np.any(g):
                 for p in pm:
                     eingaben.append((int(p.node), (f, float(p.masse)), g))
