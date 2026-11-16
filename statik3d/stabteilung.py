@@ -358,6 +358,48 @@ def vorkruemmung_mindest(model, kraefte: dict, aktiv=None, faktor: int = 1) -> d
     return out
 
 
+#: Theorie II. Ordnung, alpha_cr und Knicken teilen jeden Stab, an dem die
+#: Normalkraft zaehlt (:func:`relevant`, Druck wie Zug), mindestens in so
+#: viele Teile - auch bei kleinerer Stabteilung der Netzeinstellungen und
+#: ohne Ersatzimperfektionen (:func:`th2_mindest`, Runde k10e, Nr. 29 der
+#: Fehlerliste, Verfahrensstand 76). Bis dahin rechnete ein Stab aus einem
+#: Element bei Stabteilung 1 in diesem Element: IPE 300, 6 m, 300 kN Druck,
+#: Endmomente 6 kNm 54,2074 statt 54,2940 kNm (1,08 N/mm²), beidseits
+#: eingespannt mit q 5 kN/m 15,00 statt 16,66 kNm, in zwei Elementen
+#: 52,33 kNm; alpha_cr und Knicken 21,7 % zu hoch, beidseits eingespannt
+#: „keine Normalkräfte“; unter Zug ueber der Euler-Last des Elements ein
+#: unsinnig grosses Feldmoment.
+TEILUNG_TH2_MINDEST = TEILUNG_VORGABE
+
+
+def th2_mindest(model, kraefte: dict, aktiv=None) -> dict:
+    """{Element: Mindestzahl der Abschnitte seines Stabs} fuer Theorie II.
+    Ordnung, alpha_cr und Knicken: die teilbaren Balken jedes Stabs (Member;
+    Balken ohne Stab als gerade Kette, :func:`_stabgruppen`), an dem die
+    Normalkraft nach Theorie I. Ordnung (``kraefte``) an einem Element
+    :func:`relevant` ist - gedrueckt oder gezogen. {} bei einer Stabteilung
+    der Netzeinstellungen von :data:`TEILUNG_TH2_MINDEST` an (dann teilt
+    :func:`teilzahlen` ohnehin so fein) und ohne ``kraefte``."""
+    if not kraefte or soll_teilung(model) >= TEILUNG_TH2_MINDEST:
+        return {}
+    out = {}
+    for _name, els in _stabgruppen(model, aktiv):
+        idx = [i for i in els if teilbar(model, i)]
+        if idx and any(relevant(model, i, kraefte.get(i, 0.0)) for i in idx):
+            for i in idx:
+                out[i] = TEILUNG_TH2_MINDEST
+    return out
+
+
+def _th2_mindest_moeglich(model) -> bool:
+    """Kann :func:`th2_mindest` etwas teilen? Stabteilung unter
+    :data:`TEILUNG_TH2_MINDEST` und ein teilbarer Balken - ohne
+    Normalkraefte, damit :func:`fein_system` ohne Teilung keine Rechnung nach
+    Theorie I. Ordnung braucht."""
+    return (soll_teilung(model) < TEILUNG_TH2_MINDEST
+            and any(teilbar(model, i) for i, e in enumerate(model.elements) if e.typ == "beam"))
+
+
 #: Woran der Hinweis zu erkennen ist
 VORKRUEMMUNG_KENNUNG = "Vorkrümmung nach Theorie III. Ordnung unvollständig"
 #: dasselbe nach Theorie II. Ordnung (Runde k10d, Nachbesserung 2)
@@ -551,7 +593,12 @@ def laengslast_hinweise(model, factors: dict, aktiv=None, faktor: int = 1, kraef
             return []
         if callable(kraefte):
             kraefte = kraefte()
-        zahlen = teilzahlen(model, aktiv, faktor, kraefte) if (teilen and kraefte is not None) else geo
+        # Theorie II. Ordnung, alpha_cr und Knicken (faktor 1) teilen jeden
+        # Stab mit wirksamer Normalkraft mindestens in TEILUNG_TH2_MINDEST
+        # Teile (th2_mindest, Runde k10e) - gezaehlt wird, was gerechnet wird
+        mindest = th2_mindest(model, kraefte, aktiv) if (teilen and faktor == 1) else None
+        zahlen = (teilzahlen(model, aktiv, faktor, kraefte, mindest=mindest or None)
+                  if (teilen and kraefte is not None) else geo)
         out = []
         for name, els, lb in kandidaten:
             if kraefte is not None and not any(relevant(model, i, kraefte.get(i, 0.0)) for i in lb):
@@ -775,19 +822,28 @@ def fein_system(model, system, factors: dict, kraefte=None, vorkruemmung: bool =
     Stabrichtung und bei Federgelenken falsch (IPE 300, 6 m, 200 kN, Arm
     1,0 m: 17,29 statt 13,87 kNm; Federgelenke 2000 kNm/rad: 4,38 statt
     3,23 kNm im Feld). ``hinweise``: dorthin die Hinweise zu gedrueckten
-    Staeben, die sich nicht teilen lassen (:func:`vorkruemmung_hinweise`)."""
+    Staeben, die sich nicht teilen lassen (:func:`vorkruemmung_hinweise`).
+
+    Jeder Stab, an dem die Normalkraft zaehlt, mindestens in
+    TEILUNG_TH2_MINDEST Teilen, auch ohne Ersatzimperfektionen und bei
+    Stabteilung 1 (:func:`th2_mindest`, Runde k10e, Nr. 29, Stand 76) - fuer
+    Theorie II. Ordnung, alpha_cr und Knicken."""
     aktiv = getattr(system, "aktiv", None)
     vork = bool(vorkruemmung) and bool(getattr(model, "members", None))
-    if not teilzahlen(model, aktiv) and not vork:
+    th2 = _th2_mindest_moeglich(model)
+    if not teilzahlen(model, aktiv) and not vork and not th2:
         return None
     if callable(kraefte):
         kraefte = kraefte()
     if kraefte is None:
         kraefte = kraefte_theorie1(model, system, factors)
-    mindest = vorkruemmung_mindest(model, kraefte, aktiv, 1) if vork else None
-    zahlen = teilzahlen(model, aktiv, kraefte=kraefte, mindest=mindest)
-    if mindest and hinweise is not None:
-        hinweise.extend(h for h in vorkruemmung_hinweise(model, mindest, zahlen, theorie="II")
+    vk = vorkruemmung_mindest(model, kraefte, aktiv, 1) if vork else None
+    mindest = dict(vk or {})
+    for i, n in (th2_mindest(model, kraefte, aktiv) if th2 else {}).items():
+        mindest[i] = max(int(mindest.get(i, 0)), int(n))
+    zahlen = teilzahlen(model, aktiv, kraefte=kraefte, mindest=mindest or None)
+    if vk and hinweise is not None:
+        hinweise.extend(h for h in vorkruemmung_hinweise(model, vk, zahlen, theorie="II")
                         if h not in hinweise)
     if not zahlen:
         return None

@@ -203,13 +203,15 @@ def test_federgelenk():
 
 def test_teilung():
     """Wann Theorie II. Ordnung intern teilt: gedrückt mit Ersatzimperfektionen
-    mindestens 10 Teile; ohne Imperfektionen bei Stabteilung 1 nicht."""
+    mindestens 10 Teile; ohne Imperfektionen bei Stabteilung 1 bis Stand 75
+    nicht - seit Stand 76 (Runde k10e, Nr. 29 der Fehlerliste) ebenfalls
+    mindestens 10 Teile (stabteilung.th2_mindest)."""
     _a, r, M, _mf = rechnen(stab("II", teilung=1))
     check("Th II, Gabellager, 1 El., Stabteilung 1, Vorkrümmung: intern 10 Teile",
           _teile(r) == 10, f"{_teile(r)} Teile, Mz {M / 1e3:.4f} kNm")
     _a, r, M, _mf = rechnen(stab("II", teilung=1, imp=False))
-    check("Th II ohne Ersatzimperfektionen, Stabteilung 1: nicht geteilt (wie bisher)",
-          _teile(r) == 1, f"{_teile(r)} Teile")
+    check("Th II ohne Ersatzimperfektionen, Stabteilung 1: seit Stand 76 ebenfalls intern 10 Teile",
+          _teile(r) == 10, f"{_teile(r)} Teile")
     _a, r, M, _mf = rechnen(stab("II", teilung=20))
     check("Th II, Stabteilung 20: weiter 20 Teile (die Mindestteilung senkt nichts)",
           _teile(r) == 20, f"{_teile(r)} Teile")
