@@ -208,6 +208,22 @@ class _Stab:
         # am Stabanfang; Nachstellung vom 11.11.2026). Das Gleichgewicht der
         # Knoten stimmte, nur die Stabendkraefte nicht.
         f0 = np.asarray(feq.get(i, np.zeros(12)), float)
+        # Drehgelenke und Drehfedergelenke als Gelenkdrehung am Stabende
+        # (Runde k10d, :meth:`_gelenk_lage`): nur, wenn alle Gelenke und
+        # Federgelenke des Stabs Drehungen sind; sonst wie bisher kondensiert
+        dreh = (3, 4, 5, 9, 10, 11)
+        federn = [(int(d), float(k)) for d, k in (getattr(e, "hinge_springs", None) or []) if k and k > 0]
+        gelenke = [int(d) for d in (e.hinges or [])]
+        self.gelenk = None
+        if (federn or gelenke) and e.typ != "truss" and all(d in dreh for d, _k in federn)                 and all(d in dreh for d in gelenke) and kl.shape[0] == 12:
+            kt = {d: 0.0 for d in gelenke}
+            for d, k in federn:
+                if d not in kt:
+                    kt[d] = k
+            D = sorted(kt)
+            self.gelenk = {"D": D, "k": np.array([kt[d] for d in D]), "kl_u": kl.copy(),
+                           "f_u": f0.copy() + (np.zeros(12) if fa is None else fa),
+                           "phi": np.zeros(len(D))}
         # die Anfangsdehnung wie in asm.stablasten_einbauen: Federgelenke, dann
         # Gelenke kondensiert
         if getattr(e, "hinge_springs", None):
@@ -222,6 +238,8 @@ class _Stab:
             _k, f0, _c = asm.condense(kl0, f0, e.hinges)
         self.kl = kl
         self.f_anf = fa
+        if self.gelenk is not None:
+            self.gelenk["f_c"] = f0 + (np.zeros(12) if fa is None else fa)
         self.E0T = T3.T                   # Spalten: Ausgangsachsen ex, ey, ez
         self.L0 = L
         self.f0 = f0
@@ -281,24 +299,11 @@ class _Stab:
         L = float(np.linalg.norm(d))
         dL = (2.0 * float(self.d0 @ du) + float(du @ du)) / (L + self.Ld0)
         e1 = d / L
-        Q1 = R[n1] @ self.E0T
-        Q2 = R[n2] @ self.E0T
-        phi = rot_log(R[n1].T @ R[n2])
-        Qm = R[n1] @ rot_exp(0.5 * phi) @ self.E0T
-        q2 = Qm[:, 1]
-        e2 = q2 - float(q2 @ e1) * e1
-        n = float(np.linalg.norm(e2))
-        if n < 1e-9:
-            q3 = Qm[:, 2]
-            e2 = _kreuz(q3, e1)
-            n = float(np.linalg.norm(e2))
-        e2 /= n
-        e3 = _kreuz(e1, e2)
-        E = np.column_stack([e1, e2, e3])
-        th1 = rot_log(E.T @ Q1)
-        th2 = rot_log(E.T @ Q2)
-        dl = np.concatenate([[0.0, 0.0, 0.0], th1, [dL, 0.0, 0.0], th2])
-        fl = self.kl @ dl
+        if self.gelenk is None:
+            E, dl = self._rahmen(e1, dL, R[n1], R[n2])
+            fl = self.kl @ dl
+        else:
+            E, dl, fl = self._gelenk_lage(e1, dL, R[n1], R[n2])
         N = float(fl[6]) if self.f_anf is None else float(fl[6] - self.f_anf[6])
         if not mit_kg:
             kg = None
@@ -311,6 +316,84 @@ class _Stab:
                 kg = self.C.T @ kg @ self.C
         T = bm.transform_matrix(E.T)
         return fl, T, kg, N, L
+
+    def _rahmen(self, e1, dL, R1, R2):
+        """(E, dl): das mitgehende System (Spalten e1, e2, e3) und die lokalen
+        Stabendverformungen zu den Stabend-Drehungen R1, R2."""
+        Q1 = R1 @ self.E0T
+        Q2 = R2 @ self.E0T
+        phi = rot_log(R1.T @ R2)
+        Qm = R1 @ rot_exp(0.5 * phi) @ self.E0T
+        q2 = Qm[:, 1]
+        e2 = q2 - float(q2 @ e1) * e1
+        n = float(np.linalg.norm(e2))
+        if n < 1e-9:
+            q3 = Qm[:, 2]
+            e2 = _kreuz(q3, e1)
+            n = float(np.linalg.norm(e2))
+        e2 /= n
+        e3 = _kreuz(e1, e2)
+        E = np.column_stack([e1, e2, e3])
+        th1 = rot_log(E.T @ Q1)
+        th2 = rot_log(E.T @ Q2)
+        return E, np.concatenate([[0.0, 0.0, 0.0], th1, [dL, 0.0, 0.0], th2])
+
+    def _gelenk_lage(self, e1, dL, R1, R2):
+        """(E, dl, fl) eines Stabs mit Drehgelenken bzw. Drehfedergelenken
+        (Runde k10d, 16.11.2026).
+
+        Hinter dem Gelenk dreht das Stabende um die Gelenkdrehung φ um die
+        mit dem Knoten mitgedrehte Gelenkachse a = R_Knoten a0 weiter:
+        R_Ende = R_Knoten exp(φ a0). Das mitgehende System und die lokalen
+        Verformungen folgen den Stabenden; φ ergibt sich aus dem
+        Gleichgewicht am Gelenk: das Moment des Stabendes um die Gelenkachse
+        a ist -k φ (Federgelenk) bzw. 0 (Gelenk). Mit dem Stabend-Moment
+        s = k_l d - f (ungekondensiert, mit Stablast und Anfangsdehnung)
+        ist fl = s + f_kond (f_kond wie in der Last), linear dasselbe wie die
+        Kondensation (k_l,kond d - f_kond + f_kond).
+
+        Bis dahin war das Gelenk statisch kondensiert und das Gleichgewicht am
+        Gelenk um die Sehne e1 statt um die Gelenkachse gebildet: bei
+        Biegemoment am Gelenk fehlte das Moment M mal Biegedrehung des
+        Stabendes um die Achse. L-Rahmen (Rechteck 20 x 400, je 2 m, 1 kN,
+        Torsionsfeder 2 kNm/rad an der Ecke): Verdrehung der Spitze 6 % unter
+        dem gleichwertigen Stummelmodell."""
+        g = self.gelenk
+        D, kt, kl_u, f_u = g["D"], g["k"], g["kl_u"], g["f_u"]
+        phi = g["phi"].copy()
+        # pinv: ein Stab mit Torsionsgelenk an beiden Enden dreht sich frei
+        # (wie asm.condense)
+        J_inv = np.linalg.pinv(kl_u[np.ix_(D, D)] + np.diag(kt))
+        # Rundungsniveau der Stabend-Momente: die Summanden von k_l d - f (am
+        # Pendelstab sind die Momente selbst null) und die Rundung der
+        # Drehungen (etwa 2e-16 rad) mal der Drehsteifigkeit
+        rot = [3, 4, 5, 9, 10, 11]
+        k_dreh = float(np.abs(kl_u[rot]).sum(axis=1).max())
+
+        def schranke(dl, phi):
+            return (1e-12 * (float((np.abs(kl_u[rot]) @ np.abs(dl)).max()) + float(np.abs(f_u[rot]).max())
+                             + float(np.abs(kt * phi).max())) + 1e3 * 2.2e-16 * k_dreh + 1e-300)
+        offen = True
+        for _it in range(50):
+            ph = np.zeros(12)
+            ph[D] = phi
+            R1i = R1 @ rot_exp(self.E0T @ ph[3:6]) if np.any(ph[3:6]) else R1
+            R2i = R2 @ rot_exp(self.E0T @ ph[9:12]) if np.any(ph[9:12]) else R2
+            E, dl = self._rahmen(e1, dL, R1i, R2i)
+            s = kl_u @ dl - f_u
+            h = np.empty(len(D))
+            for k, dd in enumerate(D):
+                ende, j = divmod(dd, 6)
+                Rk = R1 if ende == 0 else R2
+                m = E @ s[6 * ende + 3:6 * ende + 6]
+                h[k] = float(m @ (Rk @ self.E0T[:, j - 3])) + kt[k] * phi[k]
+            if float(np.abs(h).max()) <= schranke(dl, phi):
+                offen = False
+                break
+            phi = phi - J_inv @ h
+        g["phi"] = phi
+        g["offen"] = offen
+        return E, dl, s + g["f_c"]
 
     def knoten(self, R: np.ndarray, f_e: np.ndarray, K_e: np.ndarray):
         """Innere Kraefte und Tangente der Stabenden (global, 12) auf die
@@ -1428,8 +1511,14 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
             progress(f"{name}: Laststufe {min(schritt, schritte)}/{schritte} ({it} Iterationen)")
     info.schritte = schritte
     info.iterationen = gesamt_it
-    info.gerechnet = not info.fehler
     f_int, K, zust = aufbau()
+    # das Gleichgewicht an den Gelenken (_Stab._gelenk_lage) gehoert dazu
+    offen = [st.i for st in staebe if st.gelenk is not None and st.gelenk.get("offen")]
+    if offen and not info.fehler:
+        from .solver import stab_name
+        info.fehler = ("Theorie III. Ordnung: kein Gleichgewicht am Gelenk von Stab "
+                       + ", ".join(stab_name(model, i) for i in offen[:4]) + (" …" if len(offen) > 4 else ""))
+    info.gerechnet = not info.fehler
     res = ergebnis(zust, F_ges, f_int)
     from .solver import auto_gehalten_abtrennen
     auto_gehalten_abtrennen(model, auto, res, F_ges, aktiv, progress)

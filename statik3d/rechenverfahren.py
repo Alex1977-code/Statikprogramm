@@ -2185,6 +2185,29 @@ def _theorie3_starrkoerper(model) -> bool:
         return True
 
 
+def _theorie3_gelenk(model) -> bool:
+    """Ein Lastfall oder eine Kombination nach Theorie III. Ordnung und ein
+    Stab (Balken) mit Drehgelenk oder Drehfedergelenk, dessen Gelenke und
+    Federgelenke alle Drehungen sind - dort bildet Theorie III. Ordnung seit
+    Stand 75 (Runde k10d) das Gleichgewicht am Gelenk um die mitgedrehte
+    Gelenkachse (theorie3._Stab._gelenk_lage) statt kondensiert um die Sehne."""
+    try:
+        if not any(model.theorie_von(o) == "III"
+                   for o in list(model.load_cases.values()) + list(model.combinations.values())):
+            return False
+    except Exception:                       # noqa: BLE001 - Pruefung, nie Abbruch
+        return False
+    dreh = (3, 4, 5, 9, 10, 11)
+    for e in getattr(model, "elements", None) or []:
+        if getattr(e, "typ", "") != "beam":
+            continue
+        federn = [int(d) for d, k in (getattr(e, "hinge_springs", None) or []) if k and k > 0]
+        gelenke = [int(d) for d in (getattr(e, "hinges", None) or [])]
+        if (federn or gelenke) and all(d in dreh for d in federn + gelenke):
+            return True
+    return False
+
+
 def _theorie3_anschluss_neu(model) -> list:
     """Lastfaelle und Kombinationen nach Theorie III. Ordnung, die seit Stand
     66 (Runde k10) abgewiesen werden und davor gerechnet wurden: der Anschluss
@@ -4115,10 +4138,31 @@ MERKMALE: list = [
                       "Flächenlager), einen in diesem Lastfall bzw. dieser Kombination belasteten Knoten "
                       "(Knotenlast oder Punktmasse unter Eigengewicht) oder ein zweites Stabende erreicht",
         betrifft=_theorie3_anschluss_betrifft, im_ergebnis=_theorie3_anschluss_im_ergebnis),
+    # Runde k10d (16.11.2026, Fehlerkorrektur): Theorie III. Ordnung
+    # kondensierte Drehgelenke und Drehfedergelenke wie die lineare Rechnung
+    # und bildete das Gleichgewicht am Gelenk um die Sehne des Stabs statt um
+    # die mit dem Knoten mitgedrehte Gelenkachse; das Moment M mal
+    # Biegedrehung des Stabendes fehlte. L-Rahmen (Rechteck 20 x 400, je 2 m,
+    # 1 kN, Torsionsfeder 2 kNm/rad an der Ecke): Verdrehung der Spitze 6 %
+    # unter dem gleichwertigen Stummelmodell (Theorie II. Ordnung mit
+    # Momentenglied 0,6 %); mit Torsionsgelenk bei 3 kN 0,0036 mm Verschiebung
+    # neben dem Stummelmodell; ein Traeger mit Gabellagern, Randmomenten und
+    # Torsionsgelenk in der Mitte verdrillte unsymmetrisch (0,635 gegen 0,486
+    # µrad an den Spiegelknoten). Seither am Gelenk mit der Gelenkdrehung
+    # (theorie3._Stab._gelenk_lage).
+    Merkmal(
+        name="theorie3_gelenk_achse", titel="Dreh- und Drehfedergelenke nach Theorie III. Ordnung",
+        texte={"alt": "Gelenk kondensiert, Gleichgewicht am Gelenk um die Sehne des Stabs",
+               "neu": "Gelenkdrehung am Stabende, Gleichgewicht um die mitgedrehte Gelenkachse"},
+        wechsel=(Wechsel(stand=75, datum="16.11.2026", commit="fix/k10-th3", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Lastfall oder Kombination nach Theorie III. Ordnung und ein Balken mit Drehgelenk "
+                      "oder Drehfedergelenk (alle Gelenke des Stabs Drehungen)",
+        betrifft=_theorie3_gelenk, im_ergebnis=_theorie3_im_ergebnis),
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 66
+VERFAHRENSSTAND = 75
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

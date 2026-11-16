@@ -31,6 +31,13 @@ Runde k10d (16.11.2026), Theorie III. Ordnung: Restschranke und Konvergenz.
     etwa 0,001 N). Jetzt endet eine Stufe auch, wenn die Korrektur die Lage
     nicht mehr aendert (unter 1e-12 der Modellgroesse bzw. 1e-12 rad) und
     das Residuum unter 0,1 % der Last liegt.
+(e) Theorie III. Ordnung kondensierte Dreh- und Drehfedergelenke und bildete
+    das Gleichgewicht am Gelenk um die Sehne statt um die mitgedrehte
+    Gelenkachse. L-Rahmen mit Torsionsfeder 2 kNm/rad an der Ecke:
+    Verdrehung der Spitze 5,7 % neben dem Stummelmodell mit l0 -> 0 (jetzt
+    0,03 % bei l0 = 0,001 m); mit Torsionsgelenk bei 3 kN 0,0036 mm neben dem
+    Stummel; Traeger mit Gabellagern und Torsionsgelenk in der Mitte
+    verdrillte unsymmetrisch. Merkmal theorie3_gelenk_achse, Stand 75.
 
 Aufruf:  python -m tests.test_th3_konvergenz_k10d
 """
@@ -311,7 +318,8 @@ def _rechteck(name, b=0.02, h=0.4):
                    It=h * b ** 3 / 3 * (1 - 0.63 * b / h), typ="rect", h=h, b=b, zmax=h / 2, ymax=b / 2)
 
 
-def l_rahmen(winkel=90.0, l0=0.02, art="stummel", kt=2e3, ecc=None, L=2.0, n=10, P=1e3, stoer=2.0):
+def l_rahmen(winkel=90.0, l0=0.02, art="stummel", kt=2e3, ecc=None, L=2.0, n=10, P=1e3, stoer=2.0,
+             fix_spitze=False):
     """L-Rahmen (Gegenpruefung k11, v3b.rahmen): Schenkel 1 von (0,0,0) nach
     (L,0,0), an der Ecke ein Stueck l0 in Richtung des zweiten Schenkels
     (``art`` "stummel": G I_t / l0 = kt ohne Gelenk; "feder": normales I_t,
@@ -354,7 +362,11 @@ def l_rahmen(winkel=90.0, l0=0.02, art="stummel", kt=2e3, ecc=None, L=2.0, n=10,
         el.exzentrizitaet = [list(ecc), list(ecc)]
     if art == "feder":
         el.hinge_springs = [(3, kt)]
+    elif art == "gelenk":
+        el.hinges = sorted(set(el.hinges) | {3})
     m.fix(start, "all")
+    if art == "gelenk" or fix_spitze:
+        m.fix(ids[-1], [4])              # Torsion des zweiten Schenkels an der Spitze gehalten
     m.load_node(ids[-1], Fx=-P, Fz=stoer)
     return m, ids[-1]
 
@@ -397,8 +409,100 @@ def test_d_kurze_elemente():
                           d2 <= 1e-3, f"{d2:.6f} mm, Th III {np.round(u[sp, :3] * 1e3, 6)} mm")
 
 
+# --------------------------------------------------------------------------
+# (e) Dreh- und Drehfedergelenke
+# --------------------------------------------------------------------------
+def test_e_torsionsfeder():
+    for l0, soll in ((0.1, -2.723), (0.001, 0.0)):
+        us, i1, _r = _th3_direkt(l_rahmen(90.0, l0, art="stummel")[0])
+        m, sp = l_rahmen(90.0, l0, art="feder")
+        uf, i2, _r = _th3_direkt(m)
+        rel = 100.0 * (uf[sp, 4] / us[sp, 4] - 1.0)
+        du = float(np.abs(uf[:, :3] - us[:, :3]).max()) * 1e3
+        if l0 == 0.001:
+            check("(e) L-Rahmen, Torsionsfeder 2 kNm/rad gegen Stummel l0 = 0,001 m: Verdrehung der Spitze "
+                  "auf 0,1 %, Verschiebungen auf 0,00001 mm",
+                  not i1.fehler and not i2.fehler and abs(rel) <= 0.1 and du <= 1e-5,
+                  f"{rel:+.3f} %, {du:.2e} mm, ry {uf[sp, 4]:.6e} / {us[sp, 4]:.6e}")
+        else:
+            # Theorie II. Ordnung mit Momentenglied (Runde k11, probe_feder_1kN.txt): Feder gegen
+            # Stummel 0,1 m -2,723 %; das Stummelmodell ist bei 0,1 m nicht mehr gleichwertig
+            check("(e) … bei l0 = 0,1 m wie Theorie II. Ordnung mit Momentenglied: Feder/Stummel -2,723 % "
+                  "(auf 0,2 Prozentpunkte)", abs(rel - soll) <= 0.2, f"{rel:+.3f} %")
+
+
+def test_e_torsionsgelenk():
+    us, i1, _r = _th3_direkt(l_rahmen(90.0, 0.001, art="stummel", kt=1.0, P=3e3, fix_spitze=True)[0])
+    ug, i2, _r = _th3_direkt(l_rahmen(90.0, 0.001, art="gelenk", P=3e3)[0])
+    du = float(np.abs(ug[:, :3] - us[:, :3]).max()) * 1e3
+    check("(e) L-Rahmen 3 kN, Torsionsgelenk gegen Stummel l0 = 0,001 m mit G I_t / l0 = 1 Nm/rad: "
+          "Verschiebungen auf 0,0001 mm", not i1.fehler and not i2.fehler and du <= 1e-4, f"{du:.6f} mm")
+
+
+def kette(art="gelenk", n=20, L=4.0, M=1.0e3):
+    """Traeger (Rechteck 20 x 400 hochkant) mit Gabellagern, Randmomenten M
+    und 2 N quer in der Mitte, Torsionsgelenk bzw. -feder am Anfang des
+    Elements hinter der Mitte (Gegenpruefung k11, kette_torsion)."""
+    from statik3d.model import Model, Material
+    m = Model("K")
+    m.add_material(Material("ST", E=E, nu=0.3, rho=0.0, fy=355e6))
+    m.add_section(_rechteck("P"))
+    m.design.imperfektionen = False
+    m.netz.stabteilung = 1
+    ids = [m.add_node(L * j / n, 0, 0) for j in range(n + 1)]
+    for j in range(n):
+        m.add_element("beam", [ids[j], ids[j + 1]], "ST", "P")
+    e = m.elements[n // 2]
+    if art == "gelenk":
+        e.hinges = [3]
+    elif art == "feder":
+        e.hinge_springs = [(3, 2e3)]
+    m.fix(ids[0], [0, 1, 2, 3])
+    m.fix(ids[-1], [1, 2, 3])
+    m.load_node(ids[0], My=M)
+    m.load_node(ids[-1], My=-M)
+    m.load_node(ids[n // 2], Fy=2.0)
+    return m, ids
+
+
+def test_e_symmetrie():
+    n = 20
+    u0, i0, _r = _th3_direkt(kette("ohne")[0])
+    for art in ("gelenk", "feder"):
+        u, info, _r = _th3_direkt(kette(art)[0])
+        asym = max(abs(u[k, 3] - u[n - k, 3]) for k in range(n // 2))
+        check(f"(e) Traeger mit Torsions{art} in der Mitte: symmetrisch verdrillt (Spiegelknoten auf 1e-12 rad)",
+              not info.fehler and asym <= 1e-12, f"{asym:.2e} rad, rx {u[n // 2 - 1, 3]:.4e} / {u[n // 2 + 1, 3]:.4e}")
+        # aus Symmetrie traegt die Mitte kein Torsionsmoment: wie ohne Gelenk
+        d = float(np.abs(u[:, 3] - u0[:, 3]).max())
+        check("… gleich dem Traeger ohne Gelenk (Torsionsmoment in der Mitte null, auf 1e-12 rad)",
+              not i0.fehler and d <= 1e-12, f"{d:.2e} rad")
+
+
+def test_e_merkmal():
+    from statik3d import rechenverfahren as rv
+    mk = rv.merkmal("theorie3_gelenk_achse")
+    check("Merkmal theorie3_gelenk_achse: Stand 75, Fehlerkorrektur, 16.11.2026, VERFAHRENSSTAND 75",
+          mk is not None and mk.wechsel[-1].stand == 75 and mk.wechsel[-1].art == rv.FEHLERKORREKTUR
+          and mk.wechsel[-1].datum == "16.11.2026" and rv.VERFAHRENSSTAND == 75
+          and rv.VERFAHRENSSTAND == max(w.stand for x in rv.MERKMALE for w in x.wechsel),
+          f"{mk and mk.wechsel} {rv.VERFAHRENSSTAND}")
+    if mk is None:
+        return
+
+    def mit(th, art):
+        m, _sp = l_rahmen(90.0, 0.02, art=art)
+        k = m.add_combination("LK1", {"LF1": 1.0}, "ULS")
+        k.theorie = th
+        return m
+    check("… betrifft: Theorie III. Ordnung mit Torsionsfeder bzw. Torsionsgelenk",
+          mk.betrifft(mit("III", "feder")) is True and mk.betrifft(mit("III", "gelenk")) is True)
+    check("… nicht: Theorie I. Ordnung mit Feder, Theorie III. Ordnung ohne Gelenk",
+          mk.betrifft(mit("I", "feder")) is False and mk.betrifft(mit("III", "stummel")) is False)
+
+
 TESTS = [test_a_restschranke, test_b_kleine_last, test_c_ipe_vorverformung, test_c_hallenreihe,
-         test_d_kurze_elemente]
+         test_d_kurze_elemente, test_e_torsionsfeder, test_e_torsionsgelenk, test_e_symmetrie, test_e_merkmal]
 
 
 def main():
