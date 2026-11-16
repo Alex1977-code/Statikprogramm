@@ -11308,6 +11308,53 @@ def _laengslast_hinweise_sammeln(an, progress=None) -> None:
             _melde(progress, "Hinweis: " + t)
 
 
+def _bdk_chi_lt_gefuehrt(design) -> dict:
+    """{Stab: {Kombination, Lastfall oder Alternative}}, deren Ergebnis der
+    Stabilitaetsnachweis des Stabs gefuehrt hat (MemberCheck.stability, je
+    Eintrag ``combo``; am I-Stab mit Haken Biegedrillknicken samt chi_LT,
+    ec3.stability.member_stability). Ein zusammengefasster Eintrag „EK1 [1] =
+    EK2 [1]“ gilt fuer alle seine Namen (DesignResults.gleiche). Ein Stab mit
+    „nicht gefuehrt“ (MemberCheck.fehler) fehlt. Ohne Nachweise: leer.
+
+    Es zaehlt nur ein Eintrag, an dem chi_LT tatsaechlich gelaufen ist
+    (:func:`_bdk_chi_lt_gelaufen`: endliches positives details["M_cr"]).
+    ec3.design.check_member legt einen Stabilitaetseintrag schon bei N_Ed > 0
+    an, auch ohne Haken Biegedrillknicken oder ohne Biegemoment; dort steht
+    M_cr = inf und chi_LT = 1 ohne Rechnung. Bis zur Nachbesserung der Runde
+    k10b (15.11.2026) zaehlte jeder Eintrag, der Hinweis fehlte dann still
+    (Web: Knicken bzw. Theorie II. Ordnung, set_member lt_check aus,
+    start_design)."""
+    if design is None:
+        return {}
+    gleiche = getattr(design, "gleiche", None) or {}
+    out: dict = {}
+    for k, mc in (getattr(design, "members", None) or {}).items():
+        if getattr(mc, "fehler", ""):
+            continue
+        namen = set()
+        for st in getattr(mc, "stability", None) or []:
+            c = st.get("combo") if isinstance(st, dict) else None
+            if c and _bdk_chi_lt_gelaufen(st):
+                namen.update(gleiche.get(c) or [c])
+        out[k] = namen
+    return out
+
+
+def _bdk_chi_lt_gelaufen(st) -> bool:
+    """True, wenn am Stabilitaetseintrag ``st`` (ec3.stability.member_stability)
+    chi_LT nach 6.3.2 gerechnet wurde: details["M_cr"] endlich und positiv
+    (dann auch details["curve_LT"]). Ohne Haken oder ohne Moment steht dort
+    M_cr = inf, bei M_cr <= 0 setzt lateral_torsional chi_LT = 1 ohne Linie."""
+    d = st.get("details") if isinstance(st, dict) else None
+    if not isinstance(d, dict) or "curve_LT" not in d:
+        return False
+    try:
+        mcr = float(d.get("M_cr"))
+    except (TypeError, ValueError):
+        return False
+    return bool(np.isfinite(mcr) and mcr > 0)
+
+
 def _bdk_hinweise_sammeln(an, progress=None) -> None:
     """Der Hinweis „Theorie II. Ordnung und α_cr enthalten kein
     Biegedrillknicken“ (statik3d.bdk_hinweis, Runde k8, 15.11.2026): eine
@@ -11321,23 +11368,33 @@ def _bdk_hinweise_sammeln(an, progress=None) -> None:
     in den Hinweis der Kombination (Th2Info.hinweise, Theoriekapitel) und in
     die Zeile (Gegenpruefung k8, 15.11.2026).
 
+    Erfasst gilt ein Haken-Stab nur **je Kombination**: in der Kombination,
+    dem Lastfall oder der Alternative, deren Ergebnis sein Stabilitaets-
+    nachweis (chi_LT) gefuehrt hat (:func:`_bdk_chi_lt_gefuehrt`). Bis zur
+    Runde k10 (15.11.2026) galt er fuer jede Kombination nach Theorie II.
+    Ordnung als erfasst, sobald sein Nachweis ohne Fehler stand - auch in
+    einer GZG-Kombination, einem Lastfall neben Kombinationen oder einer nicht
+    ausgewaehlten Kombination, die der EC3-Nachweis (nur GZT,
+    ec3.design._uls_results) gar nicht fuehrt.
+
     Wiederholbar: auch nach einem Abbruch (_teilanalyse) und nach
     nachtraeglich gestarteten Nachweisen (Oberflaeche _design_done, Web
     start_design) - die Staebe ohne Haken stehen fest in
     ``bdk_staebe_direkt``, die Haken-Staebe kommen je nach an.design dazu
     oder fallen wieder weg."""
     from .bdk_hinweis import BDK_KENNUNG, bdk_text
-    gefuehrt = set()
-    if getattr(an, "design", None) is not None:
-        gefuehrt = {k for k, mc in an.design.members.items() if not getattr(mc, "fehler", "")}
-    for info in (getattr(an.theorie2, "kombinationen", None) or {}).values():
+    gefuehrt = _bdk_chi_lt_gefuehrt(getattr(an, "design", None))
+    for zeile, info in (getattr(an.theorie2, "kombinationen", None) or {}).items():
         ec3 = list(getattr(info, "bdk_ec3_staebe", None) or [])
         if not ec3:
             continue
         if getattr(info, "bdk_staebe_direkt", None) is None:
             info.bdk_staebe_direkt = list(getattr(info, "bdk_staebe", None) or [])
         direkt = list(info.bdk_staebe_direkt)
-        info.bdk_staebe = direkt + [n for n in ec3 if n not in gefuehrt and n not in direkt]
+        # erfasst nur, wenn der Nachweis des Stabs genau diese Kombination
+        # (bzw. diesen Lastfall, diese Alternative) gefuehrt hat (Runde k10)
+        info.bdk_staebe = direkt + [n for n in ec3
+                                    if zeile not in gefuehrt.get(n, ()) and n not in direkt]
         info.hinweise[:] = ([h for h in info.hinweise if BDK_KENNUNG not in h]
                             + ([bdk_text(info.bdk_staebe)] if info.bdk_staebe else []))
     namen, texte = [], []
@@ -11354,6 +11411,55 @@ def _bdk_hinweise_sammeln(an, progress=None) -> None:
         _melde(progress, "Hinweis: " + zeile)
     else:
         an.info.pop("bdk_hinweis", None)
+
+
+def _bdk_knick_hinweis_bilden(res, design=None) -> None:
+    """Der Hinweis „Die Knickfaktoren enthalten kein Biegedrillknicken“ eines
+    Knickergebnisses (solve_buckling) nach derselben Regel wie nach Theorie
+    II. Ordnung (:func:`_bdk_hinweise_sammeln`, Runden k8 und k10): ein Stab
+    mit den Haken EC3 und Biegedrillknicken gilt nur als erfasst, wenn ein
+    Nachweis (``design``, DesignResults) seinen chi_LT-Nachweis genau am
+    Grundzustand des Knickens gefuehrt hat - der Kombination bzw. dem
+    Lastfall; „alle Lastfaelle“ fuehrt kein Nachweis. solve_buckling selbst
+    fuehrt keinen Nachweis (``design`` None): dort nennt der Hinweis die
+    Haken-Staebe immer. Bis zur Runde k10b (15.11.2026) zaehlten die Haken
+    allein als erfasst (bdk_hinweis.hinweis mit ec3=True), der Hinweis
+    fehlte dann still.
+
+    Wiederholbar: nach nachtraeglich gestarteten Nachweisen oder einem
+    Knicken nach den Nachweisen (Oberflaeche, Web, :func:`_bdk_nach_nachweisen`)
+    bildet sich die Zeile aus ``res.info["bdk_knick"]`` neu. Ohne diesen
+    Eintrag (kein Knickergebnis, Ergebnis von vor k10b): nichts."""
+    d = (getattr(res, "info", None) or {}).get("bdk_knick") if res is not None else None
+    if not isinstance(d, dict):
+        return
+    zeile = _bdk_knick_text(d, design)
+    if zeile:
+        res.info["bdk_hinweis"] = [zeile]
+    else:
+        res.info.pop("bdk_hinweis", None)
+
+
+def _bdk_knick_text(d: dict, design=None) -> str:
+    """Die Zeile zu ``d`` = {"alle", "ec3", "grund"} aus solve_buckling (siehe
+    :func:`_bdk_knick_hinweis_bilden`), "" ohne Stab."""
+    from .bdk_hinweis import bdk_text, KNICK_WO
+    grund = d.get("grund")
+    ec3 = set(d.get("ec3") or [])
+    gefuehrt = _bdk_chi_lt_gefuehrt(design) if grund else {}
+    namen = [n for n in d.get("alle") or []
+             if n not in ec3 or grund not in gefuehrt.get(n, ())]
+    return bdk_text(namen, KNICK_WO) if namen else ""
+
+
+def _bdk_nach_nachweisen(an, res=None) -> None:
+    """Nach nachtraeglich gestarteten Nachweisen (Oberflaeche _design_done,
+    Web start_design): die Hinweise Biegedrillknicken der Analyse
+    (:func:`_bdk_hinweise_sammeln`) und eines daneben stehenden
+    Knickergebnisses ``res`` (:func:`_bdk_knick_hinweis_bilden`) neu bilden."""
+    if an is not None:
+        _bdk_hinweise_sammeln(an)
+    _bdk_knick_hinweis_bilden(res, getattr(an, "design", None) if an is not None else None)
 
 
 def _solve_all_rumpf(model: Model, an: Analysis, systeme: dict, workers, progress, combinations,
@@ -12420,9 +12526,19 @@ def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = Non
     # (samt interner Teilung, wie Theorie II. Ordnung): Hinweis (Runde k7)
     ll_hinweise = laengslast_hinweise(model, faktoren, system.aktiv, 1, kraefte=kraefte)
     # Stab mit Druck und Biegung, Biegedrillknicken nicht anderweitig erfasst:
-    # K_G hat kein Momentenglied (Runde k8, 15.11.2026) - am Grundzustand des Modells
-    from .bdk_hinweis import hinweis as bdk_hinweis, KNICK_WO
-    bdk_zeile, _bdk_namen = bdk_hinweis(model, system.aktiv, KNICK_WO, res=static)
+    # K_G hat kein Momentenglied (Runde k8, 15.11.2026) - am Grundzustand des Modells.
+    # Die Haken EC3/Biegedrillknicken allein erfassen nichts: hier laeuft kein
+    # Nachweis (Runde k10b, wie Theorie II. Ordnung); erst ein Nachweis, der
+    # diesen Grundzustand mit chi_LT gefuehrt hat, nimmt den Stab heraus
+    # (_bdk_knick_hinweis_bilden, Oberflaeche und Web nach den Nachweisen)
+    from .bdk_hinweis import aufteilen as bdk_aufteilen
+    _bdk_alle, _bdk_ec3 = bdk_aufteilen(model, system.aktiv, res=static)
+    if combination:
+        _bdk_grund = combination
+    else:
+        _bdk_grund = None if case == "all" else _lastfall_faktoren(model, case)[1]
+    _bdk_knick = {"alle": list(_bdk_alle), "ec3": list(_bdk_ec3), "grund": _bdk_grund}
+    bdk_zeile = _bdk_knick_text(_bdk_knick)
     if fein is not None:
         modell_grob = model
         model, system, abb = fein
@@ -12492,6 +12608,9 @@ def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = Non
         res.info["laengslast_teilung"] = list(ll_hinweise)
     if bdk_zeile:
         res.info["bdk_hinweis"] = [bdk_zeile]
+    if _bdk_alle:
+        # fuer das Neubilden nach den Nachweisen (_bdk_knick_hinweis_bilden, k10b)
+        res.info["bdk_knick"] = _bdk_knick
     if knick_hinweis:
         res.info["knickfaktor_hinweis"] = knick_hinweis
         _melde(progress, "Hinweis: " + knick_hinweis)

@@ -27,7 +27,16 @@ Kriterium (je Stab bzw. gerader Kette von Balken ohne Stab):
    diesen Stab auch gefuehrt wird (solver._bdk_hinweise_sammeln nach
    check_members): ohne Nachweise (CLI ohne --nachweise, Haken „Nachweise“
    ab) oder mit „nicht gefuehrt“ (Werkstoff ohne f_y) erfassen die Haken
-   allein nichts (Gegenpruefung k8, 15.11.2026).
+   allein nichts (Gegenpruefung k8, 15.11.2026). Und es gilt je
+   Kombination: nur dort, wo der Stabilitaetsnachweis des Stabs dieses
+   Ergebnis gefuehrt hat - nicht in GZG-Kombinationen, nicht in Lastfaellen
+   neben Kombinationen, nicht in nicht ausgewaehlten Kombinationen
+   (solver._bdk_chi_lt_gefuehrt, Runde k10). Beim Knicken (solve_buckling)
+   ebenso: dort laeuft kein Nachweis, die Haken allein erfassen also nichts;
+   erst ein Nachweis, der den Grundzustand des Knickens (Kombination bzw.
+   Lastfall) mit chi_LT gefuehrt hat, nimmt den Stab heraus
+   (solver._bdk_knick_hinweis_bilden, Runde k10b). Bis dahin zaehlte das
+   Knicken die Haken allein als erfasst, der Hinweis fehlte dann still.
 3. Nicht gefaehrdet: Hohlprofile (RHS, CHS) und Querschnitte ohne starke
    Achse (I_y = I_z, etwa Kreis, Quadrat) - DIN EN 1993-1-1, 6.3.2.1(2)
    (quadratische und runde Hohlprofile, Kastenquerschnitte) und 6.3.1.4(1)
@@ -225,21 +234,29 @@ def hinweis(model, aktiv=None, wo: str = TH2_WO, **grund) -> tuple:
     return (bdk_text(namen, wo) if namen else ""), namen
 
 
+def aufteilen(model, aktiv=None, **grund) -> tuple:
+    """(alle, ec3): die Staebe, die das Kriterium ohne die Haken EC3/
+    Biegedrillknicken erfuellen, und davon die, die nur ein gefuehrter
+    Ersatzstabnachweis erfasst (Punkt 2). Bei einem Fehler zwei leere
+    Listen - ein Hinweis sperrt keine Rechnung."""
+    alle = bdk_staebe(model, aktiv, ec3=False, **grund)
+    if not alle:
+        return [], []
+    try:
+        ohne_ec3 = {k[0] for k in kandidaten(model, aktiv, True)}
+    except Exception:                       # noqa: BLE001 - ein Hinweis sperrt keine Rechnung
+        return [], []
+    return alle, [n for n in alle if n not in ohne_ec3]
+
+
 def hinweis_th2(model, aktiv=None, **grund) -> tuple:
     """(Text oder "", Namen, Namen mit Haken EC3/Biegedrillknicken) fuer
     Theorie II. Ordnung und alpha_cr. Die dritte Liste nennt die Staebe, die
     das Kriterium erfuellen, aber als durch den Ersatzstabnachweis erfasst
     gelten - ob der Nachweis in dieser Rechnung gefuehrt wird, entscheidet
     solver._bdk_hinweise_sammeln nach check_members (Gegenpruefung k8)."""
-    alle = bdk_staebe(model, aktiv, ec3=False, **grund)
-    if not alle:
-        return "", [], []
-    try:
-        ohne_ec3 = {k[0] for k in kandidaten(model, aktiv, True)}
-    except Exception:                       # noqa: BLE001 - ein Hinweis sperrt keine Rechnung
-        return "", [], []
-    namen = [n for n in alle if n in ohne_ec3]
-    ec3 = [n for n in alle if n not in ohne_ec3]
+    alle, ec3 = aufteilen(model, aktiv, **grund)
+    namen = [n for n in alle if n not in ec3]
     return (bdk_text(namen) if namen else ""), namen, ec3
 
 
