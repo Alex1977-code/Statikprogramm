@@ -167,10 +167,18 @@ def test_a9():
         m = _modell()
         m.sections["Q"].Iz = 2 * I
         # ohne interne Stabteilung (seit 12.11.2026 Vorgabe 10) - nur so
-        # bleibt ein Element je Stab und der Hinweis hat etwas zu melden
+        # bleibt ein Element je Stab und der Hinweis hat etwas zu melden.
+        # Seit Stand 76 (Runde k10e, Nr. 29) teilt Theorie II. Ordnung einen
+        # Stab mit wirksamer Normalkraft auch bei Stabteilung 1 mindestens
+        # in 10 Teile; ungeteilt bleibt nur ein Balken, den die interne
+        # Stabteilung nicht teilt - hier mit Woelbkrafttorsion
         if n != "geteilt":
             m.netz.stabteilung = 1
+            m.sections["Q"].Iw = 1e-7
         ids, els = _kette(m, (0, 0, 0), (L, 0, 0), 1 if n == "geteilt" else n)
+        if n != "geteilt":
+            for e in els:
+                m.elements[e].woelb = True
         m.fix(ids[0], [0, 1, 2, 3])
         m.fix(ids[-1], [1, 2])
         m.load_node(ids[-1], Fx=-P)
@@ -180,7 +188,8 @@ def test_a9():
         hin = [h_ for i in an.theorie2.kombinationen.values() for h_ in i.hinweise]
         grob = any(h_.startswith("α_cr: Stabteilung zu grob") for h_ in hin)
         if n == 1:
-            check("A9 Euler-Fall 2 in einem Element: Hinweis „Stabteilung zu grob“ (Sammlung und Zusammenfassung)",
+            check("A9 Euler-Fall 2 in einem Element (Wölbkrafttorsion, nicht teilbar): Hinweis „Stabteilung zu "
+                  "grob“ (Sammlung und Zusammenfassung)",
                   grob and "Stabteilung zu grob" in an.theorie2.summary(), str(hin)[:120])
         elif n == 4:
             check("… in vier Elementen: kein Hinweis", not grob, str(hin)[:120])

@@ -179,6 +179,19 @@ def _rechne(m, e):
     return float(r.info.get("alpha_cr") or math.inf), float(np.abs(st["My"]).max()), r
 
 
+def _rechne_ungeteilt(m, e):
+    """Wie :func:`_rechne`, aber in den Elementen des Modells
+    (theorie2.solve_theorie2 ohne interne Stabteilung). Seit Stand 76 (Runde
+    k10e, Nr. 29 der Fehlerliste) teilt die Rechnung auch bei Stabteilung 1
+    jeden Stab mit wirksamer Normalkraft mindestens in 10 Teile; die Formeln
+    eines Elements (Integralmittel in K_G und im Feldanteil N w) prueft
+    dieser Weg - sie gelten in jedem Teilstueck."""
+    from statik3d import solver, theorie2
+    r, info = theorie2.solve_theorie2(m, {"LF1": 1.0}, "LF1", imperfektionen=False, stabteilung=False)
+    st = solver.beam_station_forces(m, r, e, 81)
+    return float(info.alpha_cr or math.inf), float(np.abs(st["My"]).max()), r
+
+
 # --------------------------------------------------------------------------
 def test_integralmittel_kg():
     """B'6a: die Normalkraft des Elements mit Laengsgelenk in K_G ist das
@@ -234,17 +247,26 @@ def test_temperatur_am_gelenk():
 def test_ein_element():
     """Netzeinstellung Stabteilung 1: alpha_cr und max|My| mit dem
     Integralmittel, gleich fuer beide Elementrichtungen und mit/ohne
-    Laengsgelenk (B'6a und B'6b)."""
+    Laengsgelenk (B'6a und B'6b). Seit Stand 76 (Runde k10e) in den
+    Elementen des Modells ueber :func:`_rechne_ungeteilt`; der gewoehnliche
+    Weg teilt bei Stabteilung 1 in 10 Teile wie die Vorgabe 10."""
     for art in ARTEN:
         a_h, M_h = _ein_element(_mittel_hand(art))
         werte = {}
         for gel in (True, False):
             for umg in (False, True):
-                a, My, r = _rechne(*_stuetze(art, gel, umg))
+                a, My, r = _rechne_ungeteilt(*_stuetze(art, gel, umg))
                 werte[(gel, umg)] = (a, My)
                 txt = f"{'Längsgelenk' if gel else 'ohne Gelenk'}, {'oben→unten' if umg else 'unten→oben'}"
                 check(f"ein Element ungeteilt ({art}, {txt})", not r.info.get("stabteilung"),
                       f"{r.info.get('stabteilung')}")
+                a1, My1, r1 = _rechne(*_stuetze(art, gel, umg))
+                a10, My10, _r10 = _rechne(*_stuetze(art, gel, umg, teilung=10))
+                check(f"Stabteilung 1 seit Stand 76: in 10 Teilen, alpha_cr und max|My| wie Teilung 10 "
+                      f"({art}, {txt})",
+                      r1.info.get("stabteilung") == {0: 10} and abs(a1 / a10 - 1) < 1e-9
+                      and abs(My1 / My10 - 1) < 1e-9,
+                      f"{r1.info.get('stabteilung')} {a1:.6f}/{a10:.6f} {My1:.3f}/{My10:.3f}")
                 nahe(f"1 El. alpha_cr = 12 EI/(L² |N_m|) = {a_h:.4f} ({art}, {txt})", a, a_h, 1e-6)
                 nahe(f"1 El. max|My| = sec-Formel mit N_m {M_h / 1e3:.4f} kNm ({art}, {txt})", My, M_h, 1e-3)
         ref = werte[(False, False)][1]
@@ -257,7 +279,7 @@ def test_ein_element_haengend():
         _a, M_h = _ein_element(_mittel_hand(art, haengend=True))
         for gel in (True, False):
             for umg in (False, True):
-                _a2, My, _r = _rechne(*_stuetze(art, gel, umg, haengend=True))
+                _a2, My, _r = _rechne_ungeteilt(*_stuetze(art, gel, umg, haengend=True))
                 nahe(f"hängend 1 El. max|My| = sech-Formel {M_h / 1e3:.4f} kNm ({art}, "
                      f"{'Längsgelenk' if gel else 'ohne Gelenk'}, {'oben→unten' if umg else 'unten→oben'})",
                      My, M_h, 1e-3)
@@ -289,8 +311,13 @@ def test_ohne_laengslast_unveraendert():
     (Werte vom Stand 542ba156)."""
     from statik3d.model import Model, Material, Section
     from statik3d import solver
-    soll = {(1, False): 4948.441355184238, (1, True): 4948.441355184238,
+    # Teilung 1: bis Stand 75 in einem Element 4948,441355184238 - so noch
+    # ohne interne Stabteilung (theorie2.solve_theorie2, stabteilung=False);
+    # seit Stand 76 (Runde k10e, Nr. 29) teilt die Rechnung den gedrueckten
+    # Stab auch bei Stabteilung 1 in 10 Teile, wie die Vorgabe 10
+    soll = {(1, False): 4949.153822995438, (1, True): 4949.153822995496,
             (10, False): 4949.153822995438, (10, True): 4949.153822995496}
+    ein_element = 4948.441355184238
     for (n_teil, umg), wert in soll.items():
         m = Model("T")
         m.add_material(Material("ST", E=E, nu=0.3, rho=0.0, fy=355e6))
@@ -309,6 +336,12 @@ def test_ohne_laengslast_unveraendert():
         My = float(np.abs(solver.beam_station_forces(m, r, e, 81)["My"]).max())
         nahe(f"Knotenlast statt Stablast: max|My| wie vorher (Teilung {n_teil}, "
              f"{'oben→unten' if umg else 'unten→oben'})", My, wert, 1e-12)
+        if n_teil == 1:
+            from statik3d import theorie2
+            r1, _i = theorie2.solve_theorie2(m, {"LF1": 1.0}, "LF1", imperfektionen=False, stabteilung=False)
+            My1 = float(np.abs(solver.beam_station_forces(m, r1, e, 81)["My"]).max())
+            nahe(f"Knotenlast statt Stablast: ein Element ungeteilt wie vorher "
+                 f"({'oben→unten' if umg else 'unten→oben'})", My1, ein_element, 1e-12)
     for umg in (False, True):
         m, e = _stuetze("gleich", True, umg, temperatur=30.0)
         m.load_cases["LF1"].beam_loads = [bl for bl in m.load_cases["LF1"].beam_loads if not bl.q[2]]

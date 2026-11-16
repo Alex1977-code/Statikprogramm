@@ -268,19 +268,30 @@ def test_laengslast():
 
 def test_hinweis_zaehlt_teilung():
     """Der Hinweis „Last in Stabrichtung“ zaehlt beim Knicken die gerechneten
-    Elemente nach der internen Teilung (wie Theorie II. Ordnung)."""
-    for teilung, soll in ((10, None), (2, "in 2 Elemente geteilt"), (1, "in 1 Element geteilt")):
+    Elemente nach der internen Teilung (wie Theorie II. Ordnung).
+
+    Bis Runde k10e (Nr. 29 der Fehlerliste, Stand 76) blieb der Stab mit
+    Stabteilung 2 bzw. 1 in 2 bzw. 1 Element, und der Hinweis nannte diese
+    Zahl. Seither teilt das Knicken jeden Stab mit wirksamer Normalkraft
+    mindestens in 10 Teile (stabteilung.th2_mindest): gerechnet in 10, kein
+    Hinweis, derselbe Knickfaktor wie mit der Vorgabe 10."""
+    from statik3d import solver
+    lam10 = None
+    for teilung in (10, 2, 1):
         zeilen = []
-        from statik3d import solver
         with contextlib.redirect_stdout(io.StringIO()):
             r = solver.solve_buckling(_saeule("teil_unten", teilung), 2, lambda t, *a: zeilen.append(str(t)))
         h = [z for z in zeilen if "trägt Last in Stabrichtung" in z]
-        if soll is None:
+        lam = min(float(x) for x in r.buckling_factors if float(x) > 0)
+        if teilung == 10:
+            lam10 = lam
             check("Hinweis Längslast, ein Element mit Stabteilung 10 (gerechnet in 10): kein Hinweis",
                   not h and not r.info.get("laengslast_teilung"), " | ".join(h)[:200])
         else:
-            check(f"Hinweis Längslast, ein Element mit Stabteilung {teilung}: „{soll}“",
-                  any(soll in z for z in h) and r.info.get("laengslast_teilung"), " | ".join(h)[:200])
+            check(f"Hinweis Längslast, ein Element mit Stabteilung {teilung}: gerechnet in 10 (Stand 76) – "
+                  f"kein Hinweis, Knickfaktor wie Stabteilung 10 (1e-9)",
+                  not h and not r.info.get("laengslast_teilung") and abs(lam / lam10 - 1) < 1e-9,
+                  f"{lam:.6f} / {lam10:.6f} " + " | ".join(h)[:160])
 
 
 # --------------------------------------------------------------------------

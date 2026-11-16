@@ -224,10 +224,17 @@ def test_beidseitig_frei():
 
 
 def test_ohne_teilung():
+    # Bis Runde k10e (Nr. 29 der Fehlerliste, Stand 76) rechnete Theorie II.
+    # Ordnung bei Stabteilung 1 ohne interne Teilung: Lagermoment 22,500
+    # (q L²/8, ohne N w) statt 44,207 kNm. Seither teilt sie jeden Stab mit
+    # wirksamer Normalkraft mindestens in 10 Teile (stabteilung.th2_mindest)
+    soll = _analytisch()
     _m, r, ids, _e = _einfeld(1, "II", teilung=1)
     RM = abs(r.reactions[ids[0], 4])
-    check("Stabteilung 1 in den Netzeinstellungen: keine interne Teilung (Lagermoment wie bisher 22,500)",
-          abs(RM - Q * L ** 2 / 8) < 1e-6 * RM and "stabteilung" not in r.info, f"{RM / 1e3:.4f} kNm")
+    check(f"Stabteilung 1 in den Netzeinstellungen: gedrückter Stab dennoch in 10 Teilen, Lagermoment = "
+          f"Differentialgleichung {soll / 1e3:.3f} kNm auf 0,1 % (bis Stand 75: 22,500)",
+          abs(RM / soll - 1) < 1e-3 and r.info.get("stabteilung") == {0: 10},
+          f"{RM / 1e3:.4f} kNm, Teilung {r.info.get('stabteilung')}")
 
 
 def test_verfahrenstabelle():

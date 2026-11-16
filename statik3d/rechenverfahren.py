@@ -2209,6 +2209,28 @@ def _theorie3_gelenk(model) -> bool:
     return False
 
 
+def _th2_mindestteilung(model) -> bool:
+    """Modellmerkmal th2_mindestteilung: Stabteilung der Netzeinstellungen
+    unter 10 und ein Balken, den die interne Stabteilung teilen kann - seit
+    Stand 76 (Runde k10e, Nr. 29) teilen Theorie II. Ordnung, alpha_cr und
+    Knicken jeden Stab mit wirksamer Normalkraft mindestens in 10 Teile, auch
+    ohne Ersatzimperfektionen (stabteilung.th2_mindest)."""
+    try:
+        from .stabteilung import _th2_mindest_moeglich
+        return bool(_th2_mindest_moeglich(model))
+    except Exception:                       # noqa: BLE001 - nicht pruefbar: möglicherweise betroffen
+        return True
+
+
+def _th2_mindestteilung_im_ergebnis(model, an) -> str:
+    """alpha_cr, Theorie II. Ordnung oder Knicken im Ergebnis - Merkmal
+    th2_mindestteilung (Theorie III. Ordnung unveraendert)."""
+    t = _alpha_cr_im_ergebnis(model, an)
+    if not t and getattr(an, "kind", "") == "buckling":
+        t = "Knicken: " + str(getattr(an, "name", "") or "Knicken")
+    return t
+
+
 def _theorie3_anschluss_neu(model) -> list:
     """Lastfaelle und Kombinationen nach Theorie III. Ordnung, die seit Stand
     66 (Runde k10) abgewiesen werden und davor gerechnet wurden: der Anschluss
@@ -4816,10 +4838,32 @@ MERKMALE: list = [
         modellmerkmal="Lastfall oder Kombination nach Theorie III. Ordnung und ein Balken mit Drehgelenk "
                       "oder Drehfedergelenk (alle Gelenke des Stabs Drehungen)",
         betrifft=_theorie3_gelenk, im_ergebnis=_theorie3_im_ergebnis),
+    # Runde k10e, Nr. 29 der Fehlerliste (16.11.2026, Fehlerkorrektur): mit
+    # Stabteilung unter 10 rechneten Theorie II. Ordnung, alpha_cr und
+    # Knicken einen Stab ohne Ersatzimperfektionen in seinen Elementen (seit
+    # Stand 74 nur mit Vorkruemmung mindestens in 10 Teilen). IPE 300, 6 m,
+    # 300 kN Druck, Endmomente 6 kNm, ein Element, Stabteilung 1: 54,2074
+    # statt 54,2940 kNm (1,08 N/mm²); Versatz y 0,1 m, Federgelenke
+    # 2000 kNm/rad, qy 5 kN/m: 107,4283 statt 107,2971 kNm; beidseits
+    # eingespannt mit q 5 kN/m 15,00 statt 16,66 kNm; zwei Elemente 52,33
+    # kNm; alpha_cr und Knicken 21,7 % zu hoch, beidseits eingespannt
+    # „Keine Normalkräfte“. Seither jeder Stab mit wirksamer Normalkraft
+    # (Druck oder Zug) mindestens in 10 Teilen (stabteilung.th2_mindest).
+    Merkmal(
+        name="th2_mindestteilung", titel="Mindestteilung nach Theorie II. Ordnung, α_cr und Knicken",
+        texte={"alt": "Stäbe ohne Ersatzimperfektion in die Stabteilung der Netzeinstellungen geteilt "
+                      "(Stabteilung 1: in ihren Elementen gerechnet)",
+               "neu": "jeder Stab mit wirksamer Normalkraft mindestens in 10 Teilen, auch bei kleinerer "
+                      "Stabteilung und ohne Ersatzimperfektionen"},
+        wechsel=(Wechsel(stand=76, datum="16.11.2026", commit="fix/k10e-th2teil", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Stabteilung der Netzeinstellungen unter 10 und ein Balken, mit α_cr, Knicken oder "
+                      "Theorie II. Ordnung",
+        betrifft=_th2_mindestteilung, im_ergebnis=_th2_mindestteilung_im_ergebnis),
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 75
+VERFAHRENSSTAND = 76
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

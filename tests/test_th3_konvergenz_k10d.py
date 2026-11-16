@@ -628,9 +628,11 @@ def test_e_federn_konvergieren():
 def test_e_merkmal():
     from statik3d import rechenverfahren as rv
     mk = rv.merkmal("theorie3_gelenk_achse")
-    check("Merkmal theorie3_gelenk_achse: Stand 75, Fehlerkorrektur, 16.11.2026, VERFAHRENSSTAND 75",
+    # bis Runde k10e (16.11.2026) VERFAHRENSSTAND == 75; mit Stand 76
+    # (th2_mindestteilung) gilt: mindestens 75 und der hoechste der Tabelle
+    check("Merkmal theorie3_gelenk_achse: Stand 75, Fehlerkorrektur, 16.11.2026, VERFAHRENSSTAND >= 75",
           mk is not None and mk.wechsel[-1].stand == 75 and mk.wechsel[-1].art == rv.FEHLERKORREKTUR
-          and mk.wechsel[-1].datum == "16.11.2026" and rv.VERFAHRENSSTAND == 75
+          and mk.wechsel[-1].datum == "16.11.2026" and rv.VERFAHRENSSTAND >= 75
           and rv.VERFAHRENSSTAND == max(w.stand for x in rv.MERKMALE for w in x.wechsel),
           f"{mk and mk.wechsel} {rv.VERFAHRENSSTAND}")
     if mk is None:

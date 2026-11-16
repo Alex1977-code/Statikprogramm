@@ -915,7 +915,9 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
         # mit Ersatzimperfektionen gedrueckte Staebe mindestens in
         # TEILUNG_VORKRUEMMUNG Teilen, auch bei Stabteilung 1 (Runde k10d,
         # Nachbesserung 2, Stand 74): in einem Element war die Vorkruemmung
-        # bei Versatz in Stabrichtung und bei Federgelenken falsch
+        # bei Versatz in Stabrichtung und bei Federgelenken falsch. Seit
+        # Stand 76 (Runde k10e, Nr. 29) jeder Stab mit wirksamer Normalkraft
+        # mindestens so fein, auch ohne Ersatzimperfektionen (th2_mindest)
         fein = fein_system(model, system, factors, vorkruemmung=bool(imperfektionen),
                            hinweise=ll_hinweise)
         if fein is not None:

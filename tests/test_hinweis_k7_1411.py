@@ -50,18 +50,25 @@ QX = 1e3          # Querlast [N/m]
 QA = 6e6          # Last in Stabrichtung auf dem unteren Meter [N/m]
 
 
-def _saeule(n, teilung, theorie="II", qa=QA, stab=True, eigengewicht=False):
+def _saeule(n, teilung, theorie="II", qa=QA, stab=True, eigengewicht=False, woelb=False):
     """Gelenkig gelagerte Saeule (wie D/ag_k6_theorie/konv_teil_unten.py) in n
     Elementen: Querlast ueberall, Last in Stabrichtung auf dem unteren Meter
-    (oder nur Eigengewicht)."""
+    (oder nur Eigengewicht).
+
+    ``woelb``: Balken mit Woelbkrafttorsion - die interne Stabteilung teilt
+    sie nicht. Seit Stand 76 (Runde k10e, Nr. 29) teilen Theorie II.
+    Ordnung, alpha_cr und Knicken jeden anderen Stab mit wirksamer
+    Normalkraft auch bei Stabteilung 1 mindestens in 10 Teile; nur ein nicht
+    teilbarer Stab rechnet dort noch in wenigen Elementen und bekommt den
+    Hinweis."""
     from statik3d.model import Model, Material, Section
     m = Model("T")
     m.add_material(Material("ST", E=210e9, nu=0.3, rho=7850.0 if eigengewicht else 0.0, fy=355e6))
     m.add_section(Section("Q", A=0.1 if eigengewicht else 0.01, Iy=1e-4, Iz=1e-4, It=1e-5,
-                          zmax=0.1, ymax=0.05))
+                          zmax=0.1, ymax=0.05, Iw=1e-7 if woelb else 0.0))
     m.design.imperfektionen = False
     ids = [m.add_node(0, 0, H * j / n) for j in range(n + 1)]
-    els = [m.add_element("beam", [ids[j], ids[j + 1]], "ST", "Q") for j in range(n)]
+    els = [m.add_element("beam", [ids[j], ids[j + 1]], "ST", "Q", woelb=woelb) for j in range(n)]
     if stab:
         m.add_member("S1", els)
     m.fix(ids[0], [0, 1, 2, 5])
@@ -124,7 +131,8 @@ def test_1_grundlage():
     M_ref = _referenz_fd()
     werte = {}
     for n in (1, 3, 4):
-        m, _i, _e = _saeule(n, 1)
+        # nicht teilbar (Woelbkrafttorsion): gerechnet in n Elementen
+        m, _i, _e = _saeule(n, 1, woelb=True)
         an, _z = _rechnen(m)
         werte[n] = _My_max(m, an)
     m, _i, _e = _saeule(1, 10)
@@ -133,16 +141,25 @@ def test_1_grundlage():
     a = {n: (werte[n] - M_ref) / M_ref for n in werte}
     check("(1) DGL-Referenz Teillast unten 3,576 kNm (Weg 2, finite Differenzen)",
           abs(M_ref / 1e3 - 3.576) < 0.003, f"{M_ref / 1e3:.4f} kNm")
-    check("(1) Stabteilung 1, ein Element: Moment 5 bis 6 % unter der DGL (unsichere Seite)",
+    check("(1) Stabteilung 1, ein Element (nicht teilbar): Moment 5 bis 6 % unter der DGL (unsichere Seite)",
           -0.06 <= a[1] <= -0.05, f"{werte[1] / 1e3:.4f} kNm, {a[1] * 100:+.2f} %")
-    check("(1) drei Elemente: noch über 2 % zu klein, vier Elemente: unter 2 %",
+    check("(1) drei Elemente: noch über 2 % zu klein, vier Elemente: unter 2 % (nicht teilbar)",
           a[3] < -0.02 and abs(a[4]) < 0.02, f"3: {a[3] * 100:+.2f} %, 4: {a[4] * 100:+.2f} %")
     check("(1) Vorgabe 10, ein Element des Modells: intern geteilt, unter 0,5 %",
           abs((vorgabe - M_ref) / M_ref) < 0.005, f"{vorgabe / 1e3:.4f} kNm")
+    # Stand 76 (Runde k10e, Nr. 29): ein teilbarer Stab rechnet auch mit
+    # Stabteilung 1 in mindestens 10 Teilen - bis dahin -5,6 % wie oben
+    m, _i, _e = _saeule(1, 1)
+    an, _z = _rechnen(m)
+    st1 = _My_max(m, an)
+    check("(1) Stabteilung 1, ein teilbares Element: seit Stand 76 intern in 10 Teilen, unter 0,5 %",
+          abs((st1 - M_ref) / M_ref) < 0.005, f"{st1 / 1e3:.4f} kNm")
 
 
 def test_1_theorie2():
-    m, _i, _e = _saeule(1, 1)
+    # nicht teilbar (Woelbkrafttorsion): seit Stand 76 der Weg zu einem Stab,
+    # der mit Stabteilung 1 in einem Element rechnet
+    m, _i, _e = _saeule(1, 1, woelb=True)
     an, z = _rechnen(m)
     h = _hinweise(z)
     soll = ("Stab S1 (Element 0) trägt Last in Stabrichtung und ist in 1 Element geteilt – mindestens "
@@ -157,12 +174,14 @@ def test_1_theorie2():
           any(soll in x for x in info.hinweise), str(info.hinweise)[:160])
     check("(1) Th. II: Meldung ohne wissenschaftliche Schreibweise",
           not any("e+" in x or "e-0" in x for x in h), "")
-    m, _i, _e = _saeule(3, 1)
+    m, _i, _e = _saeule(3, 1, woelb=True)
     _an, z = _rechnen(m)
     check("(1) Th. II, Stabteilung 1, drei Elemente: Hinweis nennt 3 Elemente",
           any("ist in 3 Elemente geteilt" in x for x in _hinweise(z)), " | ".join(_hinweise(z))[:200])
     for n, teil, was in ((4, 1, "vier Elemente"), (1, 10, "Vorgabe 10 (intern geteilt)"),
-                         (1, 4, "Stabteilung 4 (intern geteilt)")):
+                         (1, 4, "Stabteilung 4 (intern geteilt)"),
+                         (1, 1, "Stabteilung 1, teilbar (seit Stand 76 intern in 10)"),
+                         (3, 1, "Stabteilung 1, drei teilbare Elemente (seit Stand 76 intern geteilt)")):
         m, _i, _e = _saeule(n, teil)
         an, z = _rechnen(m)
         check(f"(1) Th. II, {was}: kein Hinweis (kein Fehlalarm)",
@@ -173,7 +192,7 @@ def test_1_theorie2():
     check("(1) Th. II, nur Querlast (keine Last in Stabrichtung): kein Hinweis", not _hinweise(z),
           " | ".join(_hinweise(z))[:200])
     # Element ohne Stab
-    m, _i, _e = _saeule(1, 1, stab=False)
+    m, _i, _e = _saeule(1, 1, stab=False, woelb=True)
     _an, z = _rechnen(m)
     check("(1) Th. II, Element ohne Stab: Hinweis nennt das Element ab 0",
           any("Element 0 (ohne Stab) trägt Last in Stabrichtung" in x for x in _hinweise(z)),
@@ -181,7 +200,7 @@ def test_1_theorie2():
 
 
 def test_1_eigengewicht():
-    m, _i, _e = _saeule(1, 1, eigengewicht=True)
+    m, _i, _e = _saeule(1, 1, eigengewicht=True, woelb=True)
     _an, z = _rechnen(m)
     check("(1) Eigengewicht am lotrechten Stab, ein Element: Hinweis",
           any("Stab S1 (Element 0)" in x for x in _hinweise(z)), " | ".join(_hinweise(z))[:200])
@@ -222,7 +241,7 @@ def test_1_theorie3():
 
 def test_1_alpha_cr():
     # alpha_cr ueber 10: nur alpha_cr bestimmt, nicht nach Th. II gerechnet
-    m, _i, _e = _saeule(1, 1, theorie="I", qa=1e6)
+    m, _i, _e = _saeule(1, 1, theorie="I", qa=1e6, woelb=True)
     m.design.theorie2 = "auto"
     m.add_combination("K1", {m.active_case: 1.0})
     an, z = _rechnen(m)
@@ -246,20 +265,26 @@ def test_1_knicken():
     # Seit Runde k7 (Agent „knick“) teilt auch das Knicken intern: ein Element
     # mit der Vorgabe 10 rechnet in 10 Teilen - kein Hinweis; mit Stabteilung 1
     # bleibt es ein Element - Hinweis
-    for n, teilung, soll in ((1, 1, True), (1, 10, False), (4, 10, False)):
-        m, _i, _e = _saeule(n, teilung, theorie="I")
+    # Seit Stand 76 (Runde k10e, Nr. 29) teilt das Knicken einen teilbaren
+    # Stab auch mit Stabteilung 1 mindestens in 10 Teile - kein Hinweis; ein
+    # nicht teilbarer (Woelbkrafttorsion) bleibt ein Element - Hinweis
+    for n, teilung, soll, woelb in ((1, 1, True, True), (1, 10, False, False), (4, 10, False, False),
+                                    (1, 1, False, False)):
+        m, _i, _e = _saeule(n, teilung, theorie="I", woelb=woelb)
         zeilen = []
         with contextlib.redirect_stdout(io.StringIO()):
             r = solver.solve_buckling(m, 2, lambda t, *a: zeilen.append(str(t)), case=m.active_case)
         h = _hinweise(zeilen)
         if soll:
-            check("(1) Knicken, ein Element, Stabteilung 1 (keine interne Teilung): Hinweis im Protokoll, "
+            check("(1) Knicken, ein Element, Stabteilung 1 (nicht teilbar): Hinweis im Protokoll, "
                   "in res.info und in der Zusammenfassung",
                   any("Stab S1 (Element 0)" in x and "in 1 Element geteilt" in x for x in h)
                   and r.info.get("laengslast_teilung") and "trägt Last in Stabrichtung" in r.summary(),
                   " | ".join(h)[:200])
         else:
-            check(f"(1) Knicken, {'vier Elemente' if n == 4 else 'ein Element intern in 10 geteilt'}: kein Hinweis",
+            was = ("vier Elemente" if n == 4 else "ein Element intern in 10 geteilt" if teilung == 10
+                   else "ein Element, Stabteilung 1, teilbar (seit Stand 76 intern in 10)")
+            check(f"(1) Knicken, {was}: kein Hinweis",
                   not h and not r.info.get("laengslast_teilung"), " | ".join(h)[:200])
 
 
