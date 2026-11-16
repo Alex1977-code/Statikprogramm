@@ -288,10 +288,14 @@ def test_theorie3():
               and abs(-u1[b, 2] - HAND) <= 1e-6 * HAND and abs(-u1[q, 2] - HAND) <= 1e-6 * HAND,
               f"„{t[:60]}“ Th III {w3[0] * 1e3:.6f}/{w3[1] * 1e3:.6f} mm, Th I {-u1[b, 2] * 1e3:.6f}/"
               f"{-u1[q, 2] * 1e3:.6f} mm")
-    # ueber den Einstieg: kein Ergebnis nach Theorie III. Ordnung mit weicher Feder
+    # ueber den Einstieg: kein Ergebnis nach Theorie III. Ordnung mit weicher
+    # Feder (bis Stand 63 w(Q) 100,54 mm). Von Stand 71 bis 76 abgewiesen,
+    # seit Stand 77 (Runde k10e, Fehler Nr. 27) gerechnet: w(Q) = w(b) = Hand
+    # = Theorie I. Ordnung
     for maske in ("keine", "eins", "aus"):
         m, b, q = fall_q(maske)
         m.load_node(q, Fz=-F, case="LF1")
+        u1 = np.asarray(_still(solver.solve_all, m, workers=1, design=False).cases["LF1"].u).reshape(-1, 6)
         m.load_cases["LF1"].theorie = "III"
         an = _still(solver.solve_all, m, workers=1, design=False)
         r = an.cases["LF1"]
@@ -299,9 +303,13 @@ def test_theorie3():
         if an.theorie3 is not None and "LF1" in an.theorie3.kombinationen:
             f = an.theorie3.kombinationen["LF1"].fehler or ""
         u = np.asarray(r.u).reshape(-1, 6)
-        check(f"Th III über solve_all, Maske {maske}: abgewiesen (Klartext), w(Q) nicht 100,54 mm",
-              TEXT_KP in f and abs(-u[q, 2] * 1e3 - 100.5357) > 1.0,
-              f"theorie {r.info.get('theorie')}, w(Q) {-u[q, 2] * 1e3:.4f} mm, „{f[:60]}“")
+        check(f"Th III über solve_all, Maske {maske}: gerechnet (seit Stand 77), w(Q) = w(b) = Hand = Theorie I. "
+              "Ordnung, nicht 100,54 mm",
+              not f and str(r.info.get("theorie", "")).startswith("III")
+              and abs(-u[q, 2] - HAND) <= 1e-6 * HAND and abs(u[q, 2] - u[b, 2]) <= 1e-12
+              and abs(u[q, 2] - u1[q, 2]) <= 1e-6 * HAND,
+              f"theorie {r.info.get('theorie')}, w(Q) {-u[q, 2] * 1e3:.6f} mm, Th I {-u1[q, 2] * 1e3:.6f} mm, "
+              f"„{f[:60]}“")
     # federnde Kopplung: gerechnet, w(Q) = Hand + F/k wie die Gegenrechnung
     k = 1e6
     sol = {}

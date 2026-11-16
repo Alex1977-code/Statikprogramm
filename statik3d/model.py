@@ -11375,8 +11375,9 @@ class Model:
             if text:
                 msgs.append(f"FEHLER: {text} (nach Theorie III. Ordnung gestellt: "
                             + ", ".join(th3[:6]) + (" …" if len(th3) > 6 else "") + ")")
-        # ... und keine Starrkoerper und starren Knotenkopplungen (Runde k8,
-        # 15.11.2026, vom Anwender freigegeben): je Situation nur wirksame
+        # ... und Starrkoerper und starre Knotenkopplungen: von Runde k8 bis
+        # Stand 76 abgewiesen, seit Runde k10e (16.11.2026) gerechnet; gemeldet
+        # wird nur noch eine Zwangsbedingung, die keine Starrkoerperbedingung ist
         if th3 and (getattr(self, "starrkoerper", None) or getattr(self, "kopplungen", None)):
             from .theorie3 import kopplung_sperre_modell
             for text, namen in kopplung_sperre_modell(self).items():

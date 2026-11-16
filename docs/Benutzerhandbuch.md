@@ -11638,8 +11638,9 @@ starren Kurzstäben. Seit 15.11.2026 teilt die interne Stabteilung auch Stäbe
 mit Versatz (Stand 62).
 Verfahrensstand 34; geprüft in `tests/test_theorie3_versatz.py`.
 
-**Starrkörper und starre Kopplungen nach Theorie III. Ordnung** (seit
-15.11.2026, Stand 64). Theorie III. Ordnung rechnet keine Starrkörper (RBE2
+**Starrkörper und starre Kopplungen nach Theorie III. Ordnung** (von
+15.11.2026, Stand 64, bis Stand 76; seit Stand 77 gerechnet, siehe den
+folgenden Absatz). Theorie III. Ordnung rechnete keine Starrkörper (RBE2
 und RBE3) und keine starren Knotenkopplungen. Bis dahin ließ sie Starrkörper
 still weg (Kragstütze mit RBE2-Arm 0 mm statt 8,23 mm) und rechnete starre
 Kopplungen nur als Feder von 10 000 N/m (zwei gekoppelte Kragarme 0,533 statt
@@ -11655,6 +11656,26 @@ Flächen, Volumen oder Federelementen weist Theorie III. Ordnung wie bisher mit
 „nur für Stabtragwerke“ ab. Gespeicherte Ergebnisse nach Theorie III. Ordnung
 mit Starrkörpern tragen den Status „Ergebnis möglicherweise betroffen – neu
 rechnen“. Geprüft in `tests/test_th3_starrkoerper_k8.py`.
+
+**Theorie III. Ordnung rechnet Starrkörper und starre Kopplungen** (seit
+16.11.2026, Stand 77). RBE2, RBE3, die verteilende Kopplung eines Stabendes,
+die Kopplung „Stabende“, die starre Scheibe und starre Knotenkopplungen
+rechnet Theorie III. Ordnung jetzt mit, statt den Lastfall abzuweisen. Die
+Kopplung wirkt wie ein starrer Arm, der sich mit dem Master mitdreht – auch
+bei großen Drehungen, so wie der Versatz der Stabenden. Ein Kragarm, den ein
+Endmoment über einen RBE2-Arm zum Halbkreis biegt, liegt auf 0,001 mm genau
+auf dem Sehnenpolygon der Handrechnung, ebenso ein Kräftepaar an einem
+starren Arm, dessen Moment sich mit der Drehung um 60° auf die Hälfte
+verringert. Bei kleinen Lasten stimmen Theorie I., II. und III. Ordnung
+überein. Die Kopplung ist am Ende der Rechnung auf Rundungsniveau erfüllt
+(keine Nachgiebigkeit wie bei einer Straffeder). Bewegungen von Knoten ohne
+Element, die ihre Kopplung nicht bestimmt (etwa die Slaves eines RBE3 an
+Knoten ohne Element), hält das Programm fest wie die Hilfsfesselung nach
+Theorie I. Ordnung und sagt es in den Hinweisen. Gespeicherte Ergebnisse,
+in denen ein RBE2 an einem Knoten ohne Element hing, den nur eine starre
+Kopplung am Stab hielt, tragen den Status „Ergebnis möglicherweise betroffen
+– neu rechnen“ (der Knoten blieb dort bei 0 stehen). Geprüft in
+`tests/test_th3_starre_kopplung_k10e.py`.
 
 **Verschiedener Versatz an Anfang und Ende in allen Rechenarten** (seit
 12.11.2026). Ein Stab, dessen Versatz am Anfang und am Ende verschieden ist,

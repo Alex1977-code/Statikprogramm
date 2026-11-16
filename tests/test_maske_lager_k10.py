@@ -72,6 +72,10 @@ F = 1e3
 HAND = F * L ** 3 / (3 * E * I)                     # 0,5357 mm
 TEXT_SK = "Theorie III. Ordnung rechnet keine Starrkörper"
 TEXT_KP = "Theorie III. Ordnung rechnet keine starren Knotenkopplungen"
+#: seit Runde k10e (16.11.2026, Stand 77): Theorie III. Ordnung rechnet sie
+#: mit; die Wirkung (bis Stand 76 die Abweisung) traegt diese Texte
+WIRKT_SK = "Starrkörper (RBE2/RBE3"
+WIRKT_KP = "starre Knotenkopplungen"
 MASKEN = ("situation", "aus")
 
 
@@ -211,12 +215,16 @@ def test_n1_schutz():
 def test_n1_theorie3():
     """Dieselbe Regel in theorie3._wirksame_knoten_th3: die starre Kopplung
     Y-c am Lagerknoten des abgeschalteten Arms wirkt (wie in der
-    Gegenrechnung) und wird darum abgewiesen; federnd rechnet Theorie III.
-    Ordnung die Last an Y mit (Summe Rz wie Gegenrechnung)."""
-    from statik3d.theorie3 import starre_kopplung_sperre, _wirksame_knoten_th3, solve_theorie3
+    Gegenrechnung) - bis Stand 76 abgewiesen, seit Stand 77 (Runde k10e)
+    gerechnet: Y haengt starr am Lager c, die 5 kN gehen dort ins Lager;
+    federnd rechnet Theorie III. Ordnung die Last an Y ebenso mit (Summe Rz
+    wie Gegenrechnung)."""
+    from statik3d.theorie3 import (starre_kopplung_wirkung as starre_kopplung_sperre, _wirksame_knoten_th3,
+                                   solve_theorie3, kopplung_sperre)
     m0, *_r = m8("geloescht", starr=True)
     gegen = starre_kopplung_sperre(m0, None)
-    check("Th III Gegenrechnung: starre Kopplung am Lager c abgewiesen", TEXT_KP in gegen, gegen[:90])
+    check("Th III Gegenrechnung: starre Kopplung am Lager c wirkt (Merkmale), nicht abgewiesen",
+          WIRKT_KP in gegen and not kopplung_sperre(m0, None), gegen[:90])
     for maske in MASKEN:
         m, b, c, d, y = m8(maske, starr=True)
         aktiv = _aktiv(m, maske)
@@ -224,8 +232,29 @@ def test_n1_theorie3():
         check(f"Th III Maske {maske}: Lager c und Y wirksam, d nicht", bool(kn[c] and kn[y] and not kn[d]),
               f"c {kn[c]}, Y {kn[y]}, d {kn[d]}")
         t = starre_kopplung_sperre(m, aktiv)
-        check(f"Th III Maske {maske}: starre Kopplung am Lager c abgewiesen wie in der Gegenrechnung",
-              TEXT_KP in t, t[:90])
+        check(f"Th III Maske {maske}: starre Kopplung am Lager c wirkt wie in der Gegenrechnung",
+              WIRKT_KP in t, t[:90])
+    # starr: gerechnet (seit Stand 77), Summe Rz und w(Y) wie Gegenrechnung
+    sol_s = {}
+    for maske in ("geloescht",) + MASKEN:
+        m, b, c, d, y = m8(maske, starr=True)
+        aktiv = None if maske == "geloescht" else _aktiv(m, maske)
+        try:
+            r, info = _still(solve_theorie3, m, {"LF1": 1.0}, "LF1", imperfektionen=False, aktiv=aktiv)
+            uu = np.asarray(r.u).reshape(-1, 6)
+            sol_s[maske] = (float(np.asarray(r.reactions).reshape(-1, 6)[:, 2].sum()), float(uu[y, 2]),
+                            float(-uu[b, 2]), info.fehler or "")
+        except Exception as ex:          # noqa: BLE001
+            sol_s[maske] = (float("nan"), float("nan"), float("nan"), str(ex))
+    g = sol_s["geloescht"]
+    check("Th III starr, Gegenrechnung: gerechnet, Summe Rz = 6 kN (Hand), w(Y) = 0, w(b) = Hand",
+          not g[3] and abs(g[0] - 6 * F) <= 1e-6 * F and abs(g[1]) < 1e-12 and abs(g[2] - HAND) <= 1e-4 * HAND,
+          str(g))
+    for maske in MASKEN:
+        x = sol_s[maske]
+        check(f"Th III starr, Maske {maske}: gerechnet, Summe Rz, w(Y) und w(b) gleich Gegenrechnung",
+              not x[3] and abs(x[0] - g[0]) <= 1e-6 * F and abs(x[1] - g[1]) < 1e-12 and abs(x[2] - g[2]) <= 1e-12,
+              str(x))
     # federnd: gerechnet, Summe Rz wie Gegenrechnung
     sol = {}
     for maske in ("geloescht",) + MASKEN:
@@ -295,16 +324,34 @@ def test_n2_schutz():
 
 def test_n2_theorie3():
     """Dieselbe Regel in theorie3: die verteilende Kopplung mit Slave ohne
-    Element wirkt (Gegenrechnung) - Theorie III. Ordnung weist sie ab, statt
-    die Last an Q still zu verlieren."""
-    from statik3d.theorie3 import starrkoerper_sperre
+    Element wirkt (Gegenrechnung) - Theorie III. Ordnung wies sie bis Stand 76
+    ab, statt die Last an Q still zu verlieren; seit Stand 77 (Runde k10e)
+    rechnet sie sie mit."""
+    from statik3d.theorie3 import starrkoerper_wirkung as starrkoerper_sperre, solve_theorie3
     m0, *_r = v1("geloescht")
     t0 = starrkoerper_sperre(m0, None)
-    check("Th III V1 Gegenrechnung (ohne Maske): Starrkörper abgewiesen", TEXT_SK in t0, t0[:90])
+    check("Th III V1 Gegenrechnung (ohne Maske): Starrkörper wirkt", WIRKT_SK in t0, t0[:90])
     for maske in MASKEN:
         m, *_r = v1(maske)
         t = starrkoerper_sperre(m, _aktiv(m, maske))
-        check(f"Th III V1 Maske {maske}: abgewiesen wie in der Gegenrechnung", TEXT_SK in t, t[:90])
+        check(f"Th III V1 Maske {maske}: wirkt wie in der Gegenrechnung", WIRKT_SK in t, t[:90])
+    sol = {}
+    for maske in ("geloescht",) + MASKEN:
+        m, b, q, d = v1(maske)
+        aktiv = None if maske == "geloescht" else _aktiv(m, maske)
+        try:
+            r, info = _still(solve_theorie3, m, {"LF1": 1.0}, "LF1", imperfektionen=False, aktiv=aktiv)
+            sol[maske] = (float(-np.asarray(r.u).reshape(-1, 6)[b, 2]),
+                          float(np.asarray(r.reactions).reshape(-1, 6)[:, 2].sum()), info.fehler or "")
+        except Exception as ex:          # noqa: BLE001
+            sol[maske] = (float("nan"), float("nan"), str(ex))
+    g = sol["geloescht"]
+    check("Th III V1 Gegenrechnung: gerechnet, w(b) = F L³/(3 E I), Summe Rz = 1 kN",
+          not g[2] and abs(g[0] - HAND) <= 1e-4 * HAND and abs(g[1] - F) <= 1e-6 * F, str(g))
+    for maske in MASKEN:
+        x = sol[maske]
+        check(f"Th III V1 Maske {maske}: gerechnet, w(b) und Summe Rz gleich Gegenrechnung",
+              not x[2] and abs(x[0] - g[0]) <= 1e-12 and abs(x[1] - g[1]) <= 1e-6 * F, str(x))
 
 
 def test_n2_warnung():

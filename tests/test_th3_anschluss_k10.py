@@ -56,6 +56,15 @@ HAND = F * L ** 3 / (3 * E * I)                     # 0,5357 mm
 EINS = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
 TEXT_SK = "Theorie III. Ordnung rechnet keine Starrkörper"
 TEXT_KP = "Theorie III. Ordnung rechnet keine starren Knotenkopplungen"
+#: Runde k10e (16.11.2026, Stand 77, Fehler Nr. 27): Theorie III. Ordnung
+#: rechnet Starrkoerper und starre Kopplungen seither mit. Was hier und in
+#: den Dateien, die diese Helfer benutzen, als „abgewiesen“ geprueft wurde,
+#: ist jetzt zweierlei: die Rechnung trifft die Bezuege (Hand, Theorie I.
+#: Ordnung, Gegenrechnung), und die Regel der Wirkung (theorie3._th3_wirkung,
+#: _ankerknoten - die Pruefung, die bis Stand 76 abwies) sieht den Anschluss
+#: weiter, denn nach ihr richten sich die Merkmale der Staende 64 und 66.
+WIRKT_SK = "Starrkörper (RBE2/RBE3"
+WIRKT_KP = "starre Knotenkopplungen"
 
 
 def check(name, ok, detail=""):
@@ -127,6 +136,20 @@ def rechne(m, th="III", lf="LF1"):
 
 def th3_pruefung(m):
     return [z for z in m.check() if "Theorie III" in z]
+
+
+def wirkung_pruefung(m):
+    """Je Text der Wirkung (theorie3.kopplung_wirkung_modell, bis Stand 76 die
+    Abweisung der Modellpruefung) eine Zeile mit den Lastfaellen und
+    Kombinationen - wie die Zeilen „FEHLER: …“ bis Stand 76."""
+    from statik3d.theorie3 import kopplung_wirkung_modell
+    return [f"WIRKT: {t} (nach Theorie III. Ordnung gestellt: {', '.join(n)})"
+            for t, n in kopplung_wirkung_modell(m).items()]
+
+
+def ist_th3(an, lf="LF1"):
+    r = an.cases.get(lf) if an is not None else None
+    return r is not None and str(r.info.get("theorie", "")).startswith("III")
 
 
 # --------------------------------------------------------------------------
@@ -234,22 +257,25 @@ def test_stabende_rbe2():
     close("Kopplung „Stabende“ + RBE2, Theorie I. Ordnung: w(b) = Hand (Bezug)", -u1[b, 2], HAND, 1e-4)
     m.load_cases["LF1"].theorie = "III"
     pr = th3_pruefung(m)
-    check("… Modellprüfung nach Theorie III. Ordnung: FEHLER mit Starrkörper „Arm“ und Gruppe Stabende",
-          any(z.startswith("FEHLER") and TEXT_SK in z and "Arm" in z and "Stabende" in z for z in pr), pr)
+    wk = wirkung_pruefung(m)
+    check("… Wirkung (Merkmale 64/66): Starrkörper „Arm“ und Gruppe Stabende; Modellprüfung ohne FEHLER",
+          any(WIRKT_SK in z and "Arm" in z and WIRKT_KP in z and "Stabende" in z for z in wk)
+          and not any(z.startswith("FEHLER") for z in pr), f"{wk} {pr}")
     an, u, R, f, ex = rechne(m, "III")
-    check("… Theorie III. Ordnung abgewiesen (Starrkörper und starre Kopplung), keine Ausnahme",
-          not ex and TEXT_SK in f and TEXT_KP in f and "Stabende K9" in f, (ex or f)[:200])
+    check("… Theorie III. Ordnung gerechnet (seit Stand 77), keine Ausnahme", not ex and not f, (ex or f)[:200])
     if not ex:
-        r = an.cases["LF1"]
-        check("… kein Ergebnis als Theorie III. Ordnung", not str(r.info.get("theorie", "")).startswith("III"),
-              r.info.get("theorie"))
+        check("… Ergebnis als Theorie III. Ordnung", ist_th3(an), an.cases["LF1"].info.get("theorie"))
+        close("… w(b) = Hand (kleine Last)", -u[b, 2], HAND, 1e-4)
+        close("… w(P) = Theorie I. Ordnung", -u[p, 2], -u1[p, 2], 1e-4)
+        close("… Summe Rz = F", R[:, 2].sum(), F, 1e-6, "N", 1.0)
     # mit Situation (fremder Kragarm abgeschaltet)
     ms, bs, ps = _stabende_rbe2(True)
     ms.load_cases["LF1"].theorie = "III"
     pr = th3_pruefung(ms)
     an, u, R, f, ex = rechne(ms, "III")
-    check("… in einer Situation mit abgeschaltetem fremdem Stab: abgewiesen, auch in der Modellprüfung",
-          not ex and TEXT_SK in f and any(TEXT_SK in z for z in pr), (ex or f)[:160])
+    check("… in einer Situation mit abgeschaltetem fremdem Stab: gerechnet, w(b) = Hand, Modellprüfung ohne "
+          "FEHLER", not ex and not f and ist_th3(an) and abs(-u[bs, 2] - HAND) <= 1e-4 * HAND
+          and not any(z.startswith("FEHLER") for z in pr), (ex or f)[:160])
 
 
 def test_stabende_last_an_q():
@@ -263,8 +289,14 @@ def test_stabende_last_an_q():
     _an1, u1, _R1, _f1, _ex1 = rechne(m, "I")
     close("Last an Q, Theorie I. Ordnung: w(Q) = Hand (Bezug)", -u1[q, 2], HAND, 1e-4)
     an, u, R, f, ex = rechne(m, "III")
-    check("… Theorie III. Ordnung abgewiesen: starre Kopplung der Gruppe Stabende K9",
-          not ex and TEXT_KP in f and "Stabende K9" in f, (ex or f)[:200])
+    check("… Theorie III. Ordnung gerechnet (seit Stand 77; bis Stand 63 w(Q) 100,5357 mm)",
+          not ex and not f and ist_th3(an), (ex or f)[:200])
+    if not ex:
+        close("… w(Q) = Hand = Theorie I. Ordnung", -u[q, 2], -u1[q, 2], 1e-4)
+        close("… w(b) = w(Q) (starr)", -u[b, 2], -u[q, 2], 1e-9)
+    from statik3d.theorie3 import kopplung_wirkung
+    t = kopplung_wirkung(m, None, factors={"LF1": 1.0})
+    check("… Wirkung: starre Kopplung der Gruppe Stabende K9", WIRKT_KP in t and "Stabende K9" in t, t[:120])
 
 
 def _rbe3_an_stab(geloescht=False, gelagert=True):
@@ -301,10 +333,14 @@ def test_rbe3_gelagert_abgeschaltet():
           f"w {-u1[b, 2] * 1e3:.6f} mm, Gegenrechnung {-u2[b2, 2] * 1e3:.6f} mm")
     m.load_cases["LF1"].theorie = "III"
     pr = th3_pruefung(m)
+    wk = wirkung_pruefung(m)
     an, u, R, f, ex = rechne(m, "III")
-    check("… Theorie III. Ordnung abgewiesen (Starrkörper Stabende 1), auch in der Modellprüfung",
-          not ex and TEXT_SK in f and "Stabende 1" in f and any(TEXT_SK in z for z in pr),
-          (ex or f)[:160] + f" | {pr}")
+    check("… Theorie III. Ordnung gerechnet (seit Stand 77), w(b) = Theorie I. Ordnung = Gegenrechnung "
+          "(gehalten); Wirkung „Stabende 1“, Modellprüfung ohne FEHLER",
+          not ex and not f and ist_th3(an) and abs(u[b, 2] - u2[b2, 2]) <= 1e-9
+          and any(WIRKT_SK in z and "Stabende 1" in z for z in wk)
+          and not any(z.startswith("FEHLER") for z in pr),
+          (ex or f)[:160] + f" | {wk} {pr} w {None if u is None else -u[b, 2] * 1e3}")
     # dasselbe mit einer Schale statt der Staebe (Punkt 1 und 2 zusammen)
     from statik3d.stabeinleitung import STABENDE
     ms, a, bs = basis()
@@ -313,8 +349,10 @@ def test_rbe3_gelagert_abgeschaltet():
     ms.load_node(bs, Fz=-F)
     situation(ms, [1])
     an, u, R, f, ex = rechne(ms, "III")
-    check("… mit gelagerter, abgeschalteter Schale: abgewiesen statt KeyError oder 0,5357 mm",
-          not ex and TEXT_SK in f, (ex or f)[:160])
+    _a1, u1s, _R1, _f1, _e1 = rechne(ms, "I")
+    check("… mit gelagerter, abgeschalteter Schale: gerechnet, w(b) = Theorie I. Ordnung (gehalten), "
+          "statt KeyError oder 0,5357 mm", not ex and not f and ist_th3(an) and abs(u[bs, 2] - u1s[bs, 2]) <= 1e-9
+          and abs(u[bs, 2]) < 1e-3 * HAND, (ex or f)[:160])
 
 
 # --------------------------------------------------------------------------

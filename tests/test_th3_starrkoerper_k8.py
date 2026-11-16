@@ -31,6 +31,14 @@ Zwei Wege je Zahl: Handformel (Kragarm F L³/(3 E I), Federn in Reihe/parallel)
 und Theorie I. Ordnung im Programm; für die Ersatzlösungen des Arms Balken
 STARR und Versatz der Stabenden (zwei verschiedene Programmwege).
 
+Runde k10e (16.11.2026, Stand 77, Fehler Nr. 27): Theorie III. Ordnung
+rechnet Starrkörper und starre Kopplungen seither als Zwangsbedingung im
+mitgedrehten System des Masters (theorie3._Zwang). Wo diese Datei „mit
+Klartext abgewiesen“ prüfte, prüft sie jetzt das Ergebnis gegen dieselben
+zwei Wege (Hand bzw. Theorie I. Ordnung bei kleiner Last, Balken STARR und
+Versatz für den Arm); die Merkmale des Stands 64 betreffen weiter dieselben
+Modelle (theorie3.kopplung_wirkung_modell).
+
 Aufruf:  python -m tests.test_th3_starrkoerper_k8
 """
 import contextlib
@@ -221,11 +229,12 @@ def test_rbe2_arm():
     u3_r, text = _th3(m_r)
     w_r = None if u3_r is None else float(np.abs(u3_r[b_r, :3]).max())
     print(f"   Th III RBE2: {'abgewiesen' if u3_r is None else f'{w_r * 1e3:.3f} mm'} – {text}")
-    check("Th III mit RBE2 abgewiesen, nicht still 0 mm", u3_r is None and TEXT_SK in text,
-          "gerechnet" if u3_r is not None else "")
-    check("Meldung nennt RBE2/RBE3, den Namen und die Auswege",
-          "RBE2/RBE3" in text and "Arm" in text and "Balken mit Querschnitt STARR" in text
-          and "Versatz der Stabenden" in text and "Theorie II. Ordnung" in text, text[:160])
+    # seit Stand 77 gerechnet (bis Stand 63 still 0,000 mm, bis 76 abgewiesen)
+    check("Th III mit RBE2 gerechnet (seit Stand 77), nicht still 0 mm", u3_r is not None and not text
+          and w_r is not None and w_r > 1e-3, text[:120])
+    if w_r is not None and w_s is not None and w_v is not None:
+        nahe("… Kopfknoten wie Balken STARR (zweiter Programmweg)", w_r, w_s, 1e-3)
+        nahe("… Kopfknoten wie Versatz (dritter Programmweg)", w_r, w_v, 5e-3)
     check("Meldung ohne wissenschaftliche Schreibweise", "e+" not in text and "e-0" not in text)
 
 
@@ -236,8 +245,10 @@ def test_rbe3_lastknoten():
     nahe("RBE3-Lastknoten Th I = F L³/(3 E I) (Hand)", w1, hand, 1e-3)
     u3, text = _th3(m, stabteilung=False)
     print(f"   Th III: {'abgewiesen' if u3 is None else f'{-u3[b, 2] * 1e3:.4f} mm'} – {text}")
-    check("Th III mit RBE3 abgewiesen, nicht still 0 mm", u3 is None and TEXT_SK in text and "Last" in text,
-          "gerechnet" if u3 is not None else "")
+    check("Th III mit RBE3 gerechnet (seit Stand 77), nicht still 0 mm", u3 is not None and not text, text[:120])
+    if u3 is not None:
+        nahe("… w(b) = F L³/(3 E I) (Hand, kleine Last)", float(-u3[b, 2]), hand, 1e-6)
+        nahe("… w(b) = Theorie I. Ordnung", float(-u3[b, 2]), w1, 1e-6)
 
 
 def test_situation():
@@ -252,20 +263,22 @@ def test_situation():
     f2 = getattr(i2, "fehler", "") or ""
     print(f"   LF1 (Grundstellung): {f1[:100]}")
     print(f"   LF2 (Situation ohne den Nebenarm): {f2[:100]}")
-    check("Grundstellung: RBE2 am Nebenarm wirkt mit, Th III abgewiesen", TEXT_SK in f1, f1[:100])
+    check("Grundstellung: RBE2 am Nebenarm wirkt mit, Th III gerechnet (seit Stand 77)",
+          i1 is not None and not f1, f1[:100])
     r1 = an.cases.get("LF1")
-    check("… lineares Ergebnis LF1 als Theorie I. Ordnung markiert, Grund dabei",
-          r1 is not None and r1.info.get("theorie") == "I" and TEXT_SK in str(r1.info.get("theorie_fehler", "")),
+    check("… Ergebnis LF1 nach Theorie III. Ordnung",
+          r1 is not None and str(r1.info.get("theorie", "")).startswith("III"),
           str(None if r1 is None else r1.info.get("theorie")))
+    w1_ = None if r1 is None else float(-np.asarray(r1.u).reshape(-1, 6)[b, 2])
+    nahe("… Kragarmende LF1 nach Th III = F L³/(3 E I) (kleine Last, Hand)", w1_, hand, 1e-3)
     check("Situation mit abgeschaltetem Nebenarm: Th III gerechnet", i2 is not None and not f2, f2[:100])
     r2 = an.cases.get("LF2")
     w2 = None if r2 is None else float(-np.asarray(r2.u).reshape(-1, 6)[b, 2])
     nahe("… Kragarmende nach Th III = F L³/(3 E I) (kleine Last, Hand)", w2, hand, 1e-3)
     msgs = m.check()
-    treffer = [z for z in msgs if TEXT_SK in z]
-    check("Modellprüfung: FEHLER genau einmal, nur für LF1",
-          len(treffer) == 1 and treffer[0].startswith("FEHLER") and "LF1" in treffer[0]
-          and "LF2" not in treffer[0], "; ".join(treffer)[:200])
+    treffer = [z for z in msgs if "Theorie III" in z and z.startswith("FEHLER")]
+    check("Modellprüfung: kein FEHLER zu Theorie III. Ordnung (seit Stand 77)", not treffer,
+          "; ".join(treffer)[:200])
     m.load_cases["LF1"].theorie = "II"
     check("Modellprüfung nach Theorie II. Ordnung ohne diese Meldung",
           not any(TEXT_SK in z for z in m.check()))
@@ -279,15 +292,21 @@ def test_kombination():
     an = _still(solver.solve_all, m, workers=1, design=False)
     info = an.theorie3.kombinationen.get("K1") if an.theorie3 is not None else None
     f = getattr(info, "fehler", "") or ""
-    check("Kombination nach Th III mit RBE2: Fehler mit Klartext im Theoriekapitel", TEXT_SK in f, f[:100])
+    check("Kombination nach Th III mit RBE2: gerechnet (seit Stand 77)", info is not None and not f, f[:100])
     rk = an.combinations.get("K1")
-    check("… Ergebnis der Kombination als Theorie I. Ordnung markiert",
-          rk is not None and rk.info.get("theorie") == "I" and rk.info.get("theorie_gewuenscht") == "III",
+    check("… Ergebnis der Kombination nach Theorie III. Ordnung",
+          rk is not None and str(rk.info.get("theorie", "")).startswith("III"),
           str(None if rk is None else rk.info.get("theorie")))
-    # wie bei der Woelbkrafttorsion: die Zusammenfassung zaehlt, was gerechnet ist
+    if rk is not None:
+        ms_, bs_ = _kragstuetze("starr")
+        us_, _fs = _th3(ms_)
+        wk = float(np.abs(np.asarray(rk.u).reshape(-1, 6)[b, :3]).max())
+        nahe("… Kopfknoten wie Balken STARR nach Th III (zweiter Weg)", wk,
+             None if us_ is None else float(np.abs(us_[bs_, :3]).max()), 1e-3)
+    # die Zusammenfassung zaehlt, was gerechnet ist
     z = [x for x in an.summary().splitlines() if x.startswith("Theorie III. Ordnung")]
-    check("… Zusammenfassung: Theorie III. Ordnung 0 von 1 gerechnet",
-          any("0 von 1 gerechnet" in x for x in z), "; ".join(z))
+    check("… Zusammenfassung: Theorie III. Ordnung 1 von 1 gerechnet",
+          any("1 von 1 gerechnet" in x for x in z), "; ".join(z))
 
 
 # --------------------------------------------------------------------------
@@ -301,10 +320,26 @@ def test_kopplung_starr():
     nahe("Starre Kopplung Th I = F/(2 · 3 E I/L³) (Hand)", w1, hand, 1e-3)
     u3, text = _th3(m, stabteilung=False)
     print(f"   Th III: {'abgewiesen' if u3 is None else f'{-u3[b, 2] * 1e3:.4f} mm'} – {text}")
-    check("Th III mit starrer Kopplung abgewiesen (vorher 0,5329 statt 0,2679 mm)",
-          u3 is None and TEXT_KP in text, "gerechnet" if u3 is not None else "")
-    check("Meldung nennt Zahl, Gruppe und Auswege",
-          "1 Kopplung" in text and "Fuge" in text and "Theorie II. Ordnung" in text, text[:160])
+    check("Th III mit starrer Kopplung gerechnet (bis Stand 63 0,5329 statt 0,2679 mm, bis 76 abgewiesen)",
+          u3 is not None and not text, text[:120])
+    if u3 is not None:
+        # Theorie III. Ordnung: die Verkuerzung der beiden Kragarme gibt eine
+        # kleine Zugkraft (etwa 20 N), w(b) liegt 0,0000004 mm unter der
+        # linearen Hand; zweiter Weg ist darum dasselbe Modell mit einem
+        # gemeinsamen Knoten und Gelenk (die Kopplung haelt nur die
+        # Verschiebungen) statt der Kopplung, nach Theorie III. Ordnung
+        nahe("… w(b) = F/(2 · 3 E I/L³) (Hand, kleine Last)", float(-u3[b, 2]), hand, 1e-5)
+        nahe("… w(b) = Theorie I. Ordnung", float(-u3[b, 2]), w1, 1e-5)
+        mg, bg = _zwei_kragarme(float("inf"))
+        mg.kopplungen.clear()
+        mg.elements[1].nodes = [bg, mg.elements[1].nodes[1]]
+        mg.elements[1].hinges = [3, 4, 5]
+        ug, tg = _th3(mg, stabteilung=False)
+        nahe("… w(b) = gemeinsamer Knoten mit Gelenk nach Th III (zweiter Weg, auf 0,0001 %)", float(-u3[b, 2]),
+             None if ug is None else float(-ug[bg, 2]), 1e-6)
+    from statik3d.theorie3 import kopplung_wirkung
+    t = kopplung_wirkung(m, None)
+    check("kopplung_wirkung (Merkmal Stand 64) nennt Zahl und Gruppe", "1 Kopplung" in t and "Fuge" in t, t[:160])
 
 
 def test_kopplung_feder():
@@ -478,19 +513,23 @@ def test_umgehung_rbe2_kette():
     nahe("Kette RBE2 über Knoten ohne Element: Th I w(b) = F L³/(3 E I) (Hand)", float(-u1[b, 2]), hand, 1e-3)
     u3, text = _th3(m, stabteilung=False)
     print(f"   Th III: {'abgewiesen' if u3 is None else f'w(b) {-u3[b, 2] * 1e3:.4f} mm'} – {text[:100]}")
-    check("Th III mit RBE2 zwischen Knoten ohne Element abgewiesen (vorher still w(b) 0 mm)",
-          u3 is None and TEXT_SK in text and "Kette" in text, "gerechnet" if u3 is not None else "")
+    check("Th III mit RBE2 zwischen Knoten ohne Element gerechnet (bis Stand 63 still w(b) 0 mm)",
+          u3 is not None and not text, text[:120])
+    if u3 is not None:
+        nahe("… w(b) = Hand", float(-u3[b, 2]), hand, 1e-3)
+        nahe("… w(P) = Theorie I. Ordnung", float(-u3[p, 2]), float(-u1[p, 2]), 1e-6)
     an, r, f = _solve_all_lf1(m)
-    check("… solve_all: Fehler mit Klartext, Ergebnis als Theorie I. Ordnung markiert",
-          TEXT_SK in f and r is not None and r.info.get("theorie") == "I", f[:100])
+    check("… solve_all: nach Theorie III. Ordnung gerechnet",
+          not f and r is not None and str(r.info.get("theorie", "")).startswith("III"), f[:100])
     w = None if r is None else float(-np.asarray(r.u).reshape(-1, 6)[b, 2])
-    nahe("… lineares Ergebnis w(b) = Hand", w, hand, 1e-3)
-    treffer = [z for z in m.check() if TEXT_SK in z]
-    check("… Modellprüfung: FEHLER mit LF1", len(treffer) == 1 and treffer[0].startswith("FEHLER")
-          and "LF1" in treffer[0], "; ".join(treffer)[:160])
-    ms, _b, _p = _kette(starr=False, mit_situation=True)
-    _an, _r, fs = _solve_all_lf1(ms)
-    check("… auch in einer Situation mit abgeschaltetem fremdem Element abgewiesen", TEXT_SK in fs, fs[:100])
+    nahe("… Ergebnis w(b) = Hand", w, hand, 1e-3)
+    treffer = [z for z in m.check() if "Theorie III" in z and z.startswith("FEHLER")]
+    check("… Modellprüfung: kein FEHLER", not treffer, "; ".join(treffer)[:160])
+    ms, bs, _p = _kette(starr=False, mit_situation=True)
+    _an, rs, fs = _solve_all_lf1(ms)
+    ws = None if rs is None else float(-np.asarray(rs.u).reshape(-1, 6)[bs, 2])
+    check("… auch in einer Situation mit abgeschaltetem fremdem Element gerechnet", not fs, fs[:100])
+    nahe("… dort w(b) = Hand", ws, hand, 1e-3)
     from statik3d import rechenverfahren as rv
     mk = rv.merkmal("theorie3_starrkoerper")
     check("… Merkmal theorie3_starrkoerper: betroffen", mk is not None and mk.betrifft(m))
@@ -506,16 +545,18 @@ def test_umgehung_starre_kopplung():
     nahe("… Th I w(P) = Hand (starr, Feder 1e12 N/m vernachlässigbar)", float(-u1[p, 2]), hand, 1e-3)
     u3, text = _th3(m, stabteilung=False)
     print(f"   Th III: {'abgewiesen' if u3 is None else f'w(P) {-u3[p, 2] * 1e3:.4f} mm'} – {text[:100]}")
-    check("Th III mit starrer Kopplung zwischen Knoten ohne Element abgewiesen (vorher w(P) 100,5357 mm)",
-          u3 is None and TEXT_KP in text and "Starr" in text, "gerechnet" if u3 is not None else "")
+    check("Th III mit starrer Kopplung zwischen Knoten ohne Element gerechnet (bis Stand 63 w(P) 100,5357 mm)",
+          u3 is not None and not text, text[:120])
+    if u3 is not None:
+        nahe("… w(P) = Hand", float(-u3[p, 2]), hand, 1e-3)
+        nahe("… w(P) = Theorie I. Ordnung", float(-u3[p, 2]), float(-u1[p, 2]), 1e-6)
     an, r, f = _solve_all_lf1(m)
-    check("… solve_all: Fehler mit Klartext, Ergebnis als Theorie I. Ordnung markiert",
-          TEXT_KP in f and r is not None and r.info.get("theorie") == "I", f[:100])
+    check("… solve_all: nach Theorie III. Ordnung gerechnet",
+          not f and r is not None and str(r.info.get("theorie", "")).startswith("III"), f[:100])
     wp = None if r is None else float(-np.asarray(r.u).reshape(-1, 6)[p, 2])
-    nahe("… lineares Ergebnis w(P) = Hand", wp, hand, 1e-3)
-    treffer = [z for z in m.check() if TEXT_KP in z]
-    check("… Modellprüfung: FEHLER mit LF1", len(treffer) == 1 and treffer[0].startswith("FEHLER")
-          and "LF1" in treffer[0], "; ".join(treffer)[:160])
+    nahe("… Ergebnis w(P) = Hand", wp, hand, 1e-3)
+    treffer = [z for z in m.check() if "Theorie III" in z and z.startswith("FEHLER")]
+    check("… Modellprüfung: kein FEHLER", not treffer, "; ".join(treffer)[:160])
     from statik3d import rechenverfahren as rv
     mk = rv.merkmal("theorie3_starrkoerper")
     check("… Merkmal theorie3_starrkoerper: betroffen", mk is not None and mk.betrifft(m))
@@ -578,12 +619,23 @@ def test_kette_am_lager():
     m.load_node(b, Fz=-F_K)
     m.load_node(p, Fz=-F_K)
     m.load_cases["LF1"].theorie = "III"
-    u3, text = _th3(m, stabteilung=False)
-    check("Th III mit RBE2 nur zwischen Lagerknoten und Lastknoten (ohne Element) abgewiesen",
-          u3 is None and TEXT_SK in text and "Lagerarm" in text, text[:100])
-    treffer = [z for z in m.check() if TEXT_SK in z]
-    check("… Modellprüfung: FEHLER mit LF1", len(treffer) == 1 and treffer[0].startswith("FEHLER"),
-          "; ".join(treffer)[:160])
+    from statik3d.theorie3 import solve_theorie3
+    try:
+        r3, i3 = _still(solve_theorie3, m, {"LF1": 1.0}, "LF1", imperfektionen=False, stabteilung=False)
+        text = i3.fehler or ""
+    except ValueError as ex:
+        r3, text = None, str(ex)
+    check("Th III mit RBE2 nur zwischen Lagerknoten und Lastknoten (ohne Element) gerechnet (seit Stand 77)",
+          r3 is not None and not text, text[:100])
+    if r3 is not None:
+        R3 = np.asarray(r3.reactions).reshape(-1, 6)
+        u3 = np.asarray(r3.u).reshape(-1, 6)
+        nahe("… Summe Rz = 2 000 N (bis Stand 63 still 1 000 N)", float(R3[:, 2].sum()), 2 * F_K, 1e-9)
+        nahe("… Rz am Lagerknoten Q = 1 000 N", float(R3[q, 2]), F_K, 1e-9)
+        check("… w(P) = 0 (am eingespannten Knoten)", abs(u3[p, 2]) < 1e-12, f"{u3[p, 2]:.3e} m")
+        nahe("… w(b) = Hand", float(-u3[b, 2]), _hand_kragarm(), 1e-3)
+    treffer = [z for z in m.check() if "Theorie III" in z and z.startswith("FEHLER")]
+    check("… Modellprüfung: kein FEHLER", not treffer, "; ".join(treffer)[:160])
     # Gegenprobe: dieselbe Kette ohne Th III bleibt ohne Meldung
     m.load_cases["LF1"].theorie = "I"
     check("… Gegenprobe Theorie I. Ordnung: keine Meldung", not [z for z in m.check() if TEXT_SK in z])

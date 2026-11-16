@@ -32,6 +32,12 @@ Stabendes (theorie3._ankerknoten, _th3_wirkung) zwei Luecken:
   -1e8 N / +1e8 N an Q einen echten Rest von 0,05 N (still 0,005 mm an der
   Straffeder 1e4 N/m). Jetzt ist die Schranke auf 0,001 N begrenzt.
 
+Runde k10e (16.11.2026, Stand 77, Fehler Nr. 27): Theorie III. Ordnung
+rechnet die starre Kopplung „Stabende“ und den RBE3 seither mit. Wo hier
+„abgewiesen“ stand, prueft die Datei jetzt die Rechnung gegen Theorie I.
+Ordnung und Hand und die Wirkung (theorie3.kopplung_wirkung, bis Stand 76
+die Abweisung) fuer die Merkmale.
+
 Aufruf:  python -m tests.test_th3_anker_lastfall_k10
 """
 import os
@@ -68,6 +74,17 @@ def _kopplung_q(m, b):
 
 def _fehler_zeilen(m):
     return [z for z in T.th3_pruefung(m) if z.startswith("FEHLER")]
+
+
+def _wirkung_zeilen(m):
+    return T.wirkung_pruefung(m)
+
+
+def _w(an, n, knoten, kombi=True):
+    r = (an.combinations if kombi else an.cases).get(n) if an is not None else None
+    if r is None:
+        r = (getattr(an, "alternativen", None) or {}).get(n)
+    return -np.asarray(r.u).reshape(-1, 6)[knoten, 2] if r is not None else float("nan")
 
 
 # --------------------------------------------------------------------------
@@ -110,11 +127,13 @@ def test_punktmasse_kopplung():
     m, b, q = pm_kopplung()
     m.load_cases["LF1"].theorie = "III"
     pr = _fehler_zeilen(m)
+    wk = _wirkung_zeilen(m)
     an, u, R, f, ex = T.rechne(m, "III")
-    check("… Theorie III. Ordnung abgewiesen (starre Kopplung Gruppe Stabende K9) statt still 100,5357 mm",
-          not ex and T.TEXT_KP in f and "Stabende K9" in f
-          and not str(an.cases["LF1"].info.get("theorie", "")).startswith("III"), (ex or f)[:160])
-    check("… Modellprüfung: FEHLER für LF1", any(T.TEXT_KP in z and "LF1" in z for z in pr), pr)
+    check("… Theorie III. Ordnung gerechnet (seit Stand 77; bis Stand 63 still 100,5357 mm): w(Q) = Hand, "
+          "Summe Rz = m g", not ex and not f and T.ist_th3(an) and abs(-u[q, 2] - HAND) <= 1e-4 * HAND
+          and abs(R[:, 2].sum() - F) <= 1e-6 * F, (ex or f)[:160] if (ex or f) else f"w(Q) {-u[q, 2] * 1e3:.6f} mm")
+    check("… Wirkung für LF1 (starre Kopplung Stabende K9), Modellprüfung ohne FEHLER",
+          any(T.WIRKT_KP in z and "Stabende K9" in z and "LF1" in z for z in wk) and not pr, f"{wk} {pr}")
     mk = _merkmal()
     m, b, q = pm_kopplung()
     m.load_cases["LF1"].theorie = "III"
@@ -128,13 +147,20 @@ def test_punktmasse_rbe3():
     ok = not ex and abs(-u[b, 2] - HAND) <= 1e-4 * HAND and abs(R[:, 2].sum() - F) <= 1e-6 * F
     check("Punktmasse an einem Slave des RBE3 „Stabende 1“, Theorie I. Ordnung: w(b) = Hand, Summe Rz = m g",
           ok, ex or f"w(b) {-u[b, 2] * 1e3:.6f} mm, Rz {R[:, 2].sum():.3f} N")
+    m1, b1 = pm_rbe3()
+    _a1, u1, _R1, _f1, _e1 = T.rechne(m1, "I")
     m, b = pm_rbe3()
     m.load_cases["LF1"].theorie = "III"
     pr = _fehler_zeilen(m)
+    wk = _wirkung_zeilen(m)
     an, u, R, f, ex = T.rechne(m, "III")
-    check("… Theorie III. Ordnung abgewiesen (Starrkörper Stabende 1) statt still 0 mm und 0 N",
-          not ex and T.TEXT_SK in f and "Stabende 1" in f, (ex or f)[:160])
-    check("… Modellprüfung: FEHLER", any(T.TEXT_SK in z and "Stabende 1" in z for z in pr), pr)
+    check("… Theorie III. Ordnung gerechnet (seit Stand 77; bis Stand 63 still 0 mm und 0 N): w(b) = Hand "
+          "= Theorie I. Ordnung, Summe Rz = m g",
+          not ex and not f and T.ist_th3(an) and abs(-u[b, 2] - HAND) <= 1e-4 * HAND
+          and abs(u[b, 2] - u1[b1, 2]) <= 1e-4 * HAND and abs(R[:, 2].sum() - F) <= 1e-6 * F,
+          (ex or f)[:160] if (ex or f) else f"w(b) {-u[b, 2] * 1e3:.6f} mm, Th I {-u1[b1, 2] * 1e3:.6f} mm")
+    check("… Wirkung (Starrkörper Stabende 1), Modellprüfung ohne FEHLER",
+          any(T.WIRKT_SK in z and "Stabende 1" in z for z in wk) and not pr, f"{wk} {pr}")
 
 
 def test_punktmasse_ohne_eigengewicht():
@@ -197,15 +223,16 @@ def test_last_anderer_lastfall():
     m, b, q = last_lf2()
     m.load_cases["LF1"].theorie = "III"
     m.load_cases["LF2"].theorie = "III"
-    pr = _fehler_zeilen(m)
+    pr = _wirkung_zeilen(m)
     from statik3d import solver
     an = T._still(solver.solve_all, m, workers=1, design=False)
     th3 = an.theorie3.kombinationen
-    check("LF1 und LF2 nach Theorie III. Ordnung: LF2 abgewiesen, LF1 gerechnet",
-          T.TEXT_KP in (th3["LF2"].fehler or "") and not th3["LF1"].fehler,
-          f"LF1 {th3['LF1'].fehler!r} LF2 {(th3['LF2'].fehler or '')[:80]!r}")
-    check("… Modellprüfung nennt LF2, nicht LF1",
-          len(pr) == 1 and "LF2" in pr[0] and "LF1" not in pr[0], pr)
+    w_lf2 = _w(an, "LF2", q, kombi=False)
+    check("LF1 und LF2 nach Theorie III. Ordnung: beide gerechnet (seit Stand 77), LF2 w(Q) = Hand",
+          not th3["LF2"].fehler and not th3["LF1"].fehler and abs(w_lf2 - HAND) <= 1e-4 * HAND,
+          f"LF1 {th3['LF1'].fehler!r} LF2 {(th3['LF2'].fehler or '')[:80]!r} w(Q) {w_lf2 * 1e3:.6f} mm")
+    check("… Wirkung nennt LF2, nicht LF1; Modellprüfung ohne FEHLER",
+          len(pr) == 1 and "LF2" in pr[0] and "LF1" not in pr[0] and not _fehler_zeilen(m), pr)
     check("… Merkmal betrifft (LF2)", mk is not None and mk.betrifft(m), mk and mk.betrifft(m))
     im = mk.im_ergebnis(m, an) if mk is not None else ""
     check("… im Ergebnis: LF1 (gerechnet, richtig) nicht genannt", "LF1" not in (im or ""),
@@ -218,7 +245,7 @@ def test_kombinationen():
     for n, fak in (("LK1", {"LF1": 1.5}), ("LK2", {"LF1": 1.0, "LF2": 1.0}), ("LK3", {"LF1": 1.0, "LF2": 0.0})):
         c = m.add_combination(n, fak, "ULS")
         c.theorie = "III"
-    pr = _fehler_zeilen(m)
+    pr = _wirkung_zeilen(m)
     an = T._still(solver.solve_all, m, workers=1, design=False)
     th3 = an.theorie3.kombinationen
 
@@ -231,10 +258,11 @@ def test_kombinationen():
     check("LK3 = LF1 + 0 · LF2: gerechnet, w(b) = F L³/(3 E I)",
           not th3["LK3"].fehler and abs(w("LK3") - HAND) <= 1e-4 * HAND,
           f"{th3['LK3'].fehler!r} w {w('LK3') * 1e3:.6f} mm")
-    check("LK2 = LF1 + LF2 (Last an Q): abgewiesen", T.TEXT_KP in (th3["LK2"].fehler or ""),
-          (th3["LK2"].fehler or "")[:120])
-    check("… Modellprüfung nennt nur LK2", len(pr) == 1 and "LK2" in pr[0] and "LK1" not in pr[0]
-          and "LK3" not in pr[0], pr)
+    check("LK2 = LF1 + LF2 (Last an Q): gerechnet (seit Stand 77), w(b) = 2 F L³/(3 E I)",
+          not th3["LK2"].fehler and abs(w("LK2") - 2 * HAND) <= 1e-4 * HAND,
+          f"{(th3['LK2'].fehler or '')[:120]!r} w {w('LK2') * 1e3:.6f} mm, Hand {2 * HAND * 1e3:.6f} mm")
+    check("… Wirkung nennt nur LK2; Modellprüfung ohne FEHLER", len(pr) == 1 and "LK2" in pr[0]
+          and "LK1" not in pr[0] and "LK3" not in pr[0] and not _fehler_zeilen(m), pr)
 
 
 def test_ergebniskombination():
@@ -244,35 +272,40 @@ def test_ergebniskombination():
     c.theorie = "III"
     c2 = m.add_combination("EK2", {}, "ULS", alternativen=[{"LF1": 1.0}, {"LF1": 2.0}])
     c2.theorie = "III"
-    pr = _fehler_zeilen(m)
+    pr = _wirkung_zeilen(m)
     an = T._still(solver.solve_all, m, workers=1, design=False)
     th3 = an.theorie3.kombinationen
     f1, f2 = th3.get("EK1 [1]"), th3.get("EK1 [2]")
-    check("EK1: Alternative [1] (LF1) gerechnet, [2] (LF2, Last an Q) abgewiesen",
-          f1 is not None and f2 is not None and not f1.fehler and T.TEXT_KP in (f2.fehler or ""),
-          f"{getattr(f1, 'fehler', None)!r} / {(getattr(f2, 'fehler', '') or '')[:80]!r}")
+    w2_ = _w(an, "EK1 [2]", q)
+    check("EK1: Alternativen [1] (LF1) und [2] (LF2, Last an Q) gerechnet (seit Stand 77), [2] w(Q) = Hand",
+          f1 is not None and f2 is not None and not f1.fehler and not f2.fehler and abs(w2_ - HAND) <= 1e-4 * HAND,
+          f"{getattr(f1, 'fehler', None)!r} / {(getattr(f2, 'fehler', '') or '')[:80]!r} w(Q) {w2_ * 1e3:.6f} mm")
     e1 = (getattr(an, "alternativen", None) or {}).get("EK1 [1]")
     w1 = -np.asarray(e1.u).reshape(-1, 6)[b, 2] if e1 is not None else float("nan")
     check("… EK1 [1]: w(b) = F L³/(3 E I)", abs(w1 - HAND) <= 1e-4 * HAND, f"{w1 * 1e3:.6f} mm")
-    check("… Modellprüfung nennt EK1, nicht EK2", len(pr) == 1 and "EK1" in pr[0] and "EK2" not in pr[0], pr)
+    check("… Wirkung nennt EK1, nicht EK2; Modellprüfung ohne FEHLER",
+          len(pr) == 1 and "EK1" in pr[0] and "EK2" not in pr[0] and not _fehler_zeilen(m), pr)
     f3 = [th3.get("EK2 [1]"), th3.get("EK2 [2]")]
     check("EK2 (nur LF1): beide Alternativen gerechnet", all(x is not None and not x.fehler for x in f3),
           [getattr(x, "fehler", None) for x in f3])
 
 
 def test_sperre_je_faktoren():
-    """kopplung_sperre mit den Faktoren der Rechnung (theorie3)."""
-    from statik3d.theorie3 import kopplung_sperre
+    """kopplung_wirkung mit den Faktoren der Rechnung (theorie3; bis Stand 76
+    kopplung_sperre, die Abweisung)."""
+    from statik3d.theorie3 import kopplung_wirkung, kopplung_sperre
     m, b, q = last_lf2()
-    t1 = kopplung_sperre(m, None, factors={"LF1": 1.0})
-    t2 = kopplung_sperre(m, None, factors={"LF2": 1.0})
-    t12 = kopplung_sperre(m, None, factors={"LF1": 1.0, "LF2": -1.0})
-    check("kopplung_sperre je Faktoren: LF1 leer, LF2 und LF1 - LF2 abgewiesen",
-          t1 == "" and T.TEXT_KP in t2 and T.TEXT_KP in t12, f"{t1!r} {t2[:60]!r} {t12[:60]!r}")
+    t1 = kopplung_wirkung(m, None, factors={"LF1": 1.0})
+    t2 = kopplung_wirkung(m, None, factors={"LF2": 1.0})
+    t12 = kopplung_wirkung(m, None, factors={"LF1": 1.0, "LF2": -1.0})
+    check("kopplung_wirkung je Faktoren: LF1 leer, LF2 und LF1 - LF2 wirkt",
+          t1 == "" and T.WIRKT_KP in t2 and T.WIRKT_KP in t12, f"{t1!r} {t2[:60]!r} {t12[:60]!r}")
+    check("… kopplung_sperre (seit Stand 77) weist nichts mehr ab",
+          kopplung_sperre(m, None, factors={"LF2": 1.0}) == "")
     m, b, q = pm_kopplung("LF2", last_b=True)
-    check("… Punktmasse: Eigengewicht nur in LF2 - LF1 leer, LF2 abgewiesen",
-          kopplung_sperre(m, None, factors={"LF1": 1.0}) == ""
-          and T.TEXT_KP in kopplung_sperre(m, None, factors={"LF2": 1.0}))
+    check("… Punktmasse: Eigengewicht nur in LF2 - LF1 leer, LF2 wirkt",
+          kopplung_wirkung(m, None, factors={"LF1": 1.0}) == ""
+          and T.WIRKT_KP in kopplung_wirkung(m, None, factors={"LF2": 1.0}))
 
 
 # --------------------------------------------------------------------------
@@ -327,11 +360,11 @@ def test_rundungsrest():
         m, b, q = rest_modell(art)
         check(f"… Merkmal betrifft nicht", mk is not None and not mk.betrifft(m), mk and mk.betrifft(m))
     # Gegenprobe: ein echter kleiner Rest an Q wird weiter erkannt
-    from statik3d.theorie3 import kopplung_sperre
+    from statik3d.theorie3 import kopplung_wirkung
     m, b, q = rest_modell("last")
-    t = kopplung_sperre(m, None, factors={"LF1": 1.0, "LF2": 0.1, "LF3": 0.3001})
-    check("… Gegenprobe: echter Rest 0,0001 N an Q (0,3001 statt 0,3) wird abgewiesen",
-          T.TEXT_KP in t, t[:80])
+    t = kopplung_wirkung(m, None, factors={"LF1": 1.0, "LF2": 0.1, "LF3": 0.3001})
+    check("… Gegenprobe: echter Rest 0,0001 N an Q (0,3001 statt 0,3) wird als Lastanker erkannt",
+          T.WIRKT_KP in t, t[:80])
 
 
 # --------------------------------------------------------------------------
@@ -362,7 +395,7 @@ def feld_modell(wie, mit_pm):
 
 def test_erdbeschleunigung_feld():
     from statik3d import solver
-    from statik3d.theorie3 import kopplung_sperre
+    from statik3d.theorie3 import kopplung_wirkung
     mk = _merkmal()
     for wie in ("set_gravity", "setter", "getter", "nullfeld"):
         m, b, q = feld_modell(wie, False)
@@ -397,24 +430,31 @@ def test_erdbeschleunigung_feld():
             check(f"… Merkmal betrifft nicht", bt is False, bt)
         if wie == "nullfeld":
             continue
-        # mit Punktmasse an Q unter g: abweisen, nicht abstuerzen
+        # mit Punktmasse an Q unter g: rechnen, nicht abstuerzen
         m, b, q = feld_modell(wie, True)
         try:
             pr = _fehler_zeilen(m)
+            wk = _wirkung_zeilen(m)
             ex = ""
         except Exception as e:              # noqa: BLE001
-            pr, ex = [], f"{type(e).__name__}: {e}"
-        check(f"g als Feld ({wie}), Punktmasse an Q: Modellpruefung meldet FEHLER ohne Ausnahme",
-              not ex and any(T.TEXT_KP in z for z in pr), ex or pr)
+            pr, wk, ex = [], [], f"{type(e).__name__}: {e}"
+        check(f"g als Feld ({wie}), Punktmasse an Q: Modellpruefung ohne Ausnahme und ohne FEHLER, Wirkung erkannt",
+              not ex and not pr and any(T.WIRKT_KP in z for z in wk), ex or f"{pr} {wk}")
         m, b, q = feld_modell(wie, True)
-        _an, _u, _R, f3, ex3 = T.rechne(m, "III")
-        check(f"… Theorie III. Ordnung weist mit Klartext ab", not ex3 and T.TEXT_KP in f3, ex3 or f3[:100])
+        _an, u1, _R1, _f1, ex1 = T.rechne(m, "I")
+        m, b, q = feld_modell(wie, True)
+        _an, u3, _R, f3, ex3 = T.rechne(m, "III")
+        w3 = -u3[b, 2] if not ex3 else float("nan")
+        w1 = -u1[b, 2] if not ex1 else float("nan")
+        check(f"… Theorie III. Ordnung rechnet (seit Stand 77): w(b) = 2 F L³/(3 E I) = Theorie I. Ordnung",
+              not ex3 and not f3 and abs(w3 - 2 * HAND) <= 1e-4 * HAND and abs(w3 - w1) <= 1e-4 * HAND,
+              ex3 or f"{f3[:60]!r} III {w3 * 1e3:.6f} mm, I {w1 * 1e3:.6f} mm")
         m, b, q = feld_modell(wie, True)
         try:
-            t = kopplung_sperre(m, None, factors={"LF1": 1.0})
+            t = kopplung_wirkung(m, None, factors={"LF1": 1.0})
         except Exception as e:              # noqa: BLE001
             t = f"{type(e).__name__}: {e}"
-        check(f"… kopplung_sperre mit Faktoren weist ab", T.TEXT_KP in t, t[:100])
+        check(f"… kopplung_wirkung mit Faktoren erkennt die Punktmasse", T.WIRKT_KP in t, t[:100])
 
 
 # --------------------------------------------------------------------------
@@ -440,7 +480,7 @@ def gross_modell(gross, rest, theorie="III"):
 
 def test_grosser_rest():
     from statik3d import solver
-    from statik3d.theorie3 import kopplung_sperre
+    from statik3d.theorie3 import kopplung_wirkung
     mk = _merkmal()
     for gross, rest in ((1e8, 0.05), (1e8, 0.015), (1e10, 0.05), (1e7, 0.05)):
         # Gegenrechnung: Theorie I. Ordnung, Q wird um rest / 1e4 N/m nicht verschoben -
@@ -451,15 +491,18 @@ def test_grosser_rest():
         check(f"±{gross:.0f} N mit Rest {rest} N an Q, Theorie I. Ordnung: w(b) = Hand",
               abs(-u1[b, 2] - HAND) <= 1e-4 * HAND, f"{-u1[b, 2] * 1e3:.6f} mm, Hand {HAND * 1e3:.6f} mm")
         m, b, q = gross_modell(gross, rest)
-        t = kopplung_sperre(m, None, factors={"LF1": 1.0, "LF2": 1.0, "LF3": 1.0, "LF4": 1.0})
-        check(f"… kopplung_sperre weist den Rest ab (stille Abweichung waere {rest / 1e4 * 1e3:.4f} mm)",
-              T.TEXT_KP in t, t[:80])
+        t = kopplung_wirkung(m, None, factors={"LF1": 1.0, "LF2": 1.0, "LF3": 1.0, "LF4": 1.0})
+        check(f"… kopplung_wirkung erkennt den Rest (bis Stand 63 still {rest / 1e4 * 1e3:.4f} mm an der "
+              "Feder 1e4 N/m)", T.WIRKT_KP in t, t[:80])
         m, b, q = gross_modell(gross, rest)
         pr = _fehler_zeilen(m)
         an = T._still(solver.solve_all, m, workers=1, design=False)
         f3 = an.theorie3.kombinationen["LK1"].fehler or ""
-        check(f"… Rechnung weist ab, Modellpruefung meldet FEHLER",
-              T.TEXT_KP in f3 and any(T.TEXT_KP in z for z in pr), f"{f3[:80]!r} {pr}")
+        w3 = -np.asarray(an.combinations["LK1"].u).reshape(-1, 6)[q, 2]
+        soll = (F + rest) * HAND / F
+        check(f"… Rechnung (seit Stand 77): w(Q) = (F + Rest) L³/(3 E I) = Theorie I. Ordnung, keine Meldung",
+              not f3 and not pr and abs(w3 - soll) <= 1e-6 * HAND and abs(w3 + u1[q, 2]) <= 1e-6 * HAND,
+              f"{f3[:80]!r} {pr} III {w3 * 1e3:.7f} mm, I {-u1[q, 2] * 1e3:.7f} mm, soll {soll * 1e3:.7f} mm")
         m, b, q = gross_modell(gross, rest)
         check(f"… Merkmal betrifft", mk.betrifft(m) is True, mk.betrifft(m))
     # Gegenprobe: genau aufgehoben (ohne Rest) wird gerechnet

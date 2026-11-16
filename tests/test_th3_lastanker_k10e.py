@@ -33,6 +33,12 @@ mit 1 kN an Q (Q ohne Element, die Last wirkt) und die Rechnung ohne Maske
 Vor der Behebung: V1 bis V3 abgewiesen mit „Theorie III. Ordnung rechnet
 keine Starrkörper“ bzw. „keine starren Knotenkopplungen“.
 
+Runde k10e, Fehler Nr. 27 (16.11.2026, Stand 77): Theorie III. Ordnung
+rechnet die Gegenproben G1 (Last an Q) und V1/V2 ohne Maske seither mit,
+statt sie abzuweisen. Geprueft wird dort jetzt die Rechnung gegen Theorie I.
+Ordnung und die Wirkung (theorie3.kopplung_wirkung_modell, bis Stand 76 die
+Abweisung) fuer die Merkmale.
+
 Aufruf:  python -m tests.test_th3_lastanker_k10e
 """
 import contextlib
@@ -169,22 +175,37 @@ def main():
                   and abs(w3 - w1) < 1e-4, f"Th III {w3:.6f}, Th I {w1:.6f}, Hand {W_HAND:.6f}")
             check(f"{tag}: Theorie III Summe Rz = 1 000 N", abs(R3[:, 2].sum() - F) < 1e-3,
                   f"{R3[:, 2].sum():.3f}")
-    # Gegenproben: die Abweisung bleibt, wo die Last wirkt bzw. der Koerper traegt
+    # Gegenproben: wo die Last wirkt bzw. der Koerper traegt, wirkt der
+    # Anschluss (bis Stand 76 die Abweisung); seit Stand 77 gerechnet
+    from statik3d.theorie3 import kopplung_wirkung_modell
     for maske in ("situation", "aus"):
         m, b = variante("G1", maske)
         kombination(m, maske)
+        wirkung = kopplung_wirkung_modell(m)
         sperre = kopplung_sperre_modell(m)
         r1, r3 = rechnen(m)
-        check(f"G1 (Last an Q ohne Element), {maske}: Modellpruefung weist ab",
-              any("starren Knotenkopplungen" in t for t in sperre), str(sperre)[:160])
+        check(f"G1 (Last an Q ohne Element), {maske}: Wirkung erkannt, Modellpruefung weist nicht ab",
+              any("starre Knotenkopplungen" in t for t in wirkung) and not sperre, f"{wirkung} {sperre}"[:160])
         fehler = str((r3.info.get("theorie_fehler") if r3 is not None else "") or "")
-        check(f"G1, {maske}: Theorie III weist ab", "starren Knotenkopplungen" in fehler, fehler[:160])
-    for v, text in (("V1", "Starrkörper"), ("V2", "starren Knotenkopplungen")):
+        theorie = str(r3.info.get("theorie")) if r3 is not None else ""
+        w1 = -np.asarray(r1.u).reshape(-1, 6)[b, 2] * 1e3
+        w3 = -np.asarray(r3.u).reshape(-1, 6)[b, 2] * 1e3 if r3 is not None else float("nan")
+        check(f"G1, {maske}: Theorie III gerechnet, w(b) = Theorie I", not fehler and "III" in theorie
+              and abs(w3 - w1) < 1e-4, f"{theorie}: {fehler[:100]} Th III {w3:.6f}, Th I {w1:.6f}")
+    for v, text in (("V1", "Starrkörper"), ("V2", "starre Knotenkopplungen")):
         m, b = variante(v, "")
         kombination(m, "")
+        wirkung = kopplung_wirkung_modell(m)
         sperre = kopplung_sperre_modell(m)
-        check(f"{v} ohne Maske (Koerper traegt): Modellpruefung weist ab",
-              any(text in t for t in sperre), str(sperre)[:160])
+        check(f"{v} ohne Maske (Koerper traegt): Wirkung erkannt, Modellpruefung weist nicht ab",
+              any(text in t for t in wirkung) and not sperre, f"{wirkung} {sperre}"[:160])
+        r1, r3 = rechnen(m)
+        fehler = str((r3.info.get("theorie_fehler") if r3 is not None else "") or "")
+        theorie = str(r3.info.get("theorie")) if r3 is not None else ""
+        w1 = -np.asarray(r1.u).reshape(-1, 6)[b, 2] * 1e3
+        w3 = -np.asarray(r3.u).reshape(-1, 6)[b, 2] * 1e3 if r3 is not None else float("nan")
+        check(f"{v} ohne Maske: Theorie III gerechnet, w(b) = Theorie I", not fehler and "III" in theorie
+              and abs(w3 - w1) < 1e-4, f"{theorie}: {fehler[:100]} Th III {w3:.6f}, Th I {w1:.6f}")
 
     n_ok = sum(1 for _n, ok in RESULTS if ok)
     print(f"\n{n_ok}/{len(RESULTS)} bestanden")

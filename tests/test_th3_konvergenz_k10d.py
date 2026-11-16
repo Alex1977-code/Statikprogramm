@@ -69,6 +69,14 @@ RESULTS = []
 
 E = 210e9
 TEXT_KP = "Theorie III. Ordnung rechnet keine"
+#: Runde k10e (16.11.2026, Stand 77): Theorie III. Ordnung rechnet den
+#: Anschluss eines Stabendes (RBE3 „Stabende 1“) seither mit, statt ihn
+#: abzuweisen. Wo hier „weist ab statt still ohne Rest zu rechnen“ stand,
+#: steht jetzt „rechnet mit dem Rest“: w(b) = Hand mit Rest auf 0,00001 mm
+#: (die Abweichung ohne Rest waere 0,0008 bis 0,0014 mm). Dass der Rest als
+#: Lastanker zaehlt, prueft weiter kopplung_wirkung (die Pruefung, die bis
+#: Stand 76 abwies, und die der Merkmale der Staende 64 und 66).
+TEXT_WIRKT = "nach Theorie III. Ordnung"
 
 
 def check(name, ok, detail=""):
@@ -133,7 +141,7 @@ def weich(th, gross, rest, fb=1.0, rbe=True):
 
 def test_a_restschranke():
     from statik3d import rechenverfahren as rv
-    from statik3d.theorie3 import kopplung_sperre
+    from statik3d.theorie3 import kopplung_wirkung
     mk = rv.merkmal("theorie3_stabende_anschluss")
     for gross, rest in ((1e7, 0.0009), (1e5, 0.0009), (1e9, 0.0005)):
         hand = (1.0 + rest) * FLEX_W
@@ -147,12 +155,15 @@ def test_a_restschranke():
         wg = -np.asarray(wg[0].u).reshape(-1, 6)[b, 2]
         check("… gleichwertiges Modell (Rest direkt an b) nach Theorie III. Ordnung = Hand",
               abs(wg - hand) <= 1e-5 * hand, f"{wg * 1e3:.6f} mm")
-        t = kopplung_sperre(m, None, factors={"LF1": 1.0, "LF2": 1.0, "LF3": 1.0, "LF4": 1.0})
-        check("… kopplung_sperre sieht den Rest (stille Abweichung waere "
-              f"{rest * FLEX_W * 1e3:.4f} mm)", TEXT_KP in t, t[:80])
+        t = kopplung_wirkung(m, None, factors={"LF1": 1.0, "LF2": 1.0, "LF3": 1.0, "LF4": 1.0})
+        check("… kopplung_wirkung sieht den Rest (ohne ihn waere die Abweichung "
+              f"{rest * FLEX_W * 1e3:.4f} mm)", TEXT_WIRKT in t, t[:80])
         r3, f3 = _rechne(m)
-        check("… Theorie III. Ordnung weist ab statt still ohne Rest zu rechnen",
-              TEXT_KP in f3, f"{f3[:80]!r}")
+        w3 = -np.asarray(r3.u).reshape(-1, 6)[b, 2] if r3 is not None else float("nan")
+        th = str(((r3.info or {}) if r3 is not None else {}).get("theorie", ""))
+        check("… Theorie III. Ordnung rechnet mit dem Rest: w(b) = Hand (auf 0,00001 mm)",
+              not f3 and th.startswith("III") and abs(w3 - hand) <= 1e-8,
+              f"{f3[:80]!r} {th} {w3 * 1e3:.6f} mm, Hand {hand * 1e3:.6f} mm")
         check("… Merkmal theorie3_stabende_anschluss betrifft",
               mk.betrifft(weich("III", gross, rest)[0]) is True)
     # Gegenprobe: genau aufgehoben wird gerechnet
@@ -168,7 +179,7 @@ def test_a_grosse_betragssumme():
     Schranke ab einer Betragssumme von 1e10 N die Kappung 0,001 N, und ein
     Rest von 0,0009 N ging still verloren (Theorie III. Ordnung 1,587302 statt
     1,588730 mm). Jetzt 4 * n * 2,2e-16 der Betragssumme bei n Beitraegen."""
-    from statik3d.theorie3 import kopplung_sperre
+    from statik3d.theorie3 import kopplung_sperre, kopplung_wirkung
     fak = {"LF1": 1.0, "LF2": 1.0, "LF3": 1.0, "LF4": 1.0}
     for gross in (5e9, 1e10, 1e11):
         rest = 0.0009
@@ -179,11 +190,13 @@ def test_a_grosse_betragssumme():
         check(f"(a) ±{gross:.0f} N, Rest {rest} N: Theorie I. Ordnung loest den Rest auf (w(b) = Hand auf 0,00001 mm)",
               abs(w1 - hand) <= 1e-8, f"{w1 * 1e3:.6f} mm, Hand {hand * 1e3:.6f} mm")
         m, b = weich("III", gross, rest)
-        t = kopplung_sperre(m, None, factors=fak)
-        check(f"… kopplung_sperre sieht den Rest (stille Abweichung waere {rest * FLEX_W * 1e3:.6f} mm)",
-              TEXT_KP in t, t[:80])
+        t = kopplung_wirkung(m, None, factors=fak)
+        check(f"… kopplung_wirkung sieht den Rest (ohne ihn waere die Abweichung {rest * FLEX_W * 1e3:.6f} mm)",
+              TEXT_WIRKT in t, t[:80])
         r3, f3 = _rechne(m)
-        check("… Theorie III. Ordnung weist ab statt still ohne Rest zu rechnen", TEXT_KP in f3, f"{f3[:80]!r}")
+        w3 = -np.asarray(r3.u).reshape(-1, 6)[b, 2] if r3 is not None else float("nan")
+        check("… Theorie III. Ordnung rechnet mit dem Rest: w(b) = Hand (auf 0,00001 mm)",
+              not f3 and abs(w3 - hand) <= 1e-8, f"{f3[:80]!r} {w3 * 1e3:.6f} mm, Hand {hand * 1e3:.6f} mm")
     # Gegenproben: Rundungsreste grosser Lasten bleiben aufgehoben und werden gerechnet
     for gross, f2, f3_, last2, last3 in ((1e10, 1.0, 1.0, -1.0, 1.0), (1e10, 0.1, 0.3, -3.0, 1.0),
                                          (1e11, 0.1, 0.3, -3.0, 1.0)):
@@ -628,9 +641,9 @@ def test_e_federn_konvergieren():
 def test_e_merkmal():
     from statik3d import rechenverfahren as rv
     mk = rv.merkmal("theorie3_gelenk_achse")
-    check("Merkmal theorie3_gelenk_achse: Stand 75, Fehlerkorrektur, 16.11.2026, VERFAHRENSSTAND 75",
+    check("Merkmal theorie3_gelenk_achse: Stand 75, Fehlerkorrektur, 16.11.2026, VERFAHRENSSTAND >= 75 (hoechster)",
           mk is not None and mk.wechsel[-1].stand == 75 and mk.wechsel[-1].art == rv.FEHLERKORREKTUR
-          and mk.wechsel[-1].datum == "16.11.2026" and rv.VERFAHRENSSTAND == 75
+          and mk.wechsel[-1].datum == "16.11.2026" and rv.VERFAHRENSSTAND >= 75
           and rv.VERFAHRENSSTAND == max(w.stand for x in rv.MERKMALE for w in x.wechsel),
           f"{mk and mk.wechsel} {rv.VERFAHRENSSTAND}")
     if mk is None:
@@ -670,7 +683,7 @@ def test_a_exakte_summe():
     statt 1,588730 mm). Jetzt exakte Summe der Produkte, Schranke nur aus der
     Darstellung der nicht exakt darstellbaren Eingaben."""
     from statik3d import rechenverfahren as rv
-    from statik3d.theorie3 import kopplung_sperre
+    from statik3d.theorie3 import kopplung_sperre, kopplung_wirkung
     mk = rv.merkmal("theorie3_stabende_anschluss")
     faelle = [(g, 1, 0.0009, 1.0) for g in (2e11, 3e11, 5e11, 1e12, 3e12)]
     faelle += [(2e11, 1, 0.0007, 1.0), (5e10, 10, 0.0009, 1.0), (1e12, 1, 0.0009, 1.35),
@@ -685,12 +698,13 @@ def test_a_exakte_summe():
         check(f"{txt}: Theorie I. Ordnung loest den Rest auf (naeher an der Hand als ohne Rest)",
               abs(w1 - hand) < abs(w1 - FLEX_W), f"{w1 * 1e3:.6f} mm, Hand {hand * 1e3:.6f} mm")
         m, b, fak = _weich_verteilt(gross, k, rest, faktor)
-        t = kopplung_sperre(m, None, factors=fak)
+        t = kopplung_wirkung(m, None, factors=fak)
         r3, f3 = _rechne(m)
         w3 = -np.asarray(r3.u).reshape(-1, 6)[b, 2] if r3 is not None else float("nan")
-        check(f"… Theorie III. Ordnung weist ab statt still ohne Rest zu rechnen "
-              f"(stille Abweichung waere {rest * FLEX_W * 1e3:.6f} mm)",
-              TEXT_KP in t and TEXT_KP in f3, f"{t[:40]!r} {f3[:40]!r} {w3 * 1e3:.6f} mm")
+        check(f"… Theorie III. Ordnung rechnet mit dem Rest, w(b) = Hand auf 0,00001 mm "
+              f"(ohne Rest waere die Abweichung {rest * FLEX_W * 1e3:.6f} mm)",
+              TEXT_WIRKT in t and not f3 and abs(w3 - hand) <= 1e-8,
+              f"{t[:40]!r} {f3[:40]!r} {w3 * 1e3:.6f} mm, Hand {hand * 1e3:.6f} mm")
         check("… Merkmal theorie3_stabende_anschluss betrifft",
               mk.betrifft(_weich_verteilt(gross, k, rest, faktor)[0]) is True)
     # Gegenproben: Reste aus der Rundung dezimal aufgehobener Summen bleiben
