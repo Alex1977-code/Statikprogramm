@@ -844,14 +844,25 @@ def _rest_zaehlt(beitraege: list) -> bool:
     return abs(rest) > min(2.0 * _LAST_EPS * unsicher, _LAST_REST_MAX)
 
 
-def _ankerknoten(model: Model, nn: int, factors: dict = None) -> np.ndarray:
+def _ankerknoten(model: Model, nn: int, factors: dict = None, aktiv=None) -> np.ndarray:
     """Maske (nn,) der Knoten, an denen ein Anschluss eines Stabendes etwas
     halten oder tragen muss, auch wenn dort kein Element wirkt: Lagerknoten
     (Knoten-, Linien- und Flaechenlager, starr oder federnd, wie
     supports.expand sie an die Knoten verteilt) und die Lastknoten der
     Rechnung mit ``factors`` (:func:`_lastknoten`: Knotenlast oder Punktmasse
     unter Eigengewicht; ohne ``factors`` aus irgendeinem Lastfall). Runde
-    k10, Nachbesserungen 1 und 2."""
+    k10, Nachbesserungen 1 und 2.
+
+    ``aktiv``: die Elementmaske der Rechnung. Ein Lastknoten zaehlt nur, wenn
+    assemble.load_vector die Last dort unter dieser Maske anlegt
+    (situationen.wirksame_knoten); sonst haelt und traegt er nichts.
+    Bis zur Zusammenfuehrung k10 (16.11.2026, Nachbesserung 1) zaehlte jede
+    Knotenlast: RBE3 „Stabende“ mit Master am Kragarmende b und Slave d am
+    abgeschalteten Arm (Situation oder Stab „aus“), 2 kN an d - die Last
+    entfaellt unter der Maske, Theorie I. Ordnung und Hand w(b) =
+    0,535714 mm, Summe Rz 1 000 N; Theorie III. Ordnung wies das Modell mit
+    „rechnet keine Starrkoerper“ ab (Stand 65 und fix/k10-maske2 rechneten
+    0,535714 mm)."""
     out = np.zeros(nn, dtype=bool)
     for sp in (getattr(model, "supports", None) or []):
         n = int(getattr(sp, "node", -1))
@@ -876,7 +887,11 @@ def _ankerknoten(model: Model, nn: int, factors: dict = None) -> np.ndarray:
                     for n in model.elements[int(i)].nodes:
                         if 0 <= int(n) < nn:
                             out[int(n)] = True
-    out |= _lastknoten(model, nn, factors)
+    last = _lastknoten(model, nn, factors)
+    if aktiv is not None and last.any():
+        from .situationen import wirksame_knoten
+        last &= np.asarray(wirksame_knoten(model, aktiv), dtype=bool)[:nn]
+    out |= last
     return out
 
 
@@ -1005,7 +1020,7 @@ def _th3_wirkung(model: Model, aktiv, alt: bool = False, factors: dict = None) -
 
     def anker() -> np.ndarray:
         if not anker_cache:
-            anker_cache.append(_ankerknoten(model, nn, factors))
+            anker_cache.append(_ankerknoten(model, nn, factors, aktiv))
         return anker_cache[0]
 
     def erreicht(j: int) -> np.ndarray:
