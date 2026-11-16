@@ -87,7 +87,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from . import assemble as asm
-from .model import LoadCase, Vorspannung
+from .model import LoadCase, Vorspannung, hat_erdbeschleunigung
 
 WEG_EINFLUSS = "einflussmatrix"
 WEG_SPANNEN = "spannen und verriegeln"
@@ -1160,7 +1160,7 @@ def import_hinweise(model, log: list = None, system=None) -> list:
 
 def _nur_vorspannung(model, lc) -> bool:
     """Traegt der Lastfall nichts als Temperatur-Vorspannungen auf Zugstaeben?"""
-    if any(float(x) for x in (lc.gravity or [])) or getattr(lc, "grundlast", False):
+    if hat_erdbeschleunigung(lc) or getattr(lc, "grundlast", False):
         return False
     for liste in ("nodal_loads", "beam_loads", "face_loads", "geometrielasten", "linienlasten",
                   "zwangsverformungen", "vorspannungen", "uebermasse"):

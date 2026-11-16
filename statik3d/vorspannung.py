@@ -51,7 +51,7 @@ import numpy as np
 
 from .model import (VORSPANN_ALLE, VORSPANN_ENDWERT_ABSOLUT, VORSPANN_ENDWERT_VERLUST,
                     VORSPANN_PRESSE, VORSPANN_ZUSTAENDE, VORSPANN_ZUSTAND_0, VORSPANN_ZUSTAND_INF,
-                    VorspannDefinition, Vorspannung)
+                    VorspannDefinition, Vorspannung, hat_erdbeschleunigung)
 
 #: Namen der Zustaende fuer den Anwender
 ZUSTAND_TEXT = {VORSPANN_ZUSTAND_0: "Zeitpunkt 0", VORSPANN_ZUSTAND_INF: "Zeitpunkt ∞"}
@@ -457,7 +457,8 @@ def gruppen_finden(model, ergebnisse: dict = None, linear_rechnen: bool = False)
                 continue
             if g["art"] == ART_DT and not _nur_vorspannung(model, lc):
                 continue
-            if g["art"] != ART_DT and (lc.temp_loads or lc.nodal_loads or lc.beam_loads or any(lc.gravity or [])):
+            if g["art"] != ART_DT and (lc.temp_loads or lc.nodal_loads or lc.beam_loads
+                                       or hat_erdbeschleunigung(lc)):
                 continue
             for s in g["staebe"]:
                 els = _elemente(model, s)
