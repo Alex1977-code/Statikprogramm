@@ -11710,8 +11710,12 @@ def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = Non
     als Eigenwerte nahe null heraus (``info["starrkoerper"]``, in der
     Zusammenfassung benannt) statt als Fehler. Die Faktorisierung uebernimmt
     :class:`LinearSolver` (MKL PARDISO, wenn vorhanden) statt SuperLU.
+
+    Bricht ARPACK ab oder meldet es Paare, deren Rayleigh-Quotient vom
+    Eigenwert abweicht, rechnet ein zweiter Loesungsweg
+    (:func:`_modal_zweiter_weg`, Runde k10e, 16.11.2026); erst wenn auch er
+    nichts liefert, kommt Klartext („Eigenschwingungen nicht berechenbar“).
     """
-    from scipy.sparse.linalg import LinearOperator
     t0 = time.time()
     schalenlage = _schalen_ausrichten(model, progress)
     with parallel.arbeiter(model, workers):
@@ -11829,50 +11833,37 @@ def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = Non
     # RBE3). Die Pruefung mit Strafanteil laeuft nur ohne angehobene Pivots
     # (LinearSolver.solve) - ein wirklich singulaeres A geht weiter an
     # _MasselosFrei.
-    strafe = None
-    if strafanteil is not None:
-        strafe = strafanteil.lokal(fi, tuple(strafe_zusatz) + ((-sigma) * M,))
-    frei = None
     try:
-        loeser, ursache = LinearSolver(A), None
-    except (RuntimeError, ValueError) as ex:
-        loeser, ursache = None, ex
-    if loeser is not None:
-        loeser.strafe = strafe
-        # Die Modalanalyse faktorisiert selbst, ohne StaticSystem - das Ausweichen
-        # meldete hier bis zum 22.09.2026 nur warnings.warn (Befund K2).
-        if loeser.ausweichgrund:
-            _melde(progress, f"Gleichungslöser ausgewichen - {loeser.ausweichgrund}")
+        loeser, frei = _modal_zerlegen(A, Mff, fi, M, sigma, strafanteil, strafe_zusatz, progress)
+    except _ModalSingulaer as ex:
+        raise RuntimeError(_modal_singulaer_text(model, K, fi, ex.ursache, progress, ex.grund)) from None
+    weg, weg_grund = "", ""
+    ncv_kw = {"ncv": ncv} if grenz_hinweis else {}
+    try:
         try:
-            loeser.solve(np.random.default_rng(0).standard_normal(A.shape[0]), check=True)
+            if dicht:
+                vals_, vecs = _modal_kondensiert(loeser, Mff, mdf, sigma, k, rang, lform=frei is not None)
+            else:
+                from scipy.sparse.linalg import ArpackError
+                try:
+                    vals_, vecs = _modal_arpack(Kff, Mff, sigma, k, loeser, ncv_kw)
+                except ArpackError as ex:
+                    # Zweiter Loesungsweg (Runde k10e, 16.11.2026): bis dahin
+                    # brach die Rechnung hier ab, auch bei rechenbaren Modellen
+                    # (siehe _modal_zweiter_weg)
+                    weg_grund = eigen_grund(ex)
+                    vals_, vecs, loeser, frei, sigma, weg = _modal_zweiter_weg(
+                        Kff, Mff, fi, M, sigma, k, rang, n_masse, mdf, loeser, frei, ncv_kw,
+                        strafanteil, strafe_zusatz, progress, weg_grund)
+        except _ModalNichtLoesbar as ex:
+            raise RuntimeError(_modal_abbruch_text(k, n_masse, rang, Kff, str(ex))) from None
         except RuntimeError as ex:
-            ursache = ex
-    if ursache is not None:
-        # Die Zerlegung von A (falls es eine gibt) geht an _MasselosFrei ueber
-        eigene = loeser is None
-        try:
-            loeser, frei = None, _MasselosFrei(A, Mff, loeser, progress, strafe=strafe)
-            loeser = frei
-        except (RuntimeError, ValueError) as ex2:
-            raise RuntimeError(_modal_singulaer_text(model, K, fi, ursache, progress, ex2)) from None
-        if eigene and frei.ausweichgrund:
-            _melde(progress, f"Gleichungslöser ausgewichen - {frei.ausweichgrund}")
-    try:
-        if dicht:
-            vals_, vecs = _modal_kondensiert(loeser, Mff, mdf, sigma, k, rang, lform=frei is not None)
-        else:
-            op = LinearOperator(A.shape, dtype=float,
-                                matvec=lambda x: loeser.solve(np.asarray(x, float).ravel(), check=False))
-            from scipy.sparse.linalg import ArpackError
-            try:
-                vals_, vecs = eigsh(Kff, k=k, M=Mff, sigma=sigma, which="LM", OPinv=op,
-                                    **({"ncv": ncv} if grenz_hinweis else {}))
-            except ArpackError as ex:
-                raise RuntimeError(
-                    f"Eigenschwingungen nicht berechenbar: der Eigenlöser (ARPACK) fand keine {k} "
-                    f"Eigenformen ({str(ex)[:160]}). Das System hat {n_masse} Freiheitsgrade mit Masse in "
-                    f"{rang} unabhängigen Richtungen. Weniger Eigenformen anfordern; bleibt die Meldung, "
-                    f"Lagerung und Massen prüfen.") from None
+            # Eine Loesung von A haelt die Schranke der Statik nicht (frei
+            # bewegliche Teile ohne Masse, _MasselosFrei.solve): Klartext mit
+            # der Diagnose der Statik statt der rohen Meldung des Loesers
+            if str(ex).startswith("Gleichungssystem numerisch singulär"):
+                raise RuntimeError(_modal_singulaer_text(model, K, fi, ex, progress)) from None
+            raise
         if frei is not None:
             # ARPACK beginnt mit einem Zufallsvektor - die Formen ohne Anteil der
             # freien Bewegung (die Loesungen selbst liefern keinen)
@@ -11911,12 +11902,15 @@ def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = Non
     res.info = {"ndof": model.ndof, "nfree": len(fi), "time": time.time() - t0,
                 "zusatzmasse": zusatzmasse is not None,
                 "n_masse": n_masse, "moden_angefordert": int(nmodes),
-                "eigenloeser": "dicht, auf die Freiheitsgrade mit Masse kondensiert" if dicht else "ARPACK",
+                "eigenloeser": weg or ("dicht, auf die Freiheitsgrade mit Masse kondensiert" if dicht else "ARPACK"),
                 "starrkoerper": int(np.sum(freqs < STARR_HZ)),
                 "kontakt": kontakt_text, "kontakt_aktiv": n_kontakt,
                 "loeser": loeser.backend}
     if rang < n_masse:
         res.info["massenrang"] = int(rang)
+    if weg:
+        res.info["eigenloeser_hinweis"] = _modal_weg_hinweis(weg, weg_grund, Kff)
+        _melde(progress, res.info["eigenloeser_hinweis"])
     if frei is not None and frei.richtungen:
         res.info["frei_ohne_masse"] = {"richtungen": int(frei.richtungen), "knoten": frei.knoten(model, fi),
                                        **({"mindestens": True} if frei.mehr else {})}
@@ -12247,6 +12241,247 @@ def _modal_singulaer_text(model, K, fi, ex, progress=None, grund=None) -> str:
             + ("\n" + rumpf if rumpf else ""))
 
 
+#: Zweiter Loesungsweg der Modalanalyse (Runde k10e, 16.11.2026): so viele
+#: Stufen mit je tausendfach kleinerer Verschiebung sigma versucht
+#: _modal_zweiter_weg, bevor es dicht rechnet
+MODAL_SHIFT_STUFEN = 4
+#: ... und so viele Freiheitsgrade mit Masse haelt der dichte zweite Weg
+#: hoechstens (kondensierte Matrix 4000 x 4000, 128 MB je Kopie; je
+#: Freiheitsgrad mit Masse eine Loesung)
+MODAL_AUSWEICH_DICHT = 4000
+
+
+#: ARPACK-Fehler im Klartext (scipy: _SAUPD_ERRORS/_SEUPD_ERRORS), fuer die
+#: Meldungen der Eigenloeser (Runde k10e)
+_ARPACK_TEXTE = {
+    -1: "keine Konvergenz in der zulässigen Schrittzahl",
+    -8: "Fehler in der Eigenwertrechnung der Tridiagonalmatrix",
+    -9: "Startvektor null",
+    -9999: "Krylov-Raum ließ sich nicht aufbauen",
+}
+
+
+def eigen_grund(ex) -> str:
+    """Kurzer deutscher Grund zu einem Abbruch des Eigenloesers ``ex``
+    (ArpackError/ArpackNoConvergence, sonst der Text der Ausnahme)."""
+    from scipy.sparse.linalg import ArpackNoConvergence
+    txt = str(ex)
+    if isinstance(ex, ArpackNoConvergence):
+        return "ARPACK: " + _ARPACK_TEXTE[-1]
+    m = re.match(r"ARPACK error (-?\d+)", txt)
+    if m:
+        code = int(m.group(1))
+        return f"ARPACK: {_ARPACK_TEXTE.get(code, 'Abbruch')} (Fehler {code})"
+    return txt[:160]
+
+
+class _ModalSingulaer(Exception):
+    """A = K - sigma M ist singulaer und laesst sich nicht auf frei
+    bewegliche Teile ohne Masse zurueckfuehren (_modal_zerlegen)."""
+
+    def __init__(self, ursache, grund):
+        super().__init__(str(grund))
+        self.ursache, self.grund = ursache, grund
+
+
+class _ModalNichtLoesbar(Exception):
+    """Weder ARPACK noch der zweite Loesungsweg lieferten Eigenformen."""
+
+
+def _modal_zerlegen(A, Mff, fi, M, sigma: float, strafanteil, strafe_zusatz, progress=None) -> tuple:
+    """(Loeser, frei) fuer A = Kff - sigma Mff: die Zerlegung von A, geprueft
+    wie in der Statik (eine Loesung mit Residuumspruefung), oder - ist A
+    singulaer - _MasselosFrei, das frei bewegliche Teile ohne Masse
+    numerisch haelt (``frei``, sonst None). Laesst sich A auch so nicht
+    loesen: _ModalSingulaer mit Ursache und Grund.
+
+    Bis Runde k10e stand das in solve_modal selbst; der zweite Loesungsweg
+    (_modal_zweiter_weg) zerlegt mit anderer Verschiebung neu und braucht
+    dieselbe Pruefung."""
+    strafe = None
+    if strafanteil is not None:
+        strafe = strafanteil.lokal(fi, tuple(strafe_zusatz) + ((-sigma) * M,))
+    try:
+        loeser, ursache = LinearSolver(A), None
+    except (RuntimeError, ValueError) as ex:
+        loeser, ursache = None, ex
+    if loeser is not None:
+        loeser.strafe = strafe
+        # Die Modalanalyse faktorisiert selbst, ohne StaticSystem - das Ausweichen
+        # meldete hier bis zum 22.09.2026 nur warnings.warn (Befund K2).
+        if loeser.ausweichgrund:
+            _melde(progress, f"Gleichungslöser ausgewichen - {loeser.ausweichgrund}")
+        try:
+            loeser.solve(np.random.default_rng(0).standard_normal(A.shape[0]), check=True)
+        except RuntimeError as ex:
+            ursache = ex
+    if ursache is None:
+        return loeser, None
+    # Die Zerlegung von A (falls es eine gibt) geht an _MasselosFrei ueber;
+    # scheitert es, gibt es sie frei
+    eigene = loeser is None
+    try:
+        frei = _MasselosFrei(A, Mff, loeser, progress, strafe=strafe)
+    except (RuntimeError, ValueError) as ex2:
+        raise _ModalSingulaer(ursache, ex2) from None
+    if eigene and frei.ausweichgrund:
+        _melde(progress, f"Gleichungslöser ausgewichen - {frei.ausweichgrund}")
+    return frei, frei
+
+
+def rayleigh_abweichung(K, M, vals, vecs, bezug: float) -> float:
+    """Groesste Abweichung des Rayleigh-Quotienten vᵀ K v / vᵀ M v vom
+    gemeldeten Eigenwert lambda je Paar (Spalten von ``vecs``), bezogen auf
+    max(|lambda|, ``bezug``); 0 ohne Paare, unendlich bei vᵀ M v <= 0 oder
+    nicht endlichen Werten (Runde k10e).
+
+    Zu einem richtigen Eigenvektor ist der Rayleigh-Quotient der Eigenwert,
+    sein Fehler ist quadratisch im Fehler der Form - ein gemeldetes Paar, bei
+    dem beide auseinanderliegen, ist keine Loesung. Der Rest ‖K v - lambda M v‖
+    trennt das an schlecht konditionierten Modellen nicht (gemessen bis
+    0,002 bei richtigen Paaren)."""
+    vecs = np.asarray(vecs, float)
+    if vecs.ndim != 2 or not vecs.shape[1]:
+        return 0.0
+    lam = np.asarray(vals, float).ravel()
+    vkv = np.einsum("ij,ij->j", vecs, K @ vecs)
+    vmv = np.einsum("ij,ij->j", vecs, M @ vecs)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        rq = vkv / vmv
+        q = np.abs(rq - lam) / np.maximum(np.abs(lam), abs(float(bezug)))
+    q = np.where(np.isfinite(q) & (vmv > 0), q, np.inf)
+    return float(q.max())
+
+
+#: Hoechstens so weit darf der Rayleigh-Quotient eines Eigenpaars vom
+#: gemeldeten Eigenwert abweichen (rayleigh_abweichung, bezogen auf
+#: max(|lambda|, |sigma|)), sonst ist das Paar keine Loesung (Runde k10e).
+#: ARPACK meldete am Kragarm aus 4000 masselosen Staeben mit 30 Punktmassen um
+#: sigma = -8 500 000 000 Erfolg mit Frequenzen ab 4 745 078 688 274 Hz
+#: (Abweichung 3,6e20); richtige Paare lagen dort und an den Kreisringen mit
+#: Speichen von 2 bis 10 mm (Befund Nr. 25) bei hoechstens 2,4e-7, an den
+#: Pruefdateien der Modalanalyse bei hoechstens 1e-8 (gemessen 16.11.2026).
+EIGEN_RQ_MAX = 1e-3
+
+
+def _modal_arpack(Kff, Mff, sigma: float, k: int, loeser, ncv_kw: dict) -> tuple:
+    """ARPACK im Shift-Invert-Modus um ``sigma`` mit der Zerlegung ``loeser``
+    von Kff - sigma Mff. Paare, deren Rayleigh-Quotient vom Eigenwert um mehr
+    als EIGEN_RQ_MAX abweicht, sind keine Loesung: ArpackError wie ein Abbruch."""
+    from scipy.sparse.linalg import LinearOperator, ArpackError
+    op = LinearOperator(Kff.shape, dtype=float,
+                        matvec=lambda x: loeser.solve(np.asarray(x, float).ravel(), check=False))
+    vals, vecs = eigsh(Kff, k=k, M=Mff, sigma=sigma, which="LM", OPinv=op, **ncv_kw)
+    abw = rayleigh_abweichung(Kff, Mff, vals, vecs, sigma)
+    if not abw <= EIGEN_RQ_MAX:
+        fehler = ArpackError(0)
+        fehler.args = (f"gemeldete Eigenwerte weichen vom Rayleigh-Quotienten um {_zt(abw, 2)} ab",)
+        raise fehler
+    return vals, vecs
+
+
+def _modal_zweiter_weg(Kff, Mff, fi, M, sigma: float, k: int, rang: int, n_masse: int, mdf,
+                       loeser, frei, ncv_kw: dict, strafanteil, strafe_zusatz, progress, grund: str) -> tuple:
+    """Eigenformen, wenn ARPACK um ``sigma`` keine lieferte (Runde k10e,
+    16.11.2026). Rueckgabe (Eigenwerte, Eigenvektoren, Loeser, frei, sigma,
+    Beschreibung des Wegs); ``loeser`` gibt die Funktion frei, wenn sie einen
+    anderen zurueckgibt. Ohne Ergebnis: _ModalNichtLoesbar.
+
+    Ursache des Abbruchs, belegt am Kragarm aus 1000 masselosen Staeben mit 21
+    Punktmassen (sonst rechenbar, 21,356 Hz): sigma = -0,000001 mal mittlere
+    Hauptdiagonale von K durch mittlere von M richtet sich nach den steifsten
+    Freiheitsgraden (kurze Elemente, Punktmassen neben masselosen Knoten),
+    nicht nach den gesuchten Eigenwerten - dort -47 400 000 000 gegen
+    lambda_1 = 18 000. Die Eigenwerte 1/(lambda - sigma) des Shift-Invert-
+    Operators liegen dann bis auf etwa 0,0000004 beieinander, und ARPACK
+    brach mit „error -9999: Could not build an Arnoldi factorization“ ab (am
+    Kreisring mit 32 Speichen von 5 mm: sigma -1 000 000 000 000 gegen
+    16 000, „error -1: No convergence“). Mit tausendfach kleinerem sigma
+    rechnete ARPACK dieselben Frequenzen wie der dichte Bezug.
+
+    1. sigma stufenweise je tausendfach kleiner (MODAL_SHIFT_STUFEN Stufen),
+       solange sich K - sigma M zerlegen laesst (geprueft wie in der Statik;
+       mit frei beweglichen Teilen ohne Masse ueber _MasselosFrei).
+    2. Dicht, auf die Freiheitsgrade mit Masse kondensiert (_modal_kondensiert
+       mit Zerlegung der Massenmatrix), bis MODAL_AUSWEICH_DICHT Freiheits-
+       grade mit Masse, mit der Zerlegung des kleinsten zerlegbaren sigma.
+
+    Die erste Rechnung um sigma bleibt unveraendert: rechnet ARPACK dort,
+    aendert sich kein Ergebnis.
+
+    Speicher: die Funktion uebernimmt ``loeser``; ohne Ergebnis gibt sie
+    jede gehaltene Zerlegung frei (freigeben() ist wiederholbar)."""
+    from scipy.sparse.linalg import ArpackError
+    _melde(progress, f"Eigenlöser (ARPACK) ohne Ergebnis ({grund}) – zweiter Lösungsweg")
+    bestes = (loeser, frei, sigma)
+    try:
+        for stufe in range(1, MODAL_SHIFT_STUFEN + 1):
+            s = sigma * 10.0 ** (-3 * stufe)
+            A = (Kff - s * Mff).tocsc()
+            try:
+                l2, f2 = _modal_zerlegen(A, Mff, fi, M, s, strafanteil, strafe_zusatz, progress)
+            except _ModalSingulaer:
+                break                       # kleiner geht es nicht
+            bestes[0].freigeben()
+            bestes = (l2, f2, s)
+            try:
+                vals, vecs = _modal_arpack(Kff, Mff, s, k, l2, ncv_kw)
+            except ArpackError:
+                continue
+            return vals, vecs, l2, f2, s, f"ARPACK mit kleinerer Verschiebung (σ = {_zt(s, 2)})"
+        loeser, frei, s = bestes
+        if n_masse <= MODAL_AUSWEICH_DICHT:
+            vals, vecs = _modal_kondensiert(loeser, Mff, mdf, s, k, rang, lform=True)
+            return vals, vecs, loeser, frei, s, "dicht, auf die Freiheitsgrade mit Masse kondensiert"
+    except BaseException:
+        # die gehaltene Zerlegung freigeben (freigeben() ist wiederholbar; der
+        # Aufrufer gibt seine danach noch einmal frei)
+        bestes[0].freigeben()
+        raise
+    bestes[0].freigeben()
+    raise _ModalNichtLoesbar(f"auch nicht mit {MODAL_SHIFT_STUFEN} kleineren Verschiebungen; dicht nur bis "
+                             f"{MODAL_AUSWEICH_DICHT} Freiheitsgrade mit Masse")
+
+
+#: Ab so vielen Zehnerpotenzen zwischen groesster und kleinster Hauptdiagonale
+#: der Steifigkeit nennen die Texte der Eigenloeser die Spreizung als
+#: moegliche Ursache (gemessen 16.11.2026: Kragarm mit Kreisring aus 32
+#: Speichen von 5 mm 13, von 2 mm 15; Kragarm aus 10 Staeben 3, aus 1000
+#: Staeben 7, aus 4000 Staeben 8)
+SPREIZUNG_HINWEIS = 9
+
+
+def _spreizung_satz(Kff) -> str:
+    """Satz zur Spreizung der Steifigkeiten (Hauptdiagonale von ``Kff``),
+    leer unter SPREIZUNG_HINWEIS Zehnerpotenzen."""
+    kd = np.abs(np.asarray(Kff.diagonal(), float).ravel())
+    kd = kd[kd > 0]
+    if not kd.size:
+        return ""
+    z = int(np.floor(np.log10(float(kd.max()) / float(kd.min()))))
+    if z < SPREIZUNG_HINWEIS:
+        return ""
+    return (f" Die Steifigkeiten der Freiheitsgrade liegen um {z} Zehnerpotenzen auseinander (kurze, sehr "
+            f"steife Elemente wie Speichen an einem Kreisring, sehr fein geteilte Stäbe, Kopplungen); das "
+            f"begrenzt die erreichbare Genauigkeit der Eigenwertrechnung.")
+
+
+def _modal_abbruch_text(k: int, n_masse: int, rang: int, Kff, grund: str) -> str:
+    """Klartext, wenn weder ARPACK noch der zweite Loesungsweg Eigenformen
+    lieferten (Runde k10e; vorher nach dem ersten ARPACK-Abbruch)."""
+    return (f"Eigenschwingungen nicht berechenbar: der Eigenlöser (ARPACK) fand keine {k} Eigenformen, "
+            f"{grund}. Das System hat {n_masse} Freiheitsgrade mit Masse in {rang} unabhängigen Richtungen."
+            + _spreizung_satz(Kff)
+            + " Weniger Eigenformen anfordern; bleibt die Meldung, Lagerung, Massen und sehr steife "
+              "Elemente prüfen.")
+
+
+def _modal_weg_hinweis(weg: str, grund: str, Kff) -> str:
+    """Hinweis im Ergebnis, wenn der zweite Loesungsweg gerechnet hat."""
+    return (f"Eigenlöser ARPACK ohne Ergebnis ({grund}); gerechnet mit dem zweiten Lösungsweg: {weg}."
+            + _spreizung_satz(Kff))
+
+
 def _modal_kondensiert(loeser: "LinearSolver", Mff, mdf: np.ndarray, sigma: float, k: int,
                        rang: int = None, lform: bool = False) -> tuple:
     """(Eigenwerte, Eigenvektoren) von Kff v = lambda Mff v, wenn nur wenige
@@ -12357,6 +12592,154 @@ def _direkt_zerlegen(system: StaticSystem, iterativ: LinearSolver,
     return direkt
 
 
+def _k_inverse(system: StaticSystem, progress=None) -> tuple:
+    """(k_inv, freigeben): x -> K^-1 x mit der Zerlegung des Grundzustands
+    (samt Lagrange-Rand der Hilfsfesselung); bei einem iterativen Loeser
+    eigens direkt zerlegt (:func:`_direkt_zerlegen`). ``freigeben`` gibt
+    diese eigene Zerlegung zurueck."""
+    ls = system.solver
+    eigen = _direkt_zerlegen(system, ls, progress) if ls.backend in ITERATIV else None
+    if eigen is not None:
+        ls = eigen
+    n = system.Kff.shape[0]
+    rand = system._rand
+
+    def k_inv(x):
+        x = np.asarray(x, float).ravel()
+        if rand:                    # Lagrange-Rand der Hilfsfesselung (gerandet)
+            y = ls.solve(np.concatenate([x, np.zeros(rand)]), check=False)
+            return np.asarray(y, float).ravel()[:n]
+        return ls.solve(x, check=False)
+
+    def freigeben():
+        if eigen is not None:
+            eigen.freigeben()
+    return k_inv, freigeben
+
+
+#: Grenze der Rayleigh-Abweichung beim Verzweigungsproblem (_mu_pruefen,
+#: bezogen auf das groesste |mu|; Runde k10e). Gemessen am Kragarm mit
+#: Kreisring aus 32 Speichen (Befund Nr. 25, sehr kurze steife Speichen):
+#: brauchbare Paare bis 0,011 (Faktor 45,91 statt 46,06), unbrauchbare ab
+#: 0,16 (Faktoren -1,40 / 0,76 statt 46,06); regelmaessige Modelle unter
+#: 0,00000000001. Weiter als bei der Modalanalyse, weil K als Metrik die
+#: Kondition von K ganz traegt.
+KNICK_RQ_MAX = 0.05
+#: Darueber (und bis KNICK_RQ_MAX) rechnet das Knicken, meldet aber, dass
+#: die Genauigkeit begrenzt ist
+KNICK_RQ_HINWEIS = 1e-3
+
+
+def _mu_pruefen(Kff, Kgff, mu, vecs) -> float:
+    """Paare (mu, v) von -K_g v = mu K v: weicht der Rayleigh-Quotient
+    vᵀ(-K_g)v / vᵀ K v um mehr als KNICK_RQ_MAX (bezogen auf das groesste
+    |mu|) ab, ist es keine Loesung - ArpackError wie ein Abbruch (Runde k10e).
+    Rueckgabe die Abweichung."""
+    from scipy.sparse.linalg import ArpackError
+    mu = np.asarray(mu, float).ravel()
+    bezug = float(np.max(np.abs(mu))) if mu.size else 0.0
+    abw = rayleigh_abweichung(-Kgff, Kff, mu, vecs, bezug) if bezug > 0 else 0.0
+    if not abw <= KNICK_RQ_MAX:
+        fehler = ArpackError(0)
+        fehler.args = (f"gemeldete Eigenwerte weichen vom Rayleigh-Quotienten um {_zt(abw, 2)} ab",)
+        raise fehler
+    return abw
+
+
+def _knick_genauigkeit(abw: float, Kff, progress=None) -> None:
+    """Hinweis im Protokoll, wenn die Paare des Verzweigungsproblems nur
+    begrenzt genau sind (Rayleigh-Abweichung ueber KNICK_RQ_HINWEIS)."""
+    if abw > KNICK_RQ_HINWEIS:
+        _melde(progress, f"Hinweis: Verzweigungslastfaktoren nur begrenzt genau (Abweichung zwischen Eigenwert und "
+                         f"Rayleigh-Quotient {_fest(100.0 * abw, 2)} %)." + _spreizung_satz(Kff))
+
+
+#: Dichter zweiter Weg des Verzweigungsproblems (Runde k10e) bis so viele
+#: Freiheitsgrade mit geometrischer Steifigkeit (Traeger von K_g): je einer
+#: eine Loesung mit der Zerlegung von K, dazu eine dichte Matrix dieser Groesse
+KNICK_DICHT_MAX = 3000
+
+
+def _verzweigung_dicht(k_inv, Kgff, k: int, art: str) -> tuple:
+    """(mu, Eigenvektoren) von -K_g v = mu K v, dicht ueber dem Traeger S von
+    K_g (Runde k10e). Mit G = -K_g[S, S] und F = (K^-1)[S, S] (je Spalte eine
+    Loesung) sind die von null verschiedenen mu die Eigenwerte von F G; mit
+    F = R Rᵀ (aus den Eigenvektoren von F) die der symmetrischen Matrix
+    Rᵀ G R. Zur Loesung y gehoert w = R y auf S und v = K^-1 (Pᵀ G w) / mu.
+    ``art`` "LM": die ``k`` betragsgroessten mu, "LA": die ``k`` groessten."""
+    C = sparse.csr_matrix(Kgff)
+    n = C.shape[0]
+    zeilen = np.unique(C.nonzero()[0])
+    S = zeilen[np.asarray(abs(C[zeilen]).sum(axis=1)).ravel() > 0]
+    if not len(S):
+        return np.zeros(0), np.zeros((n, 0))
+    G = -C[S][:, S].toarray()
+    G = 0.5 * (G + G.T)
+    F = np.empty((len(S), len(S)))
+    e = np.zeros(n)
+    for j, i in enumerate(S):
+        e[i] = 1.0
+        F[:, j] = k_inv(e)[S]
+        e[i] = 0.0
+    if not np.all(np.isfinite(F)):
+        raise RuntimeError("die Zerlegung von K lieferte keine endliche Lösung")
+    w, U = np.linalg.eigh(0.5 * (F + F.T))
+    del F
+    wmax = float(w.max()) if w.size else 0.0
+    if not wmax > 0:
+        raise RuntimeError("die Nachgiebigkeit an den Freiheitsgraden mit Normalkraft ist null")
+    behalten = w > 1e-13 * wmax
+    R = U[:, behalten] * np.sqrt(w[behalten])
+    del U
+    H = R.T @ G @ R
+    mu, Y = np.linalg.eigh(0.5 * (H + H.T))
+    reihe = np.argsort(-np.abs(mu) if art == "LM" else -mu, kind="stable")[:max(1, int(k))]
+    mu = mu[reihe]
+    vecs = np.zeros((n, len(reihe)))
+    rhs = np.zeros(n)
+    for j, r in enumerate(reihe):
+        if mu[j] == 0.0:
+            continue
+        rhs[S] = G @ (R @ Y[:, r])
+        vecs[:, j] = k_inv(rhs) / mu[j]
+    return mu, vecs
+
+
+def _verzweigung_ausweich(Kff, Kgff, k_inv, k: int, art: str, grund: str, progress=None) -> tuple:
+    """Zweiter Loesungsweg fuer -K_g v = mu K v, wenn ARPACK abbrach oder
+    unbrauchbare Paare meldete (Runde k10e, 16.11.2026): bis KNICK_DICHT_MAX
+    Freiheitsgrade mit geometrischer Steifigkeit dicht
+    (:func:`_verzweigung_dicht`), sonst ARPACK mit mehr Lanczos-Vektoren,
+    mehr Schritten und anderem Startvektor. ``art`` "LM" (Knicken: die
+    betragsgroessten mu) oder "LA" (alpha_cr: die groessten). Ohne Ergebnis
+    RuntimeError mit Klartext „Verzweigungslastfaktoren nicht berechenbar"."""
+    from scipy.sparse.linalg import LinearOperator, ArpackError
+    _melde(progress, f"Eigenlöser (ARPACK) ohne Ergebnis beim Verzweigungsproblem ({grund}) – zweiter Lösungsweg")
+    n = Kgff.shape[0]
+    traeger = int(np.count_nonzero(np.asarray(abs(sparse.csr_matrix(Kgff)).sum(axis=1)).ravel() > 0))
+    try:
+        if traeger <= KNICK_DICHT_MAX:
+            mu, vecs = _verzweigung_dicht(k_inv, Kgff, k, art)
+            weg = "dicht"
+        else:
+            op = LinearOperator((n, n), dtype=float, matvec=k_inv)
+            v0 = np.random.default_rng(1).standard_normal(n)
+            kk = max(1, min(k, n - 2))
+            mu, vecs = eigsh(-Kgff, k=kk, M=Kff, Minv=op, which=art, v0=v0,
+                             ncv=min(n - 1, max(4 * kk + 1, 60)), maxiter=50 * n)
+            weg = "ARPACK mit mehr Lanczos-Vektoren"
+        abw = _mu_pruefen(Kff, Kgff, mu, vecs)
+    except (ArpackError, RuntimeError, MemoryError, np.linalg.LinAlgError) as ex:
+        raise RuntimeError(
+            f"Verzweigungslastfaktoren nicht berechenbar: der Eigenlöser (ARPACK) fand keine Lösung ({grund}), "
+            f"auch der zweite Lösungsweg nicht ({eigen_grund(ex)})." + _spreizung_satz(Kff)
+            + " Lagerung, Normalkräfte und sehr steife Elemente prüfen.") from None
+    _melde(progress, f"Verzweigungsproblem mit dem zweiten Lösungsweg gerechnet ({weg})."
+           + _spreizung_satz(Kff))
+    _knick_genauigkeit(abw, Kff, progress)
+    return mu, vecs
+
+
 def _verzweigung(system: StaticSystem, Kgff, k: int, progress=None) -> tuple:
     """(lambda, Eigenvektoren) von K v = lambda (-K_g) v - die ``k``
     betragskleinsten lambda, aufsteigend nach Betrag.
@@ -12395,29 +12778,26 @@ def _verzweigung(system: StaticSystem, Kgff, k: int, progress=None) -> tuple:
     antimetrische Formen senkrecht stehen). Bitgleich wird es damit nicht
     ganz: am Rahmen ist 77,3287 ein siebenfacher Eigenwert, und seine
     zweite und dritte Kopie streuen von Lauf zu Lauf in der 14. Stelle; die
-    erste war in allen Laeufen bitgleich (gemessen 23.09.2026)."""
-    from scipy.sparse.linalg import LinearOperator
-    ls = system.solver
-    eigen = _direkt_zerlegen(system, ls, progress) if ls.backend in ITERATIV else None
-    if eigen is not None:
-        ls = eigen
+    erste war in allen Laeufen bitgleich (gemessen 23.09.2026).
+
+    Zweiter Loesungsweg (Runde k10e, 16.11.2026): bricht ARPACK ab oder
+    weicht der Rayleigh-Quotient eines Paares um mehr als KNICK_RQ_MAX vom
+    gemeldeten mu ab, rechnet :func:`_verzweigung_ausweich` (dicht ueber dem
+    Traeger von K_g, sonst ARPACK mit mehr Lanczos-Vektoren). Bis dahin kam
+    der ARPACK-Fehler roh bei der Oberflaeche an."""
+    from scipy.sparse.linalg import LinearOperator, ArpackError
+    k_inv, freigeben = _k_inverse(system, progress)
     n = Kgff.shape[0]
-    rand = system._rand
-
-    def k_inv(x):
-        x = np.asarray(x, float).ravel()
-        if rand:                    # Lagrange-Rand der Hilfsfesselung (gerandet)
-            y = ls.solve(np.concatenate([x, np.zeros(rand)]), check=False)
-            return np.asarray(y, float).ravel()[:n]
-        return ls.solve(x, check=False)
-
     op = LinearOperator((n, n), dtype=float, matvec=k_inv)
     v0 = np.random.default_rng(0).standard_normal(n)
     try:
-        mu, vecs = eigsh(-Kgff, k=k, M=system.Kff, Minv=op, which="LM", v0=v0)
+        try:
+            mu, vecs = eigsh(-Kgff, k=k, M=system.Kff, Minv=op, which="LM", v0=v0)
+            _knick_genauigkeit(_mu_pruefen(system.Kff, Kgff, mu, vecs), system.Kff, progress)
+        except ArpackError as ex:
+            mu, vecs = _verzweigung_ausweich(system.Kff, Kgff, k_inv, k, "LM", eigen_grund(ex), progress)
     finally:
-        if eigen is not None:
-            eigen.freigeben()
+        freigeben()
     lam = np.full(len(mu), np.inf)
     np.divide(1.0, mu, out=lam, where=mu != 0.0)
     order = np.argsort(np.abs(lam), kind="stable")
@@ -12514,7 +12894,7 @@ def _positiven_nachfordern(system: StaticSystem, Kgff, k: int, vals, vecs, progr
     n = Kgff.shape[0]
     lam_p, vec_p = None, None
     try:
-        mu, v = groesstes_mu(system.Kff, Kgff, k=1)
+        mu, v = groesstes_mu(system.Kff, Kgff, k=1, system=system, progress=progress)
         if mu is None:
             return vals, vecs, (f"Kein positiver Knickfaktor: unter dieser Last knickt das System nicht. "
                                 f"Die {len(vals)} berechneten Faktoren sind negativ, sie gehören zum "

@@ -545,9 +545,13 @@ def alpha_cr(model: Model, system, u: np.ndarray, nmodes: int = 1, n_anfang: dic
         return {"alpha_cr": math.inf, "fehler": "keine Normalkräfte - "
                                                 "kein Verzweigungsproblem", **stab}
     try:
-        mu, vecs = groesstes_mu(system.Kff, Kgff, k=nmodes)
-    except Exception as exc:                       # pragma: no cover
-        return {"alpha_cr": math.inf, "fehler": f"Eigenwertlöser: {exc}", **stab}
+        mu, vecs = groesstes_mu(system.Kff, Kgff, k=nmodes, system=system)
+    except Exception as exc:                       # noqa: BLE001
+        # Auch der zweite Loesungsweg rechnete nicht (Runde k10e): alpha_cr
+        # ist unbekannt, nicht unendlich - ``eigen_fehler`` sagt check_theorie2,
+        # dass es nicht „Theorie I. Ordnung ausreichend“ heissen darf
+        return {"alpha_cr": math.inf, "eigen_fehler": True,
+                "fehler": f"α_cr nicht bestimmbar – {exc} Theorie II. Ordnung wird gerechnet.", **stab}
     if mu is None:
         return {"alpha_cr": math.inf,
                 "fehler": "kein positiver Verzweigungslastfaktor", **stab}
@@ -716,8 +720,15 @@ def _definit_zerlegen(C):
     return lu, definit
 
 
-def groesstes_mu(Kff, Kgff, k: int = 1, schaetzwert: float = None):
+def groesstes_mu(Kff, Kgff, k: int = 1, schaetzwert: float = None, system=None, progress=None):
     """Die ``k`` groessten mu von -K_g v = mu K v, das groesste zuerst.
+
+    ``system`` (StaticSystem des Grundzustands, Runde k10e, 16.11.2026):
+    bricht ARPACK ab oder meldet es unbrauchbare Paare, rechnet der zweite
+    Loesungsweg solver._verzweigung_ausweich mit der Zerlegung von K; ohne
+    ``system`` kommt der Fehler wie bisher. Bis dahin gab alpha_cr dann
+    „unendlich“ zurueck, und check_theorie2 („auto“) nahm die Kombination
+    als „Theorie I. Ordnung ausreichend“.
 
     Rueckgabe (mu, Eigenvektoren je Spalte) oder (None, None), wenn schon
     der Schaetzwert aus Schritt 1 nicht ueber 1e-12 liegt (alpha_cr ueber
@@ -763,7 +774,33 @@ def groesstes_mu(Kff, Kgff, k: int = 1, schaetzwert: float = None):
     Werte, mit ihm einen. Allgemein zugesagt ist Bitgleichheit nicht
     (Theoriehandbuch 5.1a).
     """
+    if system is None:
+        return _groesstes_mu_arpack(Kff, Kgff, k, schaetzwert)
+    from scipy.sparse.linalg import ArpackError
+    try:
+        return _groesstes_mu_arpack(Kff, Kgff, k, schaetzwert)
+    except (ArpackError, RuntimeError) as ex:
+        from .solver import eigen_grund
+        grund = eigen_grund(ex)
+    from .solver import _k_inverse, _verzweigung_ausweich
+    k_inv, freigeben = _k_inverse(system, progress)
+    try:
+        mu, vecs = _verzweigung_ausweich(Kff, Kgff, k_inv, max(1, min(k, Kgff.shape[0] - 2)), "LA",
+                                         grund, progress)
+    finally:
+        freigeben()
+    folge = np.argsort(mu)[::-1]
+    mu, vecs = mu[folge], vecs[:, folge]
+    if not (mu.size and mu[0] > 1e-12):
+        return None, None
+    return mu, vecs
+
+
+def _groesstes_mu_arpack(Kff, Kgff, k: int = 1, schaetzwert: float = None):
+    """Die drei Schritte von :func:`groesstes_mu` mit ARPACK; die Paare der
+    Stufe 3 werden geprueft (solver._mu_pruefen, Runde k10e)."""
     from scipy.sparse.linalg import eigsh, LinearOperator
+    from .solver import _mu_pruefen
     n = Kgff.shape[0]
     A = (-Kgff).tocsc()
     v0 = np.random.default_rng(0).standard_normal(n)
@@ -786,6 +823,7 @@ def groesstes_mu(Kff, Kgff, k: int = 1, schaetzwert: float = None):
                         matvec=lambda x: -lu.solve(np.asarray(x, dtype=float).ravel()))
     mu, vecs = eigsh(A, k=max(1, min(k, n - 2)), M=Kff, sigma=s, which="LM",
                      v0=v0, OPinv=op, tol=1e-10)
+    _mu_pruefen(Kff, Kgff, mu, vecs)
     folge = np.argsort(mu)[::-1]
     return mu[folge], vecs[:, folge]
 
@@ -1318,7 +1356,7 @@ def check_theorie2(model: Model, analysis, combos: list = None, system=None,
             if ac.get("hinweis_teilung"):
                 info.hinweise.append(ac["hinweis_teilung"])
             info.hinweise.extend(ll_hinweise)
-            if ac["alpha_cr"] >= grenze:
+            if ac["alpha_cr"] >= grenze and not ac.get("eigen_fehler"):
                 # nur alpha_cr: Hinweis Biegedrillknicken wie in solve_theorie2 (Runde k8)
                 from .bdk_hinweis import hinweis_th2 as bdk_hinweis, merken as bdk_merken
                 bdk_merken(info, *bdk_hinweis(m_a, getattr(s_a, "aktiv", None), u=u1, feq=_feq, q=_q))
