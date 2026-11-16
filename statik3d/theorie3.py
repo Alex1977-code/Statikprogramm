@@ -492,11 +492,16 @@ def _nur_staebe(model: Model, aktiv) -> bool:
 
 # Rest, bis zu dem sich die Lastbeitraege an einem Knoten als aufgehoben
 # gelten (Rundung der Faktoren, z. B. 0,1 und 0,3): relativ _LAST_REST mal die
-# Betragssumme der Beitraege, hoechstens aber _LAST_REST_MAX (N bzw. Nm). Ein
-# uebersehener Rest bleibt damit unter 0,001 N; an der Straffeder 1e4 N/m sind
-# das unter 0,0001 mm. Der Rundungsrest (etwa 1e-16 der Betragssumme) bleibt
-# bis zu einer Betragssumme von rund 1e12 N darunter.
-_LAST_REST = 1e-9
+# Betragssumme der Beitraege, hoechstens aber _LAST_REST_MAX (N bzw. Nm).
+# _LAST_REST liegt auf Rundungsniveau: die Summe von n Beitraegen rundet um
+# hoechstens etwa n * 2,2e-16 der Betragssumme, 1e-13 deckt also mehrere
+# hundert Beitraege; ein groesserer Rest ist eine echte Last, die auch der
+# Lastvektor von Theorie I. Ordnung aufloest. Bis zur Runde k10d (16.11.2026)
+# war _LAST_REST = 1e-9: an einem weichen Kragarm (L = 10 m, I = 1e-6 m^4,
+# 1 N am Ende) mit -1e7 N / +1e7 N und einem Rest von 0,0009 N am Slave eines
+# RBE3 „Stabende“ lag die Schranke bei 0,001 N, und Theorie III. Ordnung
+# rechnete still 1,587302 statt 1,588730 mm.
+_LAST_REST = 1e-13
 _LAST_REST_MAX = 1e-3
 
 
