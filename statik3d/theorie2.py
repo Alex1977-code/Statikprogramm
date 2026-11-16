@@ -296,6 +296,26 @@ def vorkruemmung_noetig(model: Model, mem, Nc: float) -> dict:
                       "nach 5.3.2(6) nicht erforderlich")}
 
 
+def _kraft_am_stabende(model: Model, el, j: int, f, F: np.ndarray) -> None:
+    """Die Kraft ``f`` (global, (3,)) am Stabende ``j`` (0 Anfang, 1 Ende) des
+    Elements ``el`` in den Lastvektor F: am Knoten, bei einem Balken mit
+    Versatz der Stabenden dazu das Moment des starren Arms a_j x f - die
+    Kraft greift am versetzten Stabende an, nicht am Knoten (Runde k10d,
+    16.11.2026; bis dahin ohne Arm: Stab 6,5 m mit Arm 0,5 m in Stabrichtung
+    am Ende, Theorie II. Ordnung Mz 11,26 statt 12,67 kNm)."""
+    nd = int(el.nodes[j])
+    f = np.asarray(f, float)
+    F[nd * NDOF:nd * NDOF + 3] += f
+    if el.typ != "beam":
+        return
+    rr = bm.versatz_vektoren(getattr(el, "exzentrizitaet", None))
+    if rr is None:
+        return
+    X = np.asarray(model.nodes[el.nodes[:2]], float)
+    T3n, _l = bm.local_axes(X[0], X[1], el.roll)
+    F[nd * NDOF + 3:nd * NDOF + 6] += np.cross(T3n.T @ rr[j], f)
+
+
 def ersatzlasten_vorkruemmung(model: Model, res, elastisch: bool = True,
                               alle: bool = False, stablasten: dict = None) -> tuple:
     """
@@ -306,7 +326,9 @@ def ersatzlasten_vorkruemmung(model: Model, res, elastisch: bool = True,
 
     Angesetzt wird in der lokalen **y**-Richtung des Stabes: e_0 stammt aus
     der Knicklinie fuer die schwache Achse z, und Knicken um z bedeutet
-    Ausweichen in y.  Nur gedrueckte Staebe bekommen eine Vorkruemmung, und
+    Ausweichen in y (die y-Achse des ersten Elements gilt fuer den ganzen
+    Stab; V greift an den Stabenden an, mit Versatz am versetzten Stabende,
+    :func:`_kraft_am_stabende`).  Nur gedrueckte Staebe bekommen eine Vorkruemmung, und
     nur die nach 5.3.2(6) schlanken (``alle=True`` setzt sie fuer alle an).
 
     ``stablasten`` (ein leeres dict): q wirkt auf den Balken als Streckenlast
@@ -349,32 +371,42 @@ def ersatzlasten_vorkruemmung(model: Model, res, elastisch: bool = True,
         kurve, _sec, _fy = _knicklinie(model, mem)
         e0 = e0_durch_L(kurve, elastisch) * L
         q = 8.0 * Nc * e0 / L ** 2
-        for ie in mem.elements:
+        els = [int(x) for x in mem.elements]
+        ea = model.elements[els[0]]
+        T3a, _ = asm.stab_achsen(model, ea)
+        # eine Richtung fuer den ganzen Stab: die lokale y-Achse seines
+        # ersten Elements, global. Bis Stand 73 je Element die eigene - ein
+        # umgedrehtes Element bekam q gegen die anderen (Runde k10d)
+        y_stab = np.asarray(T3a[1], float)
+        for ie in els:
             el = model.elements[ie]
             # Achsen und Laenge des Stabs (mit verschiedenem Versatz zwischen
             # den versetzten Enden, wie member_length; 12.11.2026)
             T3, Le = asm.stab_achsen(model, el)
+            ql = T3 @ (q * y_stab)
+            ql[0] = 0.0                           # quer zum Stab
             if stablasten is not None and el.typ == "beam":
-                # als Streckenlast in lokal y, wie asm.element_equivalent_loads
+                # als Streckenlast in lokalen Achsen, wie asm.element_equivalent_loads
                 # und element_distributed_loads eine Last des Anwenders
                 Lel = model.element_length(ie)
                 phy, phz = asm.stab_schubparameter(model, el, Lel)
-                ql = np.array([0.0, q, 0.0])
                 feq_v[ie] = feq_v.get(ie, np.zeros(12)) + asm.trapezoid_fixed_end_forces(
                     ql, ql, Lel, phy, phz)
                 q_v[ie] = asm.abschnitte_zusammen(q_v.get(ie), [0.0, Lel, *ql, *ql])
                 continue
-            ny = T3[1]                            # lokale y-Achse global
-            fk = 0.5 * q * Le
-            for nd in (int(el.nodes[0]), int(el.nodes[1])):
-                F[nd * NDOF:nd * NDOF + 3] += fk * ny
-        ea = model.elements[mem.elements[0]]
-        T3a, _ = asm.stab_achsen(model, ea)
-        na = int(ea.nodes[0])
-        nb = int(model.elements[mem.elements[-1]].nodes[-1])
+            fk = 0.5 * Le * (T3.T @ ql)           # global, je Stabende des Elements
+            for j in (0, 1):
+                _kraft_am_stabende(model, el, j, fk, F)
+        # V an den Enden des Stabs (bei umgedrehtem erstem oder letztem
+        # Element der andere Knoten) und am versetzten Stabende: mit Versatz
+        # das Moment des Arms dazu. Bis Stand 73 immer nodes[0] des ersten und
+        # nodes[-1] des letzten Elements, ohne Arm (Runde k10d)
+        from .stabteilung import _vorwaerts
+        ja = 0 if _vorwaerts(model, els, 0) else 1
+        jb = 1 if _vorwaerts(model, els, len(els) - 1) else 0
         V = 4.0 * Nc * e0 / L
-        F[na * NDOF:na * NDOF + 3] -= V * T3a[1]
-        F[nb * NDOF:nb * NDOF + 3] -= V * T3a[1]
+        _kraft_am_stabende(model, ea, ja, -V * y_stab, F)
+        _kraft_am_stabende(model, model.elements[els[-1]], jb, -V * y_stab, F)
         je_stab.append({"stab": name, "L": L, "kurve": kurve, "e0_L": e0 / L,
                         "e_0": e0, "N_Ed": Nc, "q": q, "V": V,
                         "lambda": krit.get("lambda", 0.0),

@@ -2711,6 +2711,42 @@ def _vorkruemmung_moeglich(model) -> bool:
         return True
 
 
+def _biegegelenke_beidseitig(model) -> bool:
+    """Modellmerkmal stabteilung_biegegelenke: ein teilbarer Balken mit
+    Biegegelenk an beiden Enden um dieselbe Achse, dessen Querverschiebung
+    an keinem Ende frei ist (stabteilung._endgelenk_bleibt) - bis Stand 73
+    strich die interne Stabteilung das Gelenk am Ende."""
+    try:
+        from .stabteilung import BIEGEGELENKE, teilbar
+        for i, e in enumerate(getattr(model, "elements", None) or []):
+            frei = {int(d) for d in (getattr(e, "hinges", None) or [])}
+            if not frei or getattr(e, "typ", "") != "beam":
+                continue
+            if any(b in frei and b + 6 in frei and q not in frei and q + 6 not in frei
+                   for b, q in BIEGEGELENKE.items()) and teilbar(model, i):
+                return True
+        return False
+    except Exception:                       # noqa: BLE001 - Pruefung, nie Abbruch
+        return False
+
+
+def _versatz_verteilt(model) -> bool:
+    """Modellmerkmal versatz_verteilt: ein Balken mit Versatz, den die interne
+    Stabteilung (Stabteilung, doppelt fuer Theorie III. Ordnung, mindestens
+    20 Teile) nur verteilt teilen kann - bis Stand 73 blieb er ungeteilt."""
+    try:
+        from .stabteilung import (_hat_versatz, versatz_nur_verteilt, soll_teilung, FAKTOR_THEORIE3,
+                                  TEILUNG_VORKRUEMMUNG)
+        # die feinste Teilung: kuerzere Teile scheitern eher (Arm laenger als ein Teil)
+        n = max(soll_teilung(model, FAKTOR_THEORIE3), TEILUNG_VORKRUEMMUNG * FAKTOR_THEORIE3)
+        for i, e in enumerate(getattr(model, "elements", None) or []):
+            if getattr(e, "typ", "") == "beam" and _hat_versatz(e) and versatz_nur_verteilt(model, i, n):
+                return True
+        return False
+    except Exception:                       # noqa: BLE001 - Pruefung, nie Abbruch
+        return False
+
+
 def _vorkruemmung_im_ergebnis(model, an) -> str:
     """Rechnungen nach Theorie II./III. Ordnung, die eine Vorkruemmung
     angesetzt haben."""
@@ -4143,16 +4179,50 @@ MERKMALE: list = [
     # das Feldmoment zwischen den Knoten (3 Teile 10,36, 5 Teile 11,11, 10
     # Teile 11,47 kNm). Theorie II. Ordnung setzt sie jetzt als Streckenlast
     # im Element an, Theorie III. Ordnung teilt gedrueckte Staebe mindestens
-    # in 20 Teile. Fehlerkorrektur
+    # in 20 Teile. Mit derselben Korrektur (Nachbesserung 1): eine Richtung
+    # je Stab (ein umgedrehtes Element bekam q gegen die anderen), V an den
+    # wirklichen Stabenden und am versetzten Stabende mit dem Moment des Arms
+    # (Stab 6,5 m, Arm 0,5 m in Stabrichtung: Th II 10,53 statt 12,67 kNm).
+    # Fehlerkorrektur
     Merkmal(
         name="vorkruemmung_streckenlast", titel="Vorkrümmung als Streckenlast im Element",
-        texte={"alt": "Vorkrümmung als Knotenkraft an den Elementknoten (in einem Element je Stab ohne Wirkung)",
+        texte={"alt": "Vorkrümmung als Knotenkraft an den Elementknoten (in einem Element je Stab ohne Wirkung), "
+                      "Richtung je Element, V am Knoten ohne Versatz",
                "neu": "Theorie II. Ordnung: Streckenlast im Element; Theorie III. Ordnung: gedrückte Stäbe "
-                      "mindestens in 20 Teilen"},
+                      "mindestens in 20 Teilen; eine Richtung je Stab, V am versetzten Stabende"},
         wechsel=(Wechsel(stand=74, datum="16.11.2026", commit="fix/k10-ec3", alt="alt", neu="neu",
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Ersatzimperfektionen an und ein Stab mit Balken nach Theorie II. oder III. Ordnung",
         betrifft=_vorkruemmung_moeglich, im_ergebnis=_vorkruemmung_im_ergebnis),
+    # Runde k10d, Nachbesserung 1 (16.11.2026): die interne Stabteilung
+    # strich das Biegegelenk am Ende eines Balkens, der an beiden Enden ein
+    # Biegegelenk hat - der Gelenkstab war am Ende eingespannt. IPE 300, 6 m,
+    # q 5 kN/m, Theorie II. Ordnung, Stabteilung 10: 28,33 statt 54,00 kNm
+    # im Feld; mit 200 kN Druck und Vorkruemmung nach Theorie III. Ordnung
+    # 6,03 statt 11,48 kNm. Fehlerkorrektur
+    Merkmal(
+        name="stabteilung_biegegelenke", titel="Interne Stabteilung: Biegegelenke an beiden Enden",
+        texte={"alt": "Biegegelenk am Stabende entfiel beim Teilen, wenn auch der Stabanfang eines hatte",
+               "neu": "Biegegelenke bleiben an beiden Enden des geteilten Stabs"},
+        wechsel=(Wechsel(stand=74, datum="16.11.2026", commit="fix/k10-ec3", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Balken mit Biegegelenk an beiden Enden (gleiche Achse) mit α_cr, Knicken oder Theorie "
+                      "II./III. Ordnung",
+        betrifft=_biegegelenke_beidseitig, im_ergebnis=_versatz_stabteilung_im_ergebnis),
+    # Runde k10d, Nachbesserung 1 (16.11.2026): ein Stab mit Versatz, dessen
+    # Arm laenger als ein Teil gegen die Stabrichtung ist, blieb ungeteilt;
+    # nach Theorie III. Ordnung (20 Teile) fehlte die Vorkruemmung in einem
+    # Element still (Stab 6,5 m, Arm 0,5 m: Mz 0 statt 12,67 kNm). Seither
+    # verteilt geteilt (stabteilung.versatz_teile). Fehlerkorrektur
+    Merkmal(
+        name="versatz_verteilt", titel="Interne Stabteilung: Versatz auf alle Teile verteilt",
+        texte={"alt": "Stab mit Versatz, dessen Arm länger als ein Teil ist, ungeteilt",
+               "neu": "Stab verteilt geteilt: Zwischenknoten auf der Knotenlinie, Arm linear auf alle Teile"},
+        wechsel=(Wechsel(stand=74, datum="16.11.2026", commit="fix/k10-ec3", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Stab mit Versatz, den die interne Stabteilung nur verteilt teilen kann, mit α_cr, "
+                      "Knicken oder Theorie II./III. Ordnung",
+        betrifft=_versatz_verteilt, im_ergebnis=_versatz_stabteilung_im_ergebnis),
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle

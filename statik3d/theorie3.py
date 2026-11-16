@@ -692,7 +692,7 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
     ll_hinweise = []
     if stabteilung:
         from .stabteilung import (teilen, zurueck, teilzahlen, kraefte_theorie1, FAKTOR_THEORIE3,
-                                  laengslast_hinweise, vorkruemmung_mindest)
+                                  laengslast_hinweise, vorkruemmung_mindest, vorkruemmung_hinweise)
         gemerkt: dict = {}
 
         def _kraefte():
@@ -719,6 +719,8 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
             if kraefte is not None:
                 mindest = vorkruemmung_mindest(model, kraefte, aktiv, FAKTOR_THEORIE3) if imp else None
                 zahlen = teilzahlen(model, aktiv, FAKTOR_THEORIE3, kraefte, mindest=mindest)
+                # nicht teilbar (Versatz): Hinweis statt still ohne Vorkruemmung
+                ll_hinweise = ll_hinweise + vorkruemmung_hinweise(model, mindest, zahlen)
                 if zahlen:
                     fein = teilen(model, aktiv, zahlen)
         if fein is not None:

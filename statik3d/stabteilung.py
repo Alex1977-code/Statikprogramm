@@ -97,7 +97,19 @@ def versatz_teile(model, i: int, n: int):
     Versatz in den Achsen seiner Knotenlinie. Geprueft wird das Ergebnis auf
     dem Weg der Rechnung (bm.versatz_arme, bm.stab_achsen_versetzt): weichen
     Achsen, Arme oder Laenge ab (Arm laenger als ein Teil gegen die
-    Stabrichtung), bleibt das Element ungeteilt."""
+    Stabrichtung), wird verteilt geteilt (unten).
+
+    Verteilt (Runde k10d, 16.11.2026, Verfahrensstand 74): die Zwischenknoten
+    liegen gleichmaessig auf der Knotenlinie x_0 -> x_1, und jedes Teil hat
+    einen Arm, der linear von a_0 nach a_1 laeuft - Teil k zwischen den
+    Stabpunkten Q_k und Q_k+1 der versetzten Achse wie oben, nur haengen die
+    Zwischenknoten mit dem Arm a_0 + k/n (a_1 - a_0) daran. Mechanisch ist
+    das derselbe Stab (die Zwischenknoten haben sonst nichts angeschlossen).
+    So teilt sich auch ein Stab, dessen Arm laenger als ein Teil ist - bis
+    dahin blieb er ganz, und nach Theorie III. Ordnung fehlte die
+    Vorkruemmung in einem Element still (Stab 6,5 m, Arm 0,5 m in
+    Stabrichtung am Ende: Mz 0 statt 12,67 kNm). None erst, wenn auch das
+    nicht geht."""
     from .assemble import stab_achsen
     from .elements import beam3d as bm
     e = model.elements[i]
@@ -110,15 +122,51 @@ def versatz_teile(model, i: int, n: int):
     arm = (T3n.T @ rr[0], T3n.T @ rr[1])
     P0, P1 = X[0] + arm[0], X[1] + arm[1]
     T3s, Ls = stab_achsen(model, e)
+    aus = _versatz_teile_versuch(X, arm, P0, P1, T3s, Ls, n, verteilt=False)
+    if aus is None:
+        aus = _versatz_teile_versuch(X, arm, P0, P1, T3s, Ls, n, verteilt=True)
+    return aus
+
+
+def versatz_nur_verteilt(model, i: int, n: int) -> bool:
+    """Teilt sich Element ``i`` in ``n`` Teile nur verteilt
+    (:func:`versatz_teile`, seit Verfahrensstand 74) - bis dahin blieb es
+    ungeteilt? Fuer das Merkmal versatz_verteilt."""
+    from .assemble import stab_achsen
+    from .elements import beam3d as bm
+    e = model.elements[i]
+    rr = bm.versatz_vektoren(getattr(e, "exzentrizitaet", None))
+    if rr is None or int(n) < 2:
+        return False
+    X = np.asarray(model.nodes[e.nodes[:2]], float)
+    T3n, _Ln = bm.local_axes(X[0], X[1], e.roll)
+    arm = (T3n.T @ rr[0], T3n.T @ rr[1])
+    T3s, Ls = stab_achsen(model, e)
+    args = (X, arm, X[0] + arm[0], X[1] + arm[1], T3s, Ls, int(n))
+    return (_versatz_teile_versuch(*args, verteilt=False) is None
+            and _versatz_teile_versuch(*args, verteilt=True) is not None)
+
+
+def _versatz_teile_versuch(X, arm, P0, P1, T3s, Ls, n: int, verteilt: bool):
+    """Die Teile wie :func:`versatz_teile` - ``verteilt`` False: Arm nur am
+    ersten und letzten Teil; True: Arm linear verteilt auf alle Teile,
+    Zwischenknoten auf der Knotenlinie. None, wenn die Gegenprobe scheitert."""
+    from .elements import beam3d as bm
     t, ys = T3s[0], T3s[1]
     Q = [P0 + (P1 - P0) * (k / n) for k in range(n + 1)]
     null = np.zeros(3)
     aus = []
     for k in range(n):
-        ra = arm[0] if k == 0 else null
-        rb = arm[1] if k == n - 1 else null
-        A = X[0] if k == 0 else Q[k]
-        B = X[1] if k == n - 1 else Q[k + 1]
+        if verteilt:
+            ra = arm[0] + (arm[1] - arm[0]) * (k / n)
+            rb = arm[0] + (arm[1] - arm[0]) * ((k + 1) / n)
+            A = X[0] if k == 0 else Q[k] - ra
+            B = X[1] if k == n - 1 else Q[k + 1] - rb
+        else:
+            ra = arm[0] if k == 0 else null
+            rb = arm[1] if k == n - 1 else null
+            A = X[0] if k == 0 else Q[k]
+            B = X[1] if k == n - 1 else Q[k + 1]
         d = B - A
         lang = float(np.linalg.norm(d))
         if lang <= VERSATZ_TOL * Ls:
@@ -306,6 +354,42 @@ def vorkruemmung_mindest(model, kraefte: dict, aktiv=None, faktor: int = 1) -> d
     return out
 
 
+#: Woran der Hinweis zu erkennen ist
+VORKRUEMMUNG_KENNUNG = "Vorkrümmung nach Theorie III. Ordnung unvollständig"
+
+
+def vorkruemmung_hinweise(model, mindest: dict, zahlen: dict) -> list:
+    """Hinweise zu den gedrueckten Staeben (``mindest``,
+    :func:`vorkruemmung_mindest`), die Theorie III. Ordnung nicht in so viele
+    Abschnitte teilen kann (``zahlen`` aus :func:`teilzahlen`): ein Element
+    mit Versatz, das auch verteilt nicht zu teilen ist
+    (:func:`versatz_teile`). Dort wirkt die Vorkruemmung als Knotenkraft nur
+    an den Knoten des Modells - in einem Element gar nicht (Runde k10d,
+    16.11.2026). Kein Wert wird geaendert; ein Hinweis sperrt nie eine
+    Rechnung."""
+    try:
+        if not mindest:
+            return []
+        ne = len(model.elements)
+        out = []
+        for name, mem in (getattr(model, "members", None) or {}).items():
+            idx = [int(i) for i in (mem.elements or []) if 0 <= int(i) < ne]
+            soll = max((int(mindest.get(i, 0)) for i in idx), default=0)
+            if soll <= 1:
+                continue
+            k = sum(int(zahlen.get(i, 1)) for i in idx)
+            ganz = [i for i in idx if i in mindest and i not in zahlen and _hat_versatz(model.elements[i])]
+            if k < soll and ganz:
+                out.append(f"Stab {name} (Element {ganz[0]}): {VORKRUEMMUNG_KENNUNG} – der Stab lässt sich "
+                           f"wegen seines Versatzes nicht intern teilen und rechnet in {k} "
+                           f"{'Element' if k == 1 else 'Elementen'}; die Vorkrümmung wirkt nur an den Knoten "
+                           "des Modells (in einem Element gar nicht). Den Stab im Modell in mindestens "
+                           f"{soll} Elemente teilen oder nach Theorie II. Ordnung rechnen.")
+        return out
+    except Exception:                       # noqa: BLE001 - ein Hinweis sperrt keine Rechnung
+        return []
+
+
 def teilzahlen(model, aktiv=None, faktor: int = 1, kraefte: dict = None,
                mindest: dict = None) -> dict:
     """{Element: Zahl der Teile > 1} - nach der Laenge des Stabs (Member;
@@ -478,6 +562,32 @@ def _vorwaerts(model, elems: list, k: int) -> bool:
     return True
 
 
+#: Biegegelenk -> Querverschiebung seiner Biegeebene (phi_z: u_y, phi_y: u_z),
+#: je am Stabanfang gezaehlt (am Ende +6)
+BIEGEGELENKE = {5: 1, 4: 2}
+
+
+def _endgelenk_bleibt(d: int, anfang: list, gelenke) -> bool:
+    """Bleibt das Gelenk ``d`` (>= 6) am Ende des letzten Teils? Ja, wenn der
+    Freiheitsgrad am Anfang nicht frei ist; an beiden Enden frei nur ein
+    Biegegelenk, dessen Querverschiebung an keinem Ende frei ist.
+
+    Behebung Runde k10d (16.11.2026, Verfahrensstand 74): bis dahin fiel jedes
+    Endgelenk weg, das auch am Anfang stand - auch das Biegegelenk. Der
+    Gelenkstab zwischen biegesteifen Knoten war damit am Ende eingespannt:
+    IPE 300, 6 m, q 5 kN/m, Theorie II. Ordnung mit Stabteilung 10, 28,33
+    statt 54,00 kNm im Feld und 28,33 statt 0 am Gelenk; mit 200 kN Druck und
+    Vorkruemmung nach Theorie III. Ordnung 6,03 statt 11,48 kNm."""
+    b = int(d) - 6
+    if b not in anfang:
+        return True
+    quer = BIEGEGELENKE.get(b)
+    if quer is None:
+        return False
+    frei = {int(x) for x in (gelenke or [])}
+    return quer not in frei and quer + 6 not in frei
+
+
 class Abbildung:
     """Wie die Teile im feinen Modell zu den Elementen des Modells gehoeren."""
 
@@ -542,10 +652,15 @@ def teilen(model, aktiv=None, zahlen: dict = None):
         for k in range(1, n):
             neue_knoten.append(vt[k][0] if vt is not None else X0 + (X1 - X0) * (k / n))
         anfang = [int(d) for d in (e.hinges or []) if int(d) < 6]
-        # an beiden Enden frei (etwa die Torsion): das ungeteilte Element
-        # uebertraegt dort nichts; die Kette bleibt am Ende angeschlossen,
-        # sonst haetten ihre Zwischenknoten keine Steifigkeit in diesem FHG
-        ende = [int(d) for d in (e.hinges or []) if int(d) >= 6 and int(d) - 6 not in anfang]
+        # Verschiebung oder Torsion an beiden Enden frei: das ungeteilte
+        # Element uebertraegt dort nichts; die Kette bleibt am Ende
+        # angeschlossen, sonst haetten ihre Zwischenknoten keine Steifigkeit in
+        # diesem FHG. Ein Biegegelenk (phi_y, phi_z) bleibt an beiden Enden,
+        # solange die Querverschiebung seiner Biegeebene an beiden Enden
+        # gehalten ist - dann haelt die Kette die Biegung ueber ihre
+        # Verschiebungen (:func:`_endgelenk_bleibt`)
+        ende = [int(d) for d in (e.hinges or [])
+                if int(d) >= 6 and _endgelenk_bleibt(int(d), anfang, e.hinges)]
         f_anfang = [(int(d), k) for d, k in (e.hinge_springs or []) if int(d) < 6]
         f_ende = [(int(d), k) for d, k in (e.hinge_springs or []) if int(d) >= 6]
         teile = []
