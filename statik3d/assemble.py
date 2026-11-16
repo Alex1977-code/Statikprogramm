@@ -1564,6 +1564,14 @@ RBE3_FAKTOR = 1e4
 #: (E = 5 N/mm²) hebt sie den Faktor auf rund 10 000 000.
 RBE3_STEIF_MIN = 1e15
 
+#: Koeffizienten einer umgeformten RBE3-Zeile unter diesem Anteil ihres
+#: groessten Koeffizienten sind Rundungsrest der Loesung mit G_m und tragen
+#: zur Steifigkeit der Zeile nichts bei (:func:`rbe3_zeilen_master`,
+#: Zusammenfuehrung k10, 16.11.2026). Gemessen: Rest um 3e-16 relativ; ein
+#: Slave, der eine Masterbewegung wirklich mitbestimmt, liegt um viele
+#: Zehnerpotenzen darueber.
+RBE3_RUNDUNG = 1e-12
+
 
 def rbe3_zeilensummen(K: sparse.spmatrix, G: np.ndarray, d: np.ndarray) -> np.ndarray:
     """Zeilensummen von |K| ueber die Verschiebungs-FHG der Slaves eines RBE3
@@ -1657,11 +1665,24 @@ def rbe3_zeilen_master(G: np.ndarray, d: np.ndarray, gross: float,
     d = np.abs(np.asarray(d, float))
     S = np.empty(6)
     for j in range(6):
-        b2 = Gn[j, 6:] ** 2
+        bj = Gn[j, 6:]
+        b2 = bj ** 2
         nb2 = float(b2.sum())
         if not nb2 > 0.0:
             return None
+        # Ein Slave mit einem Koeffizienten auf Rundungsniveau bestimmt die
+        # Bewegung nicht mit; zaehlte seine Steifigkeit (Zusammenfuehrung k10,
+        # 16.11.2026), lag der Zaehler um 1e-22 statt bei null: k_j fiel auf
+        # 1e-14 N/m statt „gross“, die Zwangsbedingung dieser Masterbewegung
+        # fehlte, und eine Last am Master in dieser Richtung ging still in die
+        # automatische Fesselung (RBE3 an b und gelagerten Slaves, Fx = 1 kN am
+        # Master: Summe Rx 0 statt -1 000 N).
+        # Nur wenn allein solche Slaves Steifigkeit haben, zaehlt die Zeile
+        # als ohne Steifigkeit; sonst bleibt die Summe unveraendert (bitgleich).
+        traegt = np.abs(bj) > RBE3_RUNDUNG * float(np.abs(bj).max())
         zaehler = float(b2 @ d[6:])
+        if zaehler > 0.0 and not float(b2[traegt] @ d[6:][traegt]) > 0.0:
+            zaehler = 0.0
         S[j] = zaehler / nb2 ** 2 if zaehler > 0.0 else float(gross) / nb2
     # Untergrenze in N/m an der steifsten Verschiebungszeile (siehe RBE3_STEIF_MIN)
     f = max(f, RBE3_STEIF_MIN / float(S[:3].max())) if faktor is None else f
