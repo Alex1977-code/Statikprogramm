@@ -6081,7 +6081,7 @@ diese Knoten zu keinem Element gehören. Gehört einer ihrer Flächenknoten zu
 einem abgeschalteten Körper, bleiben Lasten, Punktmassen und Kopplungen an
 diesen Knoten außer Ansatz, und der Körper lebt über den Stab nicht wieder
 auf. Bis Stand 66 entfielen solche Lasten still (Beispiel: Summe der
-Auflagerkräfte   statt   N); betroffen waren auch Theorie II. und III.
+Auflagerkräfte 1 000 statt 6 000 N); betroffen waren auch Theorie II. und III.
 Ordnung, Knicken und Schwingung. Ergebnisse älterer Programmstände, die davon
 betroffen sein können, tragen den Status „Ergebnis möglicherweise betroffen –
 neu rechnen“. Das gilt auch für Schwingungsnachweise in einer Situation.
@@ -6093,18 +6093,18 @@ Element hängt, wirkt auch bei abgeschalteten Elementen (Situation, Stab „aus�
 auch ein Stab „aus“ ohne Elemente, Spannschritt) so wie in der Rechnung mit
 gelöschten Elementen. Lasten, Punktmassen und weitere Kopplungen hinter einem
 solchen Knoten gehen über den Stab in das Tragwerk. Bis Stand 70 entfielen sie
-in diesen Rechnungen still, zum Beispiel am Kragarm   mit 1 kN: 0 statt
-0,535  und Summe der Auflagerkräfte 0 statt   N, dazu eine Eigenfrequenz
-von 441 statt 21,  und ein Abbruch der Knickberechnung. Gehört der
-Körperknoten zu einem abgeschalteten Körper, bleibt die Kopplung wie bisher
-außer Ansatz, und der Körper lebt über den Stab nicht wieder auf, es sei denn,
-der Knoten trägt ein Lager (Stand 67). Nach Theorie III. Ordnung rechnete eine
-starre Kopplung eines Stabendes bis Stand 70 als weiche Feder von 1  N/m,
-von Stand 71 bis 76 wurde sie mit Klartext abgewiesen, und seit Stand 77
-rechnet Theorie III. Ordnung sie als starre Kopplung (Absatz „Theorie III.
-Ordnung rechnet Starrkörper und starre Kopplungen“). Ergebnisse älterer
-Programmstände, die davon betroffen sein können, tragen den Status „Ergebnis
-möglicherweise betroffen – neu rechnen“. Geprüft in
+in diesen Rechnungen still, zum Beispiel am Kragarm 3 m mit 1 kN: 0 statt
+0,5357 mm und Summe der Auflagerkräfte 0 statt 1 000 N, dazu eine
+Eigenfrequenz von 441 statt 21,7 Hz und ein Abbruch der Knickberechnung.
+Gehört der Körperknoten zu einem abgeschalteten Körper, bleibt die Kopplung
+wie bisher außer Ansatz, und der Körper lebt über den Stab nicht wieder auf,
+es sei denn, der Knoten trägt ein Lager (Stand 67). Nach Theorie III. Ordnung
+rechnete eine starre Kopplung eines Stabendes bis Stand 70 als weiche Feder
+von 10 000 N/m, von Stand 71 bis 76 wurde sie mit Klartext abgewiesen, und
+seit Stand 77 rechnet Theorie III. Ordnung sie als starre Kopplung (Absatz
+„Theorie III. Ordnung rechnet Starrkörper und starre Kopplungen“). Ergebnisse
+älterer Programmstände, die davon betroffen sein können, tragen den Status
+„Ergebnis möglicherweise betroffen – neu rechnen“. Geprüft in
 `tests/test_stabende_kopplung_k10.py`.
 
 ### Register „Auswahl"
@@ -11619,15 +11619,16 @@ Geprüft in `tests/test_stabteilung.py`.
 
 **Mindestteilung** (seit 16.11.2026, Stand 76). Theorie II. Ordnung, α_cr und
 Knicken teilen jeden Stab, an dem die Normalkraft zählt (gedrückt oder
-gezogen), mindestens in 1 , auch wenn die Stabteilung der Netzeinstellungen
-kleiner ist und ohne Ersatzimperfektionen. Ungeteilt bleiben Fachwerkstäbe,
-Seile und Stäbe mit Wölbkrafttorsion; Theorie III. Ordnung folgt weiter der
-Stabteilung. Bis dahin rechnete ein Stab bei Stabteilung 1 in seinen
-Elementen: IPE 300,  , 30  Druck, Endmomente  , ein Element 54,21 statt
-54,2 , in zwei Elementen 52,3 ; beidseits eingespannt mit 20  und q = 5
-kN/m 15,00 statt 16,6 ; α_cr und Knicken am Gabellager 21,  zu hoch, an
-einem Stab mit kurzem steifem Anschlussstück bis zum Dreifachen, beidseits
-eingespannt ‚Keine Normalkräfte‘. Geprüft in `tests/test_th2_teilung_k10e.py`.
+gezogen), mindestens in 10 Teile, auch wenn die Stabteilung der
+Netzeinstellungen kleiner ist und ohne Ersatzimperfektionen. Ungeteilt bleiben
+Fachwerkstäbe, Seile und Stäbe mit Wölbkrafttorsion; Theorie III. Ordnung
+folgt weiter der Stabteilung. Bis dahin rechnete ein Stab bei Stabteilung 1 in
+seinen Elementen: IPE 300, 6 m, 300 kN Druck, Endmomente 6 kNm, ein Element
+54,21 statt 54,29 kNm, in zwei Elementen 52,33 kNm; beidseits eingespannt mit
+200 kN und q = 5 kN/m 15,00 statt 16,66 kNm; α_cr und Knicken am Gabellager
+21,7 % zu hoch, an einem Stab mit kurzem steifem Anschlussstück bis zum
+Dreifachen, beidseits eingespannt ‚Keine Normalkräfte‘. Geprüft in
+`tests/test_th2_teilung_k10e.py`.
 
 **Vorkrümmung als Streckenlast, Gelenke und Versatz in der internen
 Stabteilung** (seit 16.11.2026, Stand 74). Vorkrümmung (Ersatzimperfektion
@@ -11637,21 +11638,22 @@ Dazu kommen die Endquerkräfte 4 N_Ed e0/L an den Enden des Stabs, bei einem
 Versatz am versetzten Stabende. Die Richtung ist für den ganzen Stab dieselbe,
 auch wenn einzelne Elemente umgekehrt eingegeben sind. Bei eingeschalteten
 Ersatzimperfektionen teilt das Programm gedrückte Stäbe intern: nach Theorie
-II. Ordnung in mindestens 1 , nach Theorie III. Ordnung in mindestens 2 ,
-auch wenn die Netzeinstellung Stabteilung kleiner ist. Biegegelenke an beiden
-Stabenden bleiben dabei erhalten. Ein Stab mit Versatz wird auch dann geteilt,
-wenn sein Arm länger als ein Teil ist; der Versatz wird dabei auf alle Teile
-verteilt. Der starre Arm eines Versatzes dreht nach Theorie II. Ordnung mit
-dem Knoten und trägt dabei die Stabendkraft am verformten System; ein Versatz
-quer zur Stabachse leitet so in jeder Teilung das Moment aus dieser
-Stabendkraft ein, bei reiner Druckkraft N·e. Lässt sich ein gedrückter Stab
-trotzdem nicht teilen, nennt ein Hinweis den Stab. Das Modell selbst bleibt
-unverändert. Bis Stand 73 fehlte die Vorkrümmung bei einem Element je Stab und
-Stabteilung 1 still (IPE 300: Mz_Ed 0 statt 11,4 , Ausnutzung 1,64 statt
-2,48), Gelenkstäbe waren in der internen Stabteilung am Ende eingespannt
-(Feldmoment etwa halb so groß), und ein Versatz quer zur Stabachse ergab nach
-Theorie II. Ordnung meist ein zu kleines Feldmoment, mit Querlast und
-Federgelenk bis rund 2 . Geprüft in `tests/test_vorkruemmung_k10d.py`,
+II. Ordnung in mindestens 10 Teile, nach Theorie III. Ordnung in mindestens
+20 Teile, auch wenn die Netzeinstellung Stabteilung kleiner ist. Biegegelenke
+an beiden Stabenden bleiben dabei erhalten. Ein Stab mit Versatz wird auch
+dann geteilt, wenn sein Arm länger als ein Teil ist; der Versatz wird dabei
+auf alle Teile verteilt. Der starre Arm eines Versatzes dreht nach Theorie II.
+Ordnung mit dem Knoten und trägt dabei die Stabendkraft am verformten System;
+ein Versatz quer zur Stabachse leitet so in jeder Teilung das Moment aus
+dieser Stabendkraft ein, bei reiner Druckkraft N·e. Lässt sich ein gedrückter
+Stab trotzdem nicht teilen, nennt ein Hinweis den Stab. Das Modell selbst
+bleibt unverändert. Bis Stand 73 fehlte die Vorkrümmung bei einem Element je
+Stab und Stabteilung 1 still (IPE 300: Mz_Ed 0 statt 11,47 kNm, Ausnutzung
+1,64 statt 2,48), Gelenkstäbe waren in der internen Stabteilung am Ende
+eingespannt (Feldmoment etwa halb so groß), und ein Versatz quer zur Stabachse
+ergab nach Theorie II. Ordnung meist ein zu kleines Feldmoment, mit Querlast
+und Federgelenk bis rund 28 N/mm². Geprüft in
+`tests/test_vorkruemmung_k10d.py`,
 `tests/test_vorkruemmung_gelenk_versatz_k10d.py`,
 `tests/test_vorkruemmung_th2_teilung_k10d.py` und
 `tests/test_versatz_quer_th2_k10d.py`.
@@ -11808,17 +11810,17 @@ Ordnung und rechnet bei Abweichung nach. Weicht sie ein zweites Mal ab, setzt
 sie die Vorkrümmung an allen Stäben an, die einer der beiden Sätze nennt. Eine
 Stufe gilt als konvergiert, wenn das Residuum unter einem Millionstel der Last
 liegt oder wenn die Korrektur die Lage nicht mehr ändert und das Residuum
-unter 0,  der Last bleibt. An Dreh- und Drehfedergelenken trägt der Stab die
+unter 0,1 % der Last bleibt. An Dreh- und Drehfedergelenken trägt der Stab die
 Gelenkdrehung selbst. Sie wird bis auf Rundungsniveau bestimmt, und das
 Gleichgewicht gilt um die mit dem Knoten mitgedrehte Gelenkachse. Bis Stand 74
-endeten sehr kleine Lasten (Kragarm 1  mit 0, ), sehr kurze Elemente
-(0,0  oder 0,00 ) und Vorverformungen ab etwa 0,29 N_cr mit „keine
+endeten sehr kleine Lasten (Kragarm 10 m mit 0,1 N), sehr kurze Elemente
+(0,02 m oder 0,005 m) und Vorverformungen ab etwa 0,29 N_cr mit „keine
 Konvergenz“, obwohl die Modelle rechenbar sind; eine Torsionsfeder verdrillte
-anders als ein gleich steifer Stummelstab (7, ), und ein Torsionsgelenk lag
-bei größerer Last bis   daneben. Von Stand 75 bis 76 galten Lasten an Knoten
+anders als ein gleich steifer Stummelstab (7,7 %), und ein Torsionsgelenk lag
+bei größerer Last bis 2 % daneben. Von Stand 75 bis 76 galten Lasten an Knoten
 hinter einem Stabende-Anschluss für die Abweisung als aufgehoben, wenn ihre
 exakt gebildete Summe unter dem Doppelten der möglichen Rundung der Eingaben
-lag, höchstens 0,00  bzw. 0,00 ; seit Stand 77 gibt es diese Abweisung
+lag, höchstens 0,001 N bzw. 0,001 Nm; seit Stand 77 gibt es diese Abweisung
 nicht mehr. Geprüft in `tests/test_th3_konvergenz_k10d.py`.
 
 **Verschiedener Versatz an Anfang und Ende in allen Rechenarten** (seit
@@ -12280,7 +12282,7 @@ Arbeitsprozesse ist damit bitgleich mit dem seriellen Nachweis. Bis Stand 68
 fehlten diese Anteile: Nach Theorie II. und III. Ordnung wurde im Feld mit
 unvollständigen Momenten nachgewiesen, nach Theorie II. Ordnung ohne den
 Anteil der Stabkraft an der Durchbiegung (IPE 300 mit einem Element: M_Ed 60,0
-statt 63, ). Die Abweichung ging je nach Modell zur unsicheren oder zur
+statt 63,2 kNm). Die Abweichung ging je nach Modell zur unsicheren oder zur
 sicheren Seite. Ergebnisse älterer Stände mit EC3-Nachweis nach Theorie II.
 oder III. Ordnung in Modellen ab 24 Stäben tragen deshalb den Hinweis
 ‚Ergebnis möglicherweise betroffen – neu rechnen‘. Geprüft in
@@ -13079,16 +13081,16 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   Starrkörperformen) und `tests/test_gui_smoke.py`.
 * **Starrkörper neben starren Kopplungen** (seit 15.11.2026, Stand 68). Ein
   Starrkörper (RBE2/RBE3) und eine starre Knotenkopplung werden beide als sehr
-  steife Federn gerechnet, etwa 1 -mal so steif wie die steifste Stelle der
-  Bauteile. Bis Stand 67 bezog sich der Starrkörper auf eine Matrix, in der
-  die starren Kopplungen schon enthalten waren. Er wurde dadurch rund 10 
-  000-mal so steif wie die Bauteile, und eine starre Kopplung an einem Knoten
-  eines Starrkörpers konnte „Gleichungssystem numerisch singulär“ melden. Seit
-  Stand 68 haben beide denselben Bezug. Ergebnisse von Modellen, in denen ein
-  Starrkörper und eine starre Knotenkopplung zusammen vorkommen, werden als
-  „möglicherweise betroffen – neu rechnen“ gekennzeichnet. An den
+  steife Federn gerechnet, etwa 10 000-mal so steif wie die steifste Stelle
+  der Bauteile. Bis Stand 67 bezog sich der Starrkörper auf eine Matrix, in
+  der die starren Kopplungen schon enthalten waren. Er wurde dadurch rund
+  100 000 000-mal so steif wie die Bauteile, und eine starre Kopplung an einem
+  Knoten eines Starrkörpers konnte „Gleichungssystem numerisch singulär“
+  melden. Seit Stand 68 haben beide denselben Bezug. Ergebnisse von Modellen,
+  in denen ein Starrkörper und eine starre Knotenkopplung zusammen vorkommen,
+  werden als „möglicherweise betroffen – neu rechnen“ gekennzeichnet. An den
   nachgemessenen Prüfmodellen änderten sich die Ergebnisse um höchstens
-  0,00 ; für andere Modelle ist die Änderung nicht gemessen. Geprüft in
+  0,002 %; für andere Modelle ist die Änderung nicht gemessen. Geprüft in
   `tests/test_numerik_k10.py`.
 * **Eigenformen bei wenigen Massen und bei Teilen ohne Masse** (seit
   15.11.2026, Stand 68). Die Eigenschwingungsberechnung liefert höchstens so
@@ -13110,27 +13112,27 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   Eigenfrequenzen hängen von ihm nicht ab, und die Eigenformen zeigen ihn ohne
   seine freie Bewegung. Bis Stand 67 brach die Eigenschwingungsberechnung bei
   einem Modell mit nur einer Punktmasse mit „ARPACK error“ ab, und bei mehr
-  angeforderten Formen als Massenrichtungen kamen Scheinformen mit   heraus.
-  Eigenformen und Schwingungsnachweise von Modellen mit Teilen ohne Masse aus
-  früheren Ständen werden als „möglicherweise betroffen – neu rechnen“
-  gekennzeichnet. Geprüft in `tests/test_numerik_k10.py`.
+  angeforderten Formen als Massenrichtungen kamen Scheinformen mit 0 Hz
+  heraus. Eigenformen und Schwingungsnachweise von Modellen mit Teilen ohne
+  Masse aus früheren Ständen werden als „möglicherweise betroffen – neu
+  rechnen“ gekennzeichnet. Geprüft in `tests/test_numerik_k10.py`.
 * **Kreisring und andere frei definierte RBE3** (seit 15.11.2026, Stand 70).
   Starrkörper (RBE2) und Verteilkopplungen (RBE3) werden im Strafverfahren als
   sehr steife Federn gerechnet. Seit Stand 70 wird ein frei definierter RBE3
   je Bewegung seines Masters aufgestellt. Jede der sechs Masterbewegungen ist
   als gewichtete Bewegung der Slaves formuliert und bekommt eine eigene Feder,
-  1 -mal so steif, wie die Slaves dieser Bewegung widerstehen, an der
-  steifsten Verschiebung mindestens   00  00  N/m. Die Zwangsbedingung
-  ist dieselbe wie vorher. Bis dahin stand am Master die Gewichtssumme im
-  Quadrat, und bei einem Master neben dem Ring waren die Federn fast
-  gleichgerichtet. Ein gesunder Kreisring konnte dann je nach Lage als
-  ‚numerisch singulär‘ abgewiesen werden, Knickfaktoren kamen still falsch
+  10 000-mal so steif, wie die Slaves dieser Bewegung widerstehen, an der
+  steifsten Verschiebung mindestens 1 000 000 000 000 000 N/m. Die
+  Zwangsbedingung ist dieselbe wie vorher. Bis dahin stand am Master die
+  Gewichtssumme im Quadrat, und bei einem Master neben dem Ring waren die
+  Federn fast gleichgerichtet. Ein gesunder Kreisring konnte dann je nach Lage
+  als ‚numerisch singulär‘ abgewiesen werden, Knickfaktoren kamen still falsch
   heraus (2,45 statt 46,04), und die Eigenformen brachen ab. Neben einem frei
   definierten RBE3 wurden außerdem Bauteile mit echter Steifigkeit still
   festgehalten, weil die automatische Fesselung sich auf die Straffeder bezog.
   Ein Kreisring, dessen Knoten außer am RBE3 an nichts hängen, wird wie jedes
   frei bewegliche Teil gerechnet und mit Namen gemeldet. Bestehende Ergebnisse
-  ändern sich um höchstens 0,00000 . Verteilende Kopplungen (Scheibe,
+  ändern sich um höchstens 0,000003 mm. Verteilende Kopplungen (Scheibe,
   Stabende), RBE2 und Knotenkopplungen sind unverändert. Geprüft in
   `tests/test_rbe3_ring_k10.py`.
 * **Eigenwertlöser mit zweitem Lösungsweg** (seit 16.11.2026, Stand 78).
@@ -13138,18 +13140,18 @@ gegen ihre Richtung gleiten - sonst hinge das Ergebnis am Weg.
   weichen die gemeldeten Eigenwerte vom Rayleigh-Quotienten ihrer Form ab,
   rechnet das Programm einen zweiten Lösungsweg. Bei der Schwingung verwendet
   es eine stufenweise kleinere Verschiebung und rechnet danach dicht, auf die
-  Freiheitsgrade mit Masse kondensiert (bis  ). Beim Knicken und bei α_cr
-  rechnet es dicht über die Freiheitsgrade mit Normalkraft (bis  ), darüber
-  mit ARPACK mit mehr Lanczos-Vektoren. Bei der Schwingung nennen Protokoll
-  und Ergebnis den Weg, beim Knicken und bei α_cr das Protokoll. Liefert auch
-  der zweite Weg nichts, erscheint Klartext; bei einem singulären
+  Freiheitsgrade mit Masse kondensiert (bis 4 000). Beim Knicken und bei α_cr
+  rechnet es dicht über die Freiheitsgrade mit Normalkraft (bis 3 000),
+  darüber mit ARPACK mit mehr Lanczos-Vektoren. Bei der Schwingung nennen
+  Protokoll und Ergebnis den Weg, beim Knicken und bei α_cr das Protokoll.
+  Liefert auch der zweite Weg nichts, erscheint Klartext; bei einem singulären
   Gleichungssystem kommt dieselbe Meldung mit Knoten und Richtungen wie in der
   Statik. Ist α_cr nicht bestimmbar, wird die Kombination nach Theorie II.
   Ordnung gerechnet. Liegen die Steifigkeiten um mehr als 9 Zehnerpotenzen
   auseinander (etwa bei sehr kurzen, steifen Speichen an einem Kreisring),
   sagt der Text des zweiten Lösungswegs bzw. der Meldung, dass die erreichbare
   Genauigkeit dadurch begrenzt ist; solche Eigenfrequenzen können um mehr als
-    von einer genaueren Rechnung abweichen. Bis Stand 77 brach die
+  1 % von einer genaueren Rechnung abweichen. Bis Stand 77 brach die
   Schwingung eines singulären Modells in einer Situation mit „ARPACK error
   -9999“ ab, ohne die Singularität zu nennen, α_cr kam nach einem Abbruch als
   „unendlich“ heraus (dann galt „Theorie I. Ordnung ausreichend“), und
@@ -14626,10 +14628,10 @@ bestimmbar“. Findet die Diagnose keine Bewegung ohne Steifigkeit, obwohl die
 Matrix numerisch singulär ist, beschreibt sie die weichste Bewegung ohne das
 Wort „frei“. Enthält das Modell Starrkörper oder Kopplungen, sagt sie
 außerdem, dass die Ursache vermutlich deren große Strafsteifigkeit und nicht
-sicher bestimmbar ist. Über 6  Freiheitsgraden bleibt die Frage offen, wenn
-der vorhandene Faktor keine klare Trennung erlaubt. Abgeschaltete Elemente
-werden nicht als Ursache genannt. Bis dahin nannte die Meldung den Knoten
-nicht, und die Matrixdiagnose brach mit „ValueError“ ab, auch bei
+sicher bestimmbar ist. Über 60 000 Freiheitsgraden bleibt die Frage offen,
+wenn der vorhandene Faktor keine klare Trennung erlaubt. Abgeschaltete
+Elemente werden nicht als Ursache genannt. Bis dahin nannte die Meldung den
+Knoten nicht, und die Matrixdiagnose brach mit „ValueError“ ab, auch bei
 Wölbkrafttorsion. Geprüft in `tests/test_singulaer_meldung_k10.py`.
 
 **Frei bewegliche Teile aus den gestörten Pivots (seit 08.10.2026).** Bis zum
