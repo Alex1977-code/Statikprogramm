@@ -2669,6 +2669,34 @@ def _starrkoerper_strafe_im_ergebnis(model, an) -> str:
             + (" …" if len(namen) > 6 else ""))
 
 
+def _rbe3_fesselung_betroffen(model) -> bool:
+    """Modellmerkmal rbe3_fesselung_bezug (Stand 70): ein frei definierter
+    RBE3 (nicht die verteilende Kopplung eines Stabendes oder einer Scheibe)
+    mit mindestens einem Slave. Nur seine Straffeder (k mal die Gewichtssumme
+    im Quadrat) hob den Bezug der automatischen Fesselung."""
+    try:
+        from .stabeinleitung import ist_verteilkopplung
+        return any(str(getattr(x, "art", "")).upper() == "RBE3" and not ist_verteilkopplung(x)
+                   and len(getattr(x, "slaves", None) or []) > 0
+                   for x in (getattr(model, "starrkoerper", None) or []))
+    except Exception:                                   # noqa: BLE001 - lieber betroffen als still
+        return True
+
+
+def _rbe3_fesselung_im_ergebnis(model, an) -> str:
+    """Jedes Ergebnis eines Modells mit dem Merkmal: die automatische Fesselung
+    gilt fuer jeden Lastfall, jede Kombination, das Knicken und die
+    Eigenformen."""
+    if not _rbe3_fesselung_betroffen(model):
+        return ""
+    paare = list(_ergebnis_paare(an))
+    if getattr(an, "kind", "") in ("buckling", "modal"):
+        paare.append((str(getattr(an, "name", "") or ""), an))
+    namen = sorted({str(n) for n, _r in paare if str(n)})
+    return ("frei definierter RBE3: " + (", ".join(namen[:6]) if namen else "alle Ergebnisse")
+            + (" …" if len(namen) > 6 else ""))
+
+
 #: Die Tabelle (Einstufung des Anwenders vom 16.10.2026). Stand 1: Abbruch der
 #: Plastizitaet (a1194ef, 13.10.2026 19:32); Stand 1.5: die Korrekturen dazwischen
 #: (13.10. 23:09 bis 15.10. 12:56) - eine Datei ohne Angabe erkennt sie nur an
@@ -4082,10 +4110,29 @@ MERKMALE: list = [
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Starrkörper (RBE2/RBE3) und starre Knotenkopplung im selben Modell",
         betrifft=_starrkoerper_strafe_betroffen, im_ergebnis=_starrkoerper_strafe_im_ergebnis),
+    # Runde k10c (16.11.2026): die automatische Fesselung (FHG ohne
+    # Steifigkeit, Diagonale unter 1e-12 der groessten) bezog sich auf die
+    # groesste Hauptdiagonale samt der Straffeder eines frei definierten RBE3 -
+    # k mal die Gewichtssumme im Quadrat, bei 441 Slaves rund das
+    # 2 000 000 000-fache der Elemente. Drehungen und Verschiebungen mit
+    # echter Steifigkeit galten als „ohne Steifigkeit" und wurden still
+    # festgehalten: ein gelenkig gelagerter Stab (L = 2 m, I = 1 000 000 mm⁴,
+    # 1 kN) neben einer Stahlschicht mit RBE3 auf 441 Slaves bog sich um
+    # 0,000 statt 0,794 mm. Seither ohne diese Straffeder. Fehlerkorrektur.
+    Merkmal(
+        name="rbe3_fesselung_bezug", titel="Automatische Fesselung neben frei definiertem RBE3",
+        texte={"alt": "FHG unter 1e-12 der größten Hauptdiagonale samt der Straffeder des RBE3 "
+                      "(k mal Gewichtssumme im Quadrat) still festgehalten",
+               "neu": "Bezug ohne die Straffeder der frei definierten RBE3 - nur FHG ohne Steifigkeit "
+                      "werden festgehalten"},
+        wechsel=(Wechsel(stand=70, datum="15.11.2026", commit="fix/k10-ring", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="frei definierter RBE3 (Verteilkopplung mit Slaves, nicht Stabende oder Scheibe)",
+        betrifft=_rbe3_fesselung_betroffen, im_ergebnis=_rbe3_fesselung_im_ergebnis),
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 68
+VERFAHRENSSTAND = 70
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

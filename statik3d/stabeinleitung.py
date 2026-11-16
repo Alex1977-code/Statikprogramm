@@ -788,11 +788,6 @@ def pruefen(model, res, F_norm: float = None) -> dict:
     if not sks:
         return {}
     k = getattr(model, "_stabende_strafe", None)
-    # Seit Runde k10c (15.11.2026) hat jede Kopplung ihren eigenen Strafbeiwert
-    # (assemble.rbe3_strafe, bezogen auf die Steifigkeit ihrer Knoten).
-    # Fehlt er fuer eine Kopplung, bleibt sie ungeprueft - der Wert fuer das
-    # ganze Modell gaebe eine falsche Kraft.
-    k_je = getattr(model, "_stabende_strafe_je", None)
     aus = {"anzahl": len(sks), "geprueft": 0, "abweichend": [], "ungeprueft": [], "je_stabende": [],
            "max_dF": 0.0, "max_dM": 0.0, "max_rel": 0.0}
     u = getattr(res, "u", None)
@@ -812,17 +807,14 @@ def pruefen(model, res, F_norm: float = None) -> dict:
     faktoren = dict((getattr(res, "info", None) or {}).get("factors") or {})
     gelagert = {int(s.node) for s in (getattr(model, "supports", None) or [])}
     F_norm = float(F_norm) if F_norm is not None else 0.0
+    strafrest = dict((getattr(res, "info", None) or {}).get("strafanteil_rest") or {})
     for sk in sks:
         m = int(sk.master)
         G, fhg, wk = zwangsmatrix(model, sk, bindung)
         if G is None or fhg.max() >= len(uf):
             aus["ungeprueft"].append(str(sk.name))
             continue
-        k_sk = k if k_je is None else k_je.get((str(sk.name), int(sk.master)))
-        if k_sk is None:
-            aus["ungeprueft"].append(str(sk.name))
-            continue
-        f = float(k_sk) * (G.T @ (G @ uf[fhg]))
+        f = float(k) * (G.T @ (G @ uf[fhg]))
         # Kraft der Kopplung auf die Flaechenknoten (ein Element wirkt mit -f)
         fs = -f[6:].reshape(-1, 3)
         S = wk["slaves"]
@@ -865,10 +857,22 @@ def pruefen(model, res, F_norm: float = None) -> dict:
         dM = float(np.linalg.norm(M_k - M_soll))
         tol = grenze * F_norm + 1e-9 * float(np.linalg.norm(F_soll)) + 1e-9
         tol_m = grenze * F_norm + 1e-9 * float(np.linalg.norm(M_soll)) + 1e-9 * max(float(wk.get("rho", 0.0)), 1e-3)
+        # Aufloesung der Kopplungskraft (Runde k10c, 16.11.2026): hat der Loeser
+        # mit getrenntem Strafanteil geprueft (statik3d.strafanteil), liegt die
+        # aus u gerechnete Kraft k Gᵀ G u am Master um den gemessenen Rest neben
+        # dem Gleichgewicht - der Rundungsrest der Straffeder, den u nicht
+        # feiner darstellen kann (Kreisring am Kragarm, F = 1 kN: 0,113 N).
+        # Doppelt, weil k Gᵀ G u selbst mit jeder Summationsfolge um einen
+        # Bruchteil davon streut (hier mit dichtem statt duennem G: 0,0035 N).
+        # Ohne diese Pruefung ist der Rest null, die Toleranz wie bisher.
+        rest = (strafrest.get(f"{sk.name}@{m}") or (0.0, 0.0))
+        tol += 2.0 * float(rest[0])
+        tol_m += 2.0 * (float(rest[1]) + float(np.linalg.norm(X[m] - P)) * float(rest[0]))
         zeile = {"name": str(sk.name), "knoten": m, "F_stab": [float(x) for x in F_soll],
                  "F_kopplung": [float(x) for x in F_k], "M_stab": [float(x) for x in M_soll],
                  "M_kopplung": [float(x) for x in M_k], "dF": dF, "dM": dM, "toleranz": tol,
-                 "toleranz_M": tol_m, "ausgeschlossen": int(wk["ausgeschlossen"]),
+                 "toleranz_M": tol_m, "strafanteil_rest": [float(rest[0]), float(rest[1])],
+                 "ausgeschlossen": int(wk["ausgeschlossen"]),
                  "abstand_vorher": float(wk["abstand_vorher"]), "abstand_nachher": float(wk["abstand_nachher"])}
         aus["je_stabende"].append(zeile)
         aus["geprueft"] += 1

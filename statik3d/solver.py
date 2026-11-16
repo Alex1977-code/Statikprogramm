@@ -1512,6 +1512,41 @@ class LinearSolver:
                     if not r2 < r:
                         break
                     x, r = x2, r2
+                # Strafanteil der Starrkoerper (Runde k10c, 16.11.2026,
+                # statik3d.strafanteil): Scheitert die Pruefung an einem Modell
+                # mit Starrkoerpern, kann allein der Rundungsrest der
+                # Straffedern darueber liegen (k Gᵀ G δu mit |δu| = eps |u|;
+                # Kreisring mit 64 Slaves am Kragarm: 0,039). Dann noch einmal
+                # mit dem getrennt gerechneten Strafanteil: geprueft wird der
+                # Rest ausserhalb der Zeilenraeume gegen dieselbe Schranke und
+                # die Verletzung der Zwangsbedingungen gegen grenze * max|u|.
+                # Ein Modell, das die bisherige Pruefung besteht, kommt hier
+                # nicht vorbei - an ihm aendert sich nichts.
+                #
+                # Nur ohne angehobene Pivots (PARDISO iparm(14), ama): hat die
+                # Zerlegung Pivots angehoben, ist K singulaer, und ein
+                # widerspruchsfreies singulaeres System haette auch ausserhalb
+                # der Zeilenraeume einen kleinen Rest - die Knoten im Nullraum
+                # stuenden dann ohne Meldung irgendwo (Kreisring mit
+                # abgeschalteten Speichen: 186 angehobene Pivots, Ringknoten
+                # 20 mm weit). Dort bleibt es bei der Abweisung samt Diagnose.
+                # Loeser ohne Pivotzahl (SuperLU, CHOLMOD, MUMPS) pruefen wie
+                # bisher.
+                self.strafanteil_genutzt = False
+                self.strafanteil_rest = None
+                pruef = getattr(self, "strafe", None)
+                angehoben = getattr(self, "gestoerte_pivots", None)
+                if angehoben is None:
+                    angehoben = getattr(self, "gestoert", None)
+                from . import strafanteil as _sa
+                if r > grenze and pruef is not None and angehoben == 0 and _sa.PRUEFUNG:
+                    erg = pruef.nachiterieren(self._solve, self._K, b, x, grenze)
+                    if erg["ok"]:
+                        x, r = erg["x"], erg["rest"]
+                        schritte += erg["schritte"]
+                        self.strafanteil_genutzt = True
+                        self.strafanteil_verletzung = erg["verletzung"]
+                        self.strafanteil_rest = erg.get("rest_kopplung")
                 self.nachiterationen = schritte
                 self.residuum = float(r)
                 if self._nachweis is not None and self._vorgabe is not None:
@@ -2864,6 +2899,7 @@ class StaticSystem:
             t0 = time.time()
             try:
                 self._solver = LinearSolver(self.gerandet(self.Kff), progress=self._progress)
+                self._solver.strafe = self._strafe_pruefung()
                 self._loeser_merken(self._solver)
             except (RuntimeError, ValueError) as ex:
                 # "Factor is exactly singular" sagt niemandem, was fehlt
@@ -2876,6 +2912,16 @@ class StaticSystem:
                        f"Faktorisiert ({self._solver.beschreibung()}, "
                        f"{time.time() - t0:.2f} s)", 0.32)
         return self._solver
+
+    def _strafe_pruefung(self, zusatz=()):
+        """Die Pruefung des Residuums mit getrenntem Strafanteil der
+        Starrkoerper fuer die Matrix Kff (bzw. Kff + ``zusatz`` auf den freien
+        FHG, mit Lagrange-Rand) - None ohne Starrkoerper. Gebaut wird erst,
+        wenn die bisherige Pruefung scheitert (statik3d.strafanteil)."""
+        sa = getattr(self.K, "_strafanteil", None)
+        if sa is None or not sa.kopplungen:
+            return None
+        return sa.lokal(self.fi, zusatz)
 
     def _loeser_merken(self, ls: LinearSolver):
         """Zeit und Groessen einer Faktorisierung mitschreiben.
@@ -2917,6 +2963,10 @@ class StaticSystem:
         Ein Buch, das ein abgebrochener Lastfall offen liess, wird ersetzt -
         seine Zahlen gehoeren nicht zum naechsten."""
         self._nachweis_buch = _LoeserBuch(self.zeit_faktorisierung)
+        #: Rest der Kopplungskraefte je Kopplung aus der Pruefung mit getrenntem
+        #: Strafanteil (Runde k10c), groesster Wert ueber die Loesungen des
+        #: Lastfalls - fuer stabeinleitung.pruefen
+        self.strafanteil_rest = {}
 
     def nachweis_abschliessen(self) -> Optional[dict]:
         """Den Loeser-Nachweis des Lastfalls als Woerterbuch; None, wenn keiner
@@ -3277,6 +3327,7 @@ class StaticSystem:
                     Ktff = Kt[self.fi][:, self.fi].tocsc()
                     self.kontakt_loeser_freigeben()
                     neu_ls = LinearSolver(self.gerandet(Ktff, C_f, D_ff), progress=self._progress)
+                    neu_ls.strafe = self._strafe_pruefung((K_extra, A_aug))
                     self._loeser_merken(neu_ls)
                     self.faktorisierungen = getattr(self, "faktorisierungen", 0) + 1
                     return neu_ls
@@ -3367,6 +3418,12 @@ class StaticSystem:
             raise
         if buch is not None:
             buch.loesung(ls)
+        rest = getattr(ls, "strafanteil_rest", None)
+        if rest:
+            sammel = self.__dict__.setdefault("strafanteil_rest", {})
+            for name, (f_, m_) in rest.items():
+                alt = sammel.get(name, (0.0, 0.0))
+                sammel[name] = (max(alt[0], f_), max(alt[1], m_))
         # Fuer die Suche nach frei beweglichen Teilen (freie_teile): der Faktor,
         # der zuletzt geloest hat. Nur ein schwacher Verweis - den Speicher des
         # Faktors gibt weiter frei, wem er gehoert.
@@ -6635,6 +6692,11 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
     if n0_ausfall is not None:
         # Stabstatus nach Abschluss: kein aktiver Zugstab mit Druck (13.10.2026)
         zugstaebe_pruefen(model, res, F, aktiv, progress=progress)
+    rest = getattr(system, "strafanteil_rest", None)
+    if rest:
+        # Pruefung mit getrenntem Strafanteil (Runde k10c): wie weit die aus u
+        # gerechneten Kopplungskraefte am Master neben dem Gleichgewicht liegen
+        res.info["strafanteil_rest"] = {k: [float(v[0]), float(v[1])] for k, v in rest.items()}
     _stabenden_pruefen(model, res, F)
     _gleichgewicht_pruefen(model, res, F)
     _starrkoerper_pruefen(model, res, progress)
