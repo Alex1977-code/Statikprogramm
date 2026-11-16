@@ -8,6 +8,10 @@ Runde k10d (16.11.2026), Theorie III. Ordnung: Restschranke und Konvergenz.
     rechnete still w(b) = 1,587302 mm, Theorie I. Ordnung und Hand ergeben
     1,588730 mm. Jetzt liegt die Schranke auf Rundungsniveau (1e-13 der
     Betragssumme, hoechstens 0,001 N): der Lastfall wird abgewiesen.
+    Nachbesserung 1 (Gegenpruefung 1 zu k10d): ab einer Betragssumme von
+    1e10 N erreichte 1e-13 der Betragssumme die Kappung, und 0,0009 N gingen
+    wieder still verloren. Jetzt 4 * n * 2,2e-16 der Betragssumme bei n
+    Beitraegen, hoechstens 0,001 N.
 (b) Am Kragarm L = 10 m, A = 1e-3 m², I = 1e-6 m⁴ meldete Theorie III.
     Ordnung bei F = 0,1 N „keine Konvergenz“ (Theorie I. Ordnung und Hand
     0,158730 mm), mit Koordinaten um 100 km schon bei 0,001 N. Ursache: die
@@ -152,6 +156,44 @@ def test_a_restschranke():
     w3 = -np.asarray(r3.u).reshape(-1, 6)[b, 2] if r3 is not None else float("nan")
     check("(a) Gegenprobe ±1e7 N ohne Rest: gerechnet, w(b) = Hand",
           not f3 and abs(w3 - FLEX_W) <= 1e-5 * FLEX_W, f"{f3[:60]!r} {w3 * 1e3:.6f} mm")
+
+
+def test_a_grosse_betragssumme():
+    """Gegenpruefung 1 zu k10d: mit 1e-13 der Betragssumme erreichte die
+    Schranke ab einer Betragssumme von 1e10 N die Kappung 0,001 N, und ein
+    Rest von 0,0009 N ging still verloren (Theorie III. Ordnung 1,587302 statt
+    1,588730 mm). Jetzt 4 * n * 2,2e-16 der Betragssumme bei n Beitraegen."""
+    from statik3d.theorie3 import kopplung_sperre
+    fak = {"LF1": 1.0, "LF2": 1.0, "LF3": 1.0, "LF4": 1.0}
+    for gross in (5e9, 1e10, 1e11):
+        rest = 0.0009
+        hand = (1.0 + rest) * FLEX_W
+        m, b = weich("I", gross, rest)
+        r1, _f = _rechne(m)
+        w1 = -np.asarray(r1.u).reshape(-1, 6)[b, 2]
+        check(f"(a) ±{gross:.0f} N, Rest {rest} N: Theorie I. Ordnung loest den Rest auf (w(b) = Hand auf 0,00001 mm)",
+              abs(w1 - hand) <= 1e-8, f"{w1 * 1e3:.6f} mm, Hand {hand * 1e3:.6f} mm")
+        m, b = weich("III", gross, rest)
+        t = kopplung_sperre(m, None, factors=fak)
+        check(f"… kopplung_sperre sieht den Rest (stille Abweichung waere {rest * FLEX_W * 1e3:.6f} mm)",
+              TEXT_KP in t, t[:80])
+        r3, f3 = _rechne(m)
+        check("… Theorie III. Ordnung weist ab statt still ohne Rest zu rechnen", TEXT_KP in f3, f"{f3[:80]!r}")
+    # Gegenproben: Rundungsreste grosser Lasten bleiben aufgehoben und werden gerechnet
+    for gross, f2, f3_, last2, last3 in ((1e10, 1.0, 1.0, -1.0, 1.0), (1e10, 0.1, 0.3, -3.0, 1.0),
+                                         (1e11, 0.1, 0.3, -3.0, 1.0)):
+        m, b = weich("III", 1.0, 0.0)
+        m.load_cases["LF2"].nodal_loads[0].F = [0.0, 0.0, last2 * gross, 0.0, 0.0, 0.0]
+        m.load_cases["LF3"].nodal_loads[0].F = [0.0, 0.0, last3 * gross, 0.0, 0.0, 0.0]
+        faktoren = {"LF1": 1.0, "LF2": f2, "LF3": f3_, "LF4": 1.0}
+        m.combinations["LK1"].factors = dict(faktoren)
+        S = f2 * last2 * gross + f3_ * last3 * gross
+        t = kopplung_sperre(m, None, factors=faktoren)
+        r3, f3 = _rechne(m)
+        w3 = -np.asarray(r3.u).reshape(-1, 6)[b, 2] if r3 is not None else float("nan")
+        check(f"(a) Gegenprobe {f2} * {last2 * gross:.0f} N + {f3_} * {last3 * gross:.0f} N (Rest {S:.3g} N, "
+              "Rundung): nicht abgewiesen, w(b) = Hand", not t and not f3 and abs(w3 - FLEX_W) <= 1e-5 * FLEX_W,
+              f"{t[:40]!r} {f3[:40]!r} {w3 * 1e3:.6f} mm")
 
 
 # --------------------------------------------------------------------------
@@ -600,7 +642,7 @@ def test_e_merkmal():
           mk.betrifft(mit("I", "feder")) is False and mk.betrifft(mit("III", "stummel")) is False)
 
 
-TESTS = [test_a_restschranke, test_b_kleine_last, test_c_ipe_vorverformung, test_c_hallenreihe,
+TESTS = [test_a_restschranke, test_a_grosse_betragssumme, test_b_kleine_last, test_c_ipe_vorverformung, test_c_hallenreihe,
          test_d_kurze_elemente, test_e_torsionsfeder, test_e_torsionsgelenk, test_e_symmetrie, test_e_merkmal,
          test_e_federn_konvergieren]
 

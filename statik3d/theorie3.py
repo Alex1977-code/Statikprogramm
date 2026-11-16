@@ -670,17 +670,20 @@ def _nur_staebe(model: Model, aktiv) -> bool:
 
 
 # Rest, bis zu dem sich die Lastbeitraege an einem Knoten als aufgehoben
-# gelten (Rundung der Faktoren, z. B. 0,1 und 0,3): relativ _LAST_REST mal die
-# Betragssumme der Beitraege, hoechstens aber _LAST_REST_MAX (N bzw. Nm).
-# _LAST_REST liegt auf Rundungsniveau: die Summe von n Beitraegen rundet um
-# hoechstens etwa n * 2,2e-16 der Betragssumme, 1e-13 deckt also mehrere
-# hundert Beitraege; ein groesserer Rest ist eine echte Last, die auch der
-# Lastvektor von Theorie I. Ordnung aufloest. Bis zur Runde k10d (16.11.2026)
-# war _LAST_REST = 1e-9: an einem weichen Kragarm (L = 10 m, I = 1e-6 m^4,
-# 1 N am Ende) mit -1e7 N / +1e7 N und einem Rest von 0,0009 N am Slave eines
-# RBE3 „Stabende“ lag die Schranke bei 0,001 N, und Theorie III. Ordnung
-# rechnete still 1,587302 statt 1,588730 mm.
-_LAST_REST = 1e-13
+# gelten (Rundung der Faktoren, z. B. 0,1 und 0,3): _LAST_REST je Beitrag mal
+# die Betragssumme der Beitraege, hoechstens aber _LAST_REST_MAX (N bzw. Nm).
+# Die Summe von n Beitraegen (je ein Produkt Faktor mal Last) rundet um
+# hoechstens etwa n * 2,2e-16 der Betragssumme; die Schranke
+# 4 * n * 2,2e-16 liegt mit Abstand darueber und bleibt auf Rundungsniveau.
+# Ein groesserer Rest ist eine echte Last, die auch der Lastvektor von
+# Theorie I. Ordnung aufloest. Bis zur Runde k10d (16.11.2026) war die
+# Schranke 1e-9 der Betragssumme: an einem weichen Kragarm (L = 10 m,
+# I = 1e-6 m^4, 1 N am Ende) mit -1e7 N / +1e7 N und einem Rest von 0,0009 N
+# am Slave eines RBE3 „Stabende“ lag sie bei 0,001 N, und Theorie III.
+# Ordnung rechnete still 1,587302 statt 1,588730 mm. Mit 1e-13 der
+# Betragssumme (erster Stand der Runde k10d) blieb dasselbe ab einer
+# Betragssumme von 1e10 N (±5e9 N, Gegenpruefung 1 zu k10d).
+_LAST_REST = 4.0 * 2.2e-16
 _LAST_REST_MAX = 1e-3
 
 # Abschluss auf Rundungsniveau (solve_theorie3): die Newton-Korrektur unter
@@ -710,7 +713,7 @@ def _lastknoten(model: Model, nn: int, factors: dict = None) -> np.ndarray:
     Last hat (richtig 0,5357 mm wie Theorie I. Ordnung und Hand).
 
     Ein Knoten zaehlt nur, wenn die Summe in einer Komponente groesser ist als
-    _LAST_REST mal die Betragssumme der Beitraege. Bis zur Gegenpruefung
+    _LAST_REST mal die Zahl und die Betragssumme der Beitraege. Bis zur Gegenpruefung
     zu k10b wurde exakt mit null verglichen: LK1 = LF1 + 0,1 LF2 + 0,3 LF3 mit
     -3 N an Q in LF2 und +1 N in LF3 (Rest -5,55e-17 N) wurde abgewiesen,
     obwohl Theorie I. Ordnung w(b) = 0,535714 mm = Hand ergibt.
@@ -735,6 +738,7 @@ def _lastknoten(model: Model, nn: int, factors: dict = None) -> np.ndarray:
     for gruppe in gruppen:
         S = np.zeros((nn, 6))
         A = np.zeros((nn, 6))               # Betragssumme der Beitraege
+        Z = np.zeros((nn, 6))               # Zahl der Beitraege
         for lc, f in gruppe:
             for ld in (getattr(lc, "nodal_loads", None) or []):
                 n = int(ld.node)
@@ -742,6 +746,7 @@ def _lastknoten(model: Model, nn: int, factors: dict = None) -> np.ndarray:
                     beitrag = f * np.asarray(ld.F, float)[:6]
                     S[n] += beitrag
                     A[n] += np.abs(beitrag)
+                    Z[n] += beitrag != 0.0
             # gravity ist eine Liste oder ein numpy-Feld (Model.set_gravity,
             # Model.gravity); ``Feld or Liste`` waere mehrdeutig (ValueError)
             g_lc = getattr(lc, "gravity", None)
@@ -752,9 +757,10 @@ def _lastknoten(model: Model, nn: int, factors: dict = None) -> np.ndarray:
                     beitrag = float(p.masse) * g
                     S[int(p.node), :3] += beitrag
                     A[int(p.node), :3] += np.abs(beitrag)
+                    Z[int(p.node), :3] += beitrag != 0.0
         # Heben sich die Beitraege einer Kombination bis auf Rundung auf
         # (0,1 * (-3 N) + 0,3 * 1 N = -5,55e-17 N), traegt der Knoten nichts.
-        out |= np.any(np.abs(S) > np.minimum(_LAST_REST * A, _LAST_REST_MAX), axis=1)
+        out |= np.any(np.abs(S) > np.minimum(_LAST_REST * Z * A, _LAST_REST_MAX), axis=1)
     return out
 
 
