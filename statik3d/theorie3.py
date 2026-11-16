@@ -180,6 +180,12 @@ class _Stab:
             self.arm = arme
             punkte = X + np.asarray(arme)
         kl, T3, T, L = asm.beam_local(model, e, punkte)
+        # Sehne der Ausgangslage (zwischen den Stabenden): die Laengung
+        # rechnet :meth:`zustand` aus ihr und dem Zuwachs, nicht als
+        # Differenz zweier Laengen (Runde k10d)
+        X0e = np.asarray(model.nodes[e.nodes], float) if punkte is None else np.asarray(punkte, float)
+        self.d0 = X0e[1] - X0e[0]
+        self.Ld0 = float(np.linalg.norm(self.d0))
         # Gelenke und Federgelenke in der geometrischen Steifigkeit wie in der
         # elastischen (asm.stab_endkinematik, wie Theorie II. Ordnung seit A7).
         # Bis zum 09.11.2026 bekam die Tangente die volle Balkenform: mit einer
@@ -245,17 +251,30 @@ class _Stab:
             aus.append((n, np.cross(a_r - self.arm[k], F), bm._skew(F) @ bm._skew(a_r)))
         return aus
 
-    def zustand(self, X: np.ndarray, R: np.ndarray):
-        """(f_l, T, k_g, N, L) im mitgehenden System der aktuellen Lage; f_l
-        ist der elastische Anteil k_l d_l, N die Normalkraft mit der
-        Anfangsdehnung. T wirkt auf die Stabenden (mit Versatz: hinter dem
-        Arm, :meth:`knoten`)."""
+    def zustand(self, U: np.ndarray, R: np.ndarray):
+        """(f_l, T, k_g, N, L) im mitgehenden System der aktuellen Lage
+        (Verschiebungen ``U`` (nn, 3), Drehungen ``R``); f_l ist der
+        elastische Anteil k_l d_l, N die Normalkraft mit der Anfangsdehnung.
+        T wirkt auf die Stabenden (mit Versatz: hinter dem Arm,
+        :meth:`knoten`).
+
+        Die Laengung L - L0 kommt aus der Sehne d0 der Ausgangslage und ihrem
+        Zuwachs du: (2 d0·du + du·du) / (L + |d0|). Bis zur Runde k10d
+        (16.11.2026) war sie die Differenz der Laengen aus den Koordinaten
+        X0 + u; deren Rundung (etwa 2e-16 der Koordinaten) gab eine
+        Normalkraft von etwa 2e-16 E A |X|/L0, die nicht kleiner wird. Am
+        Kragarm L = 10 m, A = 1e-3 m², I = 1e-6 m⁴ mit 0,1 N am Ende lag sie
+        mit etwa 4e-8 N ueber der Konvergenzschranke 1e-6 der Last der ersten
+        Laststufe (0,01 N): „keine Konvergenz“ statt 0,158730 mm. An sehr
+        kurzen Elementen (E A / L0 gross) wirkte dasselbe schon bei
+        gewoehnlichen Lasten."""
         n1, n2 = self.nodes
-        if self.arm is None:
-            d = X[n2] - X[n1]
-        else:
-            d = (X[n2] + R[n2] @ self.arm[1]) - (X[n1] + R[n1] @ self.arm[0])
+        du = U[n2] - U[n1]
+        if self.arm is not None:
+            du = du + (R[n2] @ self.arm[1] - self.arm[1]) - (R[n1] @ self.arm[0] - self.arm[0])
+        d = self.d0 + du
         L = float(np.linalg.norm(d))
+        dL = (2.0 * float(self.d0 @ du) + float(du @ du)) / (L + self.Ld0)
         e1 = d / L
         Q1 = R[n1] @ self.E0T
         Q2 = R[n2] @ self.E0T
@@ -273,7 +292,7 @@ class _Stab:
         E = np.column_stack([e1, e2, e3])
         th1 = rot_log(E.T @ Q1)
         th2 = rot_log(E.T @ Q2)
-        dl = np.concatenate([[0.0, 0.0, 0.0], th1, [L - self.L0, 0.0, 0.0], th2])
+        dl = np.concatenate([[0.0, 0.0, 0.0], th1, [dL, 0.0, 0.0], th2])
         fl = self.kl @ dl
         N = float(fl[6]) if self.f_anf is None else float(fl[6] - self.f_anf[6])
         if self.typ == "truss":
@@ -1117,7 +1136,7 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
             fl12[6] = float(info.get("Tmax", 0.0))
             zust[sl_.i] = (fl12, float(info.get("Tmax", 0.0)))
         for st in staebe:
-            fl, T, kg, N, L = st.zustand(X, R)
+            fl, T, kg, N, L = st.zustand(u, R)
             zust[st.i] = (fl, N)
             f_e, Ke = st.knoten(R, T.T @ (fl if st.f_anf is None else fl - st.f_anf),
                                 T.T @ (st.kl + kg) @ T)

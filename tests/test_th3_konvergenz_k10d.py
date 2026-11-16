@@ -8,6 +8,11 @@ Runde k10d (16.11.2026), Theorie III. Ordnung: Restschranke und Konvergenz.
     rechnete still w(b) = 1,587302 mm, Theorie I. Ordnung und Hand ergeben
     1,588730 mm. Jetzt liegt die Schranke auf Rundungsniveau (1e-13 der
     Betragssumme, hoechstens 0,001 N): der Lastfall wird abgewiesen.
+(b) Am Kragarm L = 10 m, A = 1e-3 m², I = 1e-6 m⁴ meldete Theorie III.
+    Ordnung bei F = 0,1 N „keine Konvergenz“ (Theorie I. Ordnung und Hand
+    0,158730 mm), mit Koordinaten um 100 km schon bei 0,001 N. Ursache: die
+    Laengung L - L0 als Differenz zweier Laengen aus X0 + u; deren Rundung
+    gab eine Normalkraft, die nicht unter die Schranke 1e-6 der Last fiel.
 
 Aufruf:  python -m tests.test_th3_konvergenz_k10d
 """
@@ -119,7 +124,44 @@ def test_a_restschranke():
           not f3 and abs(w3 - FLEX_W) <= 1e-5 * FLEX_W, f"{f3[:60]!r} {w3 * 1e3:.6f} mm")
 
 
-TESTS = [test_a_restschranke]
+# --------------------------------------------------------------------------
+# (b) kleine Lasten
+# --------------------------------------------------------------------------
+def kragarm(F, th, versatz=0.0, L=L_W, A=1e-3, I=I_W, teil=1):
+    from statik3d.model import Model, Material, Section
+    m = Model("K")
+    m.add_material(Material("ST", E=E, nu=0.3, rho=0.0, fy=355e6))
+    m.add_section(Section("Q", A=A, Iy=I, Iz=I, It=1e-7, zmax=0.05, ymax=0.05))
+    m.design.imperfektionen = False
+    m.netz.stabteilung = teil
+    a = m.add_node(versatz, versatz, versatz)
+    b = m.add_node(versatz + L, versatz, versatz)
+    m.add_element("beam", [a, b], "ST", "Q")
+    m.fix(a, "all")
+    m.load_node(b, Fz=-F)
+    k = m.add_combination("LK1", {"LF1": 1.0}, "ULS")
+    k.theorie = th
+    return m, b
+
+
+def test_b_kleine_last():
+    for F, off in ((0.1, 0.0), (1.0, 0.0), (0.001, 1e5), (0.1, 1e5)):
+        hand = F * FLEX_W
+        m, b = kragarm(F, "I", off)
+        r1, _f = _rechne(m)
+        w1 = -np.asarray(r1.u).reshape(-1, 6)[b, 2]
+        m, b = kragarm(F, "III", off)
+        r3, f3 = _rechne(m)
+        w3 = -np.asarray(r3.u).reshape(-1, 6)[b, 2]
+        th = str((r3.info or {}).get("theorie", ""))
+        check(f"(b) F = {F} N, Koordinaten um {off:.0f} m: Theorie III. Ordnung konvergiert",
+              not f3 and th.startswith("III"), f"{f3!r} {th}")
+        check("… w(b) = Hand = Theorie I. Ordnung (auf 0,000001 mm)",
+              abs(w3 - hand) <= 1e-9 and abs(w1 - hand) <= 1e-9,
+              f"Th III {w3 * 1e3:.6f}, Th I {w1 * 1e3:.6f}, Hand {hand * 1e3:.6f} mm")
+
+
+TESTS = [test_a_restschranke, test_b_kleine_last]
 
 
 def main():
