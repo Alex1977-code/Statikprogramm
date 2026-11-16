@@ -219,9 +219,16 @@ def test_bitgleich():
 
 
 def test_ruecknahme():
-    """Mit dem alten Bezug kommt der Befund zurueck - das belegt die Ursache."""
-    from statik3d import assemble as asm
+    """Mit dem alten Bezug kommt der Befund zurueck - das belegt die Ursache.
+
+    Seit Runde k10c (16.11.2026) prueft LinearSolver.solve ein Modell mit
+    Starrkoerpern, das an der Schranke scheitert, noch einmal mit getrenntem
+    Strafanteil (statik3d.strafanteil); die Ruecknahme schaltet das mit ab,
+    sonst rechnete auch der alte Bezug. Mit dieser Pruefung muss er dasselbe
+    Ergebnis geben wie die Hand."""
+    from statik3d import assemble as asm, strafanteil as sa
     asm.STARRKOERPER_BEZUG_ALT = True
+    sa.PRUEFUNG = False
     try:
         try:
             _w("starr")
@@ -230,7 +237,18 @@ def test_ruecknahme():
             ok, txt = "singul" in str(ex), str(ex)[:120]
     finally:
         asm.STARRKOERPER_BEZUG_ALT = False
+        sa.PRUEFUNG = True
     check("Rücknahmeprobe: alter Bezug (K samt Straffedern) ergibt „singulär“", ok, txt)
+    asm.STARRKOERPER_BEZUG_ALT = True
+    try:
+        try:
+            u, _r, b, _p, _an = _w("starr")
+            close("Alter Bezug mit getrenntem Strafanteil (k10c): w(b) = F L³/(3 E I)", -u[b, 2] * 1e3,
+                  HAND * 1e3, 1e-5)
+        except RuntimeError as ex:
+            check("Alter Bezug mit getrenntem Strafanteil (k10c): rechnet", False, str(ex)[:120])
+    finally:
+        asm.STARRKOERPER_BEZUG_ALT = False
 
 
 def test_merkmal():
