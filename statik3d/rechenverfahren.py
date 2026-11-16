@@ -3053,6 +3053,17 @@ def _rbe3_fesselung_im_ergebnis(model, an) -> str:
             + (" …" if len(namen) > 6 else ""))
 
 
+def _eigenpaare_im_ergebnis(model, an) -> str:
+    """Merkmal eigenpaare_geprueft (Stand 78): Knicken, alpha_cr oder Theorie
+    II. Ordnung (alpha_cr „auto“) in einem Modell mit frei definiertem RBE3."""
+    if not _rbe3_fesselung_betroffen(model):
+        return ""
+    teile = [t for t in (_alpha_cr_im_ergebnis(model, an),) if t]
+    if getattr(an, "kind", "") == "buckling" and not teile:
+        teile.append("Knicken: " + str(getattr(an, "name", "") or "Knicken"))
+    return "; ".join(teile)
+
+
 #: Ab so vielen Staeben mit Nachweis lief der EC3-Nachweis bei mehreren
 #: Arbeitern von selbst ueber Arbeitsprozesse (ec3.design.check_members)
 EC3_AUFTRAEGE_AB = 24
@@ -4816,10 +4827,35 @@ MERKMALE: list = [
         modellmerkmal="Lastfall oder Kombination nach Theorie III. Ordnung und ein Balken mit Drehgelenk "
                       "oder Drehfedergelenk (alle Gelenke des Stabs Drehungen)",
         betrifft=_theorie3_gelenk, im_ergebnis=_theorie3_im_ergebnis),
+    # Runde k10e (16.11.2026, Fehlerliste Nr. 26): Eigenpaare des
+    # Verzweigungsproblems (Knicken, alpha_cr) werden geprueft - weicht der
+    # Rayleigh-Quotient um mehr als 5 % (solver.KNICK_RQ_MAX) vom gemeldeten
+    # Eigenwert ab, ist es keine Loesung; dann rechnet ein zweiter Weg (dicht
+    # ueber dem Traeger von K_g) oder es kommt Klartext. Bis dahin gingen
+    # solche Paare still ins Ergebnis: Kragarm mit Kreisring aus 32 Speichen
+    # von 2 mm (RBE3, Befund Nr. 25) Faktoren -1,40 / -0,90 / 0,76 / 1,58
+    # statt 46,06 (Gegenrechnung mit Elimination der Masterfreiheitsgrade).
+    # Beobachtet nur an frei definierten RBE3 mit sehr kurzen Speichen und an
+    # der Ruecknahmeprobe mit den unbearbeiteten RBE3-Zeilen
+    # (tests/test_rbe3_ring_k10.py); an allen anderen Pruefungen des Knickens
+    # und von alpha_cr lag die Abweichung unter 0,00012. Ein
+    # ARPACK-Abbruch (vorher roh gemeldet, alpha_cr „unendlich“) rechnet
+    # jetzt - dafuer braucht es kein Merkmal. Fehlerkorrektur
+    Merkmal(
+        name="eigenpaare_geprueft", titel="Verzweigungsproblem: Eigenpaare geprüft, zweiter Lösungsweg",
+        texte={"alt": "Eigenpaare von ARPACK ungeprüft übernommen; bei einem Abbruch Fehlermeldung von ARPACK, "
+                      "α_cr unendlich",
+               "neu": "Paare mit mehr als 5 % Abweichung zwischen Eigenwert und Rayleigh-Quotient verworfen; "
+                      "zweiter Lösungsweg (dicht), sonst Klartext"},
+        wechsel=(Wechsel(stand=78, datum="16.11.2026", commit="fix/k10e-modal", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="frei definierter RBE3 (Verteilkopplung mit Slaves) mit Knicken, α_cr oder Theorie II. "
+                      "Ordnung",
+        betrifft=_rbe3_fesselung_betroffen, im_ergebnis=_eigenpaare_im_ergebnis),
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 75
+VERFAHRENSSTAND = 78
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

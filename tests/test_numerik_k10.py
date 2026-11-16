@@ -561,6 +561,16 @@ def test_grenze_dicht():
         raise ArpackError(-9999)
     m4, Z4 = wand(30, masse_richtung=n)
     solver.eigsh = bricht
+    # Seit Runde k10e (16.11.2026) rechnet nach einem ARPACK-Abbruch ein
+    # zweiter Loesungsweg (kleinere Verschiebung, dann dicht bis
+    # MODAL_AUSWEICH_DICHT Freiheitsgrade mit Masse) - der Klartext kommt,
+    # wenn auch er nichts liefert: hier der dichte Weg abgeschaltet, die
+    # kleineren Verschiebungen laufen ueber dasselbe (gebrochene) eigsh.
+    # Dass der zweite Weg allein richtig rechnet, prueft
+    # tests/test_eigenloeser_k10e.py.
+    alt_dicht = getattr(solver, "MODAL_AUSWEICH_DICHT", None)
+    if alt_dicht is not None:
+        solver.MODAL_AUSWEICH_DICHT = 0
     try:
         _still(solver.solve_modal, m4, 8, workers=1, zusatzmasse=Z4)
         ok, txt = False, "keine Ausnahme"
@@ -570,6 +580,8 @@ def test_grenze_dicht():
         ok, txt = False, f"{type(ex).__name__}: {ex}"
     finally:
         solver.eigsh = echt
+        if alt_dicht is not None:
+            solver.MODAL_AUSWEICH_DICHT = alt_dicht
     check("ARPACK-Abbruch: Klartext „Eigenschwingungen nicht berechenbar“", ok, txt[:200])
 
 
