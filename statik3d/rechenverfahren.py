@@ -2473,7 +2473,7 @@ def _maske_kette_moeglich(model) -> bool:
                for l in (getattr(lc, "nodal_loads", None) or []))
 
 
-def _maske_kette_masken(model) -> list:
+def _maske_kette_masken(model, einser: bool = False) -> list:
     """[(Maske, Lastfaelle, nur_kopplungen)] - die Elementmasken, unter denen die
     Lastfaelle gerechnet werden:
 
@@ -2493,13 +2493,18 @@ def _maske_kette_masken(model) -> list:
       Massenmatrix maskiert die Punktmassen nicht (seit Runde k10,
       15.11.2026; bis dahin erkannte das Merkmal die Schwingung nicht).
 
+    ``einser`` (Merkmal maske_stabende_kopplung, Stand 71): auch die
+    Einsermaske einer Situation, die nichts abschaltet, wenn das Modell einen
+    Stab „aus“ ohne Elemente hat (Model.grundmaske ist dann eine Einsermaske,
+    solver.StaticSystem rechnet mit ihr).
+
     Gleiche Masken stehen einmal darin, mit allen ihren Lastfaellen."""
     import numpy as np
     from . import vorspannkraft as vk
     je: dict = {}
 
-    def dazu(aktiv, lfs, nur_kopp):
-        if aktiv is None or not lfs or bool(aktiv.all()):
+    def dazu(aktiv, lfs, nur_kopp, einser_ok=False):
+        if aktiv is None or not lfs or (bool(aktiv.all()) and not einser_ok):
             return
         key = (aktiv.tobytes(), bool(nur_kopp))
         if key in je:
@@ -2519,9 +2524,13 @@ def _maske_kette_masken(model) -> list:
             masken_sit[sit] = None if m is None else np.asarray(m, dtype=bool)
         return masken_sit[sit]
 
+    try:
+        einser = bool(einser) and model.grundmaske() is not None
+    except Exception:                                   # noqa: BLE001
+        einser = False
     for sit in [""] + list(getattr(model, "situationen", None) or {}):
         dazu(maske_sit(sit), {str(n) for n, lc in lcs.items() if str(getattr(lc, "situation", "") or "") == sit},
-             False)
+             False, einser)
     # Schwingungsnachweise: Eigenformen in der Situation ihres Wasserdruck-Generierers
     wds = getattr(model, "wasserdruecke", None) or {}
     for name, sn in (getattr(model, "schwingungen", None) or {}).items():
@@ -2620,12 +2629,96 @@ def _maske_lager_lastfaelle(model) -> set:
         return h, h
 
     def neu(model_, aktiv, kn):
-        return wirksame_knoten(model_, aktiv, kn)
+        # bis Stand 70: den Wechsel von Stand 71 meldet _maske_stabende_lastfaelle
+        return huelle(model_, aktiv, kn, bis_70=True)
 
     return _maske_vergleich(model, alt, neu)
 
 
-def _maske_vergleich(model, alt, neu) -> set:
+def _stabende_kopplungen(model) -> list:
+    """Die Kopplungen der Stabenden (fugen.STABENDE_GRUPPE)."""
+    from .situationen import _stabende_gruppe
+    g = _stabende_gruppe()
+    return [kp for kp in (getattr(model, "kopplungen", None) or [])
+            if str(getattr(kp, "gruppe", "") or "").startswith(g)]
+
+
+def _maske_stabende_lastfaelle(model) -> set:
+    """Lastfaelle (auch die Lastfaelle der Kombinationen nach Theorie III.
+    Ordnung) und Schwingungsnachweise, deren Ergebnis die Regel des Stands 71
+    aendern kann (Runde k10c, 15.11.2026): die Kopplung eines Stabendes an
+    einem Koerperknoten ohne jedes Element bleibt auch ueber den wirksamen
+    Stabknoten (situationen.kopplung_bleibt mit ``tot``).
+
+    * Unter jeder Maske aus :func:`_maske_kette_masken` (auch der Einsermaske
+      eines Stabs „aus“ ohne Elemente): eine Kopplung, die seither bleibt, oder
+      eine Knotenlast bzw. Punktmasse an einem Knoten, der seither mittraegt
+      (situationen.wirksame_knoten gegen situationen.huelle mit ``bis_70``).
+    * Nach Theorie III. Ordnung auch ohne Maske: eine starre Kopplung eines
+      Stabendes, die die Abweisung (theorie3.starre_kopplung_sperre) seither
+      zaehlt - bis Stand 70 rechnete Theorie III. Ordnung sie still als Feder
+      von 1e4 N/m (Last 1 kN am Koerperknoten Q ohne Element: w(Q) 100,54 statt
+      0,54 mm)."""
+    kopp = _stabende_kopplungen(model)
+    if not kopp:
+        return set()
+    from .situationen import huelle, wirksame_knoten
+
+    def alt(model_, aktiv, kn):
+        h = huelle(model_, aktiv, kn, bis_70=True)
+        return h, h
+
+    def neu(model_, aktiv, kn):
+        return wirksame_knoten(model_, aktiv, kn)
+
+    out = _maske_vergleich(model, alt, neu, stabende_neu=True, einser=True)
+    return out | _th3_stabende_lastfaelle(model, kopp)
+
+
+def _th3_stabende_lastfaelle(model, kopp: list) -> set:
+    """Die Lastfaelle der Lastfaelle und Kombinationen nach Theorie III.
+    Ordnung, in deren Situation eine starre Kopplung eines Stabendes seit
+    Stand 71 zur Abweisung zaehlt und vorher nicht
+    (:func:`_maske_stabende_lastfaelle`)."""
+    import numpy as np
+    starr = [kp for kp in kopp if any(not np.isfinite(w) for _r, w in kp.paare())]
+    if not starr:
+        return set()
+    try:
+        objekte = [o for o in list(model.load_cases.values()) + list(model.combinations.values())
+                   if model.theorie_von(o) == "III"]
+    except Exception:                                   # noqa: BLE001 - Pruefung, nie Abbruch
+        return set()
+    if not objekte:
+        return set()
+    from .theorie3 import _wirksame_knoten_th3, _nur_staebe
+    from .situationen import kopplung_bleibt, abgeschaltete_knoten
+    out: set = set()
+    je: dict = {}
+    for o in objekte:
+        sit = str(getattr(o, "situation", "") or "")
+        if sit not in je:
+            try:
+                aktiv = model.aktive_elemente(sit)
+            except KeyError:
+                aktiv = None
+            if aktiv is not None and bool(np.asarray(aktiv).all()):
+                aktiv = None
+            neu_ = alt_ = False
+            if _nur_staebe(model, aktiv):
+                kn = _wirksame_knoten_th3(model, aktiv)
+                kn_alt = _wirksame_knoten_th3(model, aktiv, bis_70=True)
+                tot = abgeschaltete_knoten(model, aktiv, len(kn))
+                neu_ = any(kopplung_bleibt(model, kp, kn, tot) for kp in starr)
+                alt_ = any(kopplung_bleibt(model, kp, kn_alt) for kp in starr)
+            je[sit] = neu_ and not alt_
+        if je[sit]:
+            name = str(o.name)
+            out |= _lastfaelle_von(model, name) or {name}
+    return out
+
+
+def _maske_vergleich(model, alt, neu, stabende_neu: bool = False, einser: bool = False) -> set:
     """Lastfaelle (und Schwingungsnachweise), deren Ergebnis sich zwischen zwei
     Knotenmasken unterscheiden kann, unter jeder Maske aus
     :func:`_maske_kette_masken`. ``alt(model, aktiv, kn)`` gibt (Knotenmaske der
@@ -2634,10 +2727,15 @@ def _maske_vergleich(model, alt, neu) -> set:
     Element. Betroffen: eine Kopplung, die heute bleibt und vorher entfiel
     (assemble.kopplungen) - oder, ausser im Spannschritt und in der Schwingung,
     eine Knotenlast oder (bei Eigengewicht) eine Punktmasse an einem Knoten,
-    der heute mittraegt und vorher nicht."""
-    if not _maske_kette_moeglich(model):
+    der heute mittraegt und vorher nicht.
+
+    ``stabende_neu``: heute bleibt die Kopplung eines Stabendes auch ueber den
+    Stabknoten (situationen.kopplung_bleibt mit den Knoten abgeschalteter
+    Elemente, Stand 71); ``einser``: auch Einsermasken
+    (:func:`_maske_kette_masken`)."""
+    if not stabende_neu and not _maske_kette_moeglich(model):
         return set()
-    masken = _maske_kette_masken(model)
+    masken = _maske_kette_masken(model, einser=einser)
     if not masken:
         return set()
     import numpy as np
@@ -2658,7 +2756,11 @@ def _maske_vergleich(model, alt, neu) -> set:
         kn[flach[np.repeat(aktiv, zahl)]] = True
         alt_kopp, alt_last = alt(model, aktiv, kn)
         jetzt = neu(model, aktiv, kn)
-        if any(kopplung_bleibt(model, kp, jetzt) and not kopplung_bleibt(model, kp, alt_kopp)
+        tot = None
+        if stabende_neu:
+            tot = np.zeros(nn, dtype=bool)
+            tot[flach[np.repeat(~np.asarray(aktiv, dtype=bool), zahl)]] = True
+        if any(kopplung_bleibt(model, kp, jetzt, tot) and not kopplung_bleibt(model, kp, alt_kopp)
                for kp in kopplungen):
             out |= offen
             continue
@@ -2723,6 +2825,19 @@ def _maske_lager_betroffen(model) -> bool:
     Schwingungsnachweis, dessen Last oder Steifigkeit unter seiner Elementmaske
     seit Stand 67 anders wirkt."""
     return bool(_maske_lager_lastfaelle(model))
+
+
+def _maske_stabende_betroffen(model) -> bool:
+    """Modellmerkmal maske_stabende_kopplung (Stand 71): ein Lastfall,
+    Schwingungsnachweis oder eine Rechnung nach Theorie III. Ordnung, deren
+    Last, Steifigkeit oder Abweisung seit Stand 71 anders wirkt."""
+    return bool(_maske_stabende_lastfaelle(model))
+
+
+def _maske_stabende_im_ergebnis(model, an) -> str:
+    """Ergebnisse, deren Lastfaelle :func:`_maske_stabende_lastfaelle` nennt."""
+    return _masken_im_ergebnis(model, an, _maske_stabende_lastfaelle(model),
+                               "Kopplung eines Stabendes an einem Knoten ohne Element")
 
 
 def _maske_lager_im_ergebnis(model, an) -> str:
@@ -4326,10 +4441,35 @@ MERKMALE: list = [
                          art=FEHLERKORREKTUR),),
         modellmerkmal="frei definierter RBE3 (Verteilkopplung mit Slaves, nicht Stabende oder Scheibe)",
         betrifft=_rbe3_fesselung_betroffen, im_ergebnis=_rbe3_fesselung_im_ergebnis),
+    # Runde k10c (15.11.2026, vom Anwender freigegeben): die Kopplung eines
+    # Stabendes (fugen.STABENDE_GRUPPE) brauchte unter jeder Elementmaske einen
+    # wirksamen Koerperknoten, auch wenn an ihm gar kein Element haengt - die
+    # Last dahinter entfiel still: Kragarm 3 m, Kopplung „Stabende“ vom Ende b
+    # an Q ohne Element, 1 kN an Q - mit Maske (Situation, Stab „aus“,
+    # Einsermaske) w(b) = 0 mm und Summe Rz 0 N, ohne Maske und in der
+    # Gegenrechnung 0,5357 mm und 1 000 N; Schwingung 441,41 statt 21,72 Hz,
+    # Knicken abgebrochen. Theorie III. Ordnung zaehlte die starre Kopplung
+    # ohne Maske nicht zur Abweisung und rechnete sie als Feder 1e4 N/m
+    # (w(Q) 100,54 statt 0,54 mm). Fehlerkorrektur.
+    Merkmal(
+        name="maske_stabende_kopplung",
+        titel="Kopplung eines Stabendes an einem Knoten ohne Element",
+        texte={"alt": "die Kopplung eines Stabendes wirkte unter einer Elementmaske nur über einen Körperknoten "
+                      "mit wirksamem Element (eine Last dahinter entfiel); Theorie III. Ordnung rechnete sie "
+                      "starr als weiche Feder",
+               "neu": "die Kopplung wirkt auch über den Stabknoten, wenn ihr Körperknoten nicht zu einem "
+                      "abgeschalteten Element gehört, wie in der Rechnung mit gelöschten Elementen; Theorie III. "
+                      "Ordnung weist sie ab"},
+        wechsel=(Wechsel(stand=71, datum="15.11.2026", commit="fix/k10-maske2", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Kopplung eines Stabendes an einem Knoten ohne Element mit einer Knotenlast, Punktmasse "
+                      "oder weiteren Kopplung dahinter, in einer Rechnung mit Elementmaske (Situation, Stab „aus“, "
+                      "auch ein Stab „aus“ ohne Elemente) - oder starr nach Theorie III. Ordnung",
+        betrifft=_maske_stabende_betroffen, im_ergebnis=_maske_stabende_im_ergebnis),
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 70
+VERFAHRENSSTAND = 71
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

@@ -67,7 +67,7 @@ def aktive_knoten(model: Model, aktiv) -> np.ndarray:
     return kn
 
 
-def kopplung_bleibt(model: Model, kp, kn: np.ndarray) -> bool:
+def kopplung_bleibt(model: Model, kp, kn: np.ndarray, tot: np.ndarray = None) -> bool:
     """Ob die Kopplung ``kp`` bei der Knotenmaske ``kn`` (seit 15.11.2026
     :func:`wirksame_knoten`, bis dahin :func:`aktive_knoten`) wirkt: sobald
     einer ihrer Knoten wirksam ist. Weggelassen wird sie nur,
@@ -87,10 +87,24 @@ def kopplung_bleibt(model: Model, kp, kn: np.ndarray) -> bool:
     Ausnahme Stabende (fugen.STABENDE_GRUPPE, RBE3 an 1-4 Knoten des
     Koerpers): Der Stabknoten folgt dem Mittel der Koerperknoten. Sind die
     abgeschaltet, haetten sie nur die Straffeder und waeren frei beweglich -
-    die Kopplung braucht darum einen wirksamen Koerperknoten (node_b)."""
+    die Kopplung braucht darum einen wirksamen Koerperknoten (node_b).
+
+    ``tot`` (seit Verfahrensstand 71, Runde k10c, 15.11.2026): Maske (nn,) der
+    Knoten abgeschalteter Elemente (:func:`abgeschaltete_knoten`). Ein
+    Koerperknoten ohne jedes Element ist kein Knoten eines abgeschalteten
+    Koerpers; dann bleibt die Kopplung auch ueber den wirksamen Stabknoten
+    (node_a) - dieselbe Regel wie bei der verteilenden Kopplung eines
+    Stabendes (:func:`huelle`). Ohne ``tot`` gilt die Regel bis Stand 70 (nur
+    ueber node_b; fuer die Merkmale in rechenverfahren). Bis dahin entfiel die
+    Kopplung unter jeder Maske, auch einer Einsermaske: Kragarm 3 m, Kopplung
+    „Stabende“ vom Ende b an Q ohne Element, 1 kN an Q - mit Maske w(b) =
+    0 mm und Summe Rz 0 N, ohne Maske und in der Gegenrechnung 0,5357 mm und
+    1 000 N, Gleichgewichtskontrolle „ok“."""
     a, b = int(kp.node_a), int(kp.node_b)
     if str(getattr(kp, "gruppe", "") or "").startswith(_stabende_gruppe()):
-        return bool(kn[b])
+        if kn[b]:
+            return True
+        return tot is not None and bool(kn[a]) and not bool(tot[b])
     return bool(kn[a] or kn[b])
 
 
@@ -151,14 +165,28 @@ def wirksame_knoten(model: Model, aktiv, kn: np.ndarray = None) -> np.ndarray:
     einzigem Slave Q ohne Element, 1 kN an Q: w = 0 statt 0,5357 mm (Fall V1)
     - beide Male mit Gleichgewichtskontrolle „ok“. Die Maske bis Stand 66
     liefert :func:`huelle` mit ``bis_66=True`` (rechenverfahren, Merkmal
-    maske_lager_verteilung)."""
+    maske_lager_verteilung).
+
+    Bis Verfahrensstand 70 (Runde k10c, 15.11.2026) brauchte die Kopplung
+    eines Stabendes (fugen.STABENDE_GRUPPE) immer einen wirksamen
+    Koerperknoten, auch wenn an ihm gar kein Element haengt: Kragarm 3 m,
+    Kopplung „Stabende“ vom Ende b an Q ohne Element, 1 kN an Q - unter jeder
+    Maske (Situation, Stab „aus“, Einsermaske) w(b) = 0 mm und Summe Rz 0 N,
+    ohne Maske und in der Gegenrechnung 0,5357 mm und 1 000 N. Seither
+    dieselbe Regel wie bei der verteilenden Kopplung: der Stabknoten loest aus,
+    wenn der Koerperknoten nicht Knoten eines abgeschalteten Elements ist
+    (:func:`kopplung_bleibt` mit ``tot``). Die Maske bis Stand 70 liefert
+    :func:`huelle` mit ``bis_70=True`` (Merkmal maske_stabende_kopplung)."""
     return huelle(model, aktiv, kn)
 
 
-def huelle(model: Model, aktiv, kn: np.ndarray = None, bis_66: bool = False) -> np.ndarray:
+def huelle(model: Model, aktiv, kn: np.ndarray = None, bis_66: bool = False,
+           bis_70: bool = False) -> np.ndarray:
     """:func:`wirksame_knoten`; ``bis_66``: die Regel bis Verfahrensstand 66 -
     Lagerknoten nur ohne jedes Element, verteilende Kopplung nur ueber einen
-    Slave (fuer das Merkmal maske_lager_verteilung)."""
+    Slave (fuer das Merkmal maske_lager_verteilung) - und die Kopplung eines
+    Stabendes nur ueber den Koerperknoten wie bis Stand 70; ``bis_70``: nur
+    diese, die Regel bis Verfahrensstand 70 (Merkmal maske_stabende_kopplung)."""
     if aktiv is None:
         return aktive_knoten(model, aktiv) if kn is None else np.array(kn, dtype=bool, copy=True)
     kn = aktive_knoten(model, aktiv) if kn is None else np.asarray(kn, dtype=bool)
@@ -176,6 +204,12 @@ def huelle(model: Model, aktiv, kn: np.ndarray = None, bis_66: bool = False) -> 
     sk_liste = []                         # (Ausloeser, alle Knoten) je Starrkoerper
     from .stabeinleitung import ist_verteilkopplung
     tot = None                            # Knoten abgeschalteter Elemente (erst bei Bedarf)
+    # Kopplung eines Stabendes: auch der Stabknoten loest aus, wenn ihr
+    # Koerperknoten nicht Knoten eines abgeschalteten Elements ist (Stand 71)
+    b_frei = np.zeros(len(kopp), dtype=bool)
+    if nur_b.any() and not (bis_66 or bis_70):
+        tot = abgeschaltete_knoten(model, aktiv, nn)
+        b_frei = nur_b & ~tot[kb]
     for sk in (getattr(model, "starrkoerper", None) or []):
         master = int(sk.master)
         slaves = [int(x) for x in (sk.slaves or []) if 0 <= int(x) < nn and int(x) != master]
@@ -193,7 +227,7 @@ def huelle(model: Model, aktiv, kn: np.ndarray = None, bis_66: bool = False) -> 
     while True:
         vorher = int(out.sum())
         if len(kopp):
-            bleibt = np.where(nur_b, out[kb], out[ka] | out[kb])
+            bleibt = np.where(nur_b, out[kb] | (b_frei & out[ka]), out[ka] | out[kb])
             out[ka[bleibt]] = True
             out[kb[bleibt]] = True
         for ausloeser, alle in sk_liste:
