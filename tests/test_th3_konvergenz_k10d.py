@@ -23,6 +23,14 @@ Runde k10d (16.11.2026), Theorie III. Ordnung: Restschranke und Konvergenz.
     eine stockende Laststufe neu mit der vollen Tangente und mit der
     Entscheidung 5.3.2(6) aus der vollen Last nach Theorie I. Ordnung; was
     vorher konvergierte, rechnet unveraendert.
+(d) An L-Rahmen (90° und 60°, auch mit Versatz) mit einem Stummel von
+    0,02 m bzw. 0,005 m an der Ecke meldete Theorie III. Ordnung „keine
+    Konvergenz“ und gab den Zustand der ersten Laststufe aus (ein Zehntel).
+    Neben (c) stand die Rechnung am Stummel 0,005 m bei Korrekturen um
+    1e-16 m: das Residuum war Rundungsrauschen (6 E I / L² mal 2e-16 rad,
+    etwa 0,001 N). Jetzt endet eine Stufe auch, wenn die Korrektur die Lage
+    nicht mehr aendert (unter 1e-12 der Modellgroesse bzw. 1e-12 rad) und
+    das Residuum unter 0,1 % der Last liegt.
 
 Aufruf:  python -m tests.test_th3_konvergenz_k10d
 """
@@ -291,7 +299,106 @@ def test_c_hallenreihe():
           not f2 and abs(u2[31, 1] * 1e3 - 3.63804835) <= 1e-6, f"{f2!r} {u2[31, 1] * 1e3:.8f} mm")
 
 
-TESTS = [test_a_restschranke, test_b_kleine_last, test_c_ipe_vorverformung, test_c_hallenreihe]
+# --------------------------------------------------------------------------
+# (d) kurze Elemente an Rahmenecken
+# --------------------------------------------------------------------------
+G_W = E / 2.6
+
+
+def _rechteck(name, b=0.02, h=0.4):
+    from statik3d.model import Section
+    return Section(name, A=b * h, Iy=b * h ** 3 / 12, Iz=h * b ** 3 / 12,
+                   It=h * b ** 3 / 3 * (1 - 0.63 * b / h), typ="rect", h=h, b=b, zmax=h / 2, ymax=b / 2)
+
+
+def l_rahmen(winkel=90.0, l0=0.02, art="stummel", kt=2e3, ecc=None, L=2.0, n=10, P=1e3, stoer=2.0):
+    """L-Rahmen (Gegenpruefung k11, v3b.rahmen): Schenkel 1 von (0,0,0) nach
+    (L,0,0), an der Ecke ein Stueck l0 in Richtung des zweiten Schenkels
+    (``art`` "stummel": G I_t / l0 = kt ohne Gelenk; "feder": normales I_t,
+    Federgelenk Torsion kt am Anfang des zweiten Schenkels), Rechteck
+    20 x 400 mm hochkant; Fuss eingespannt, an der Spitze -P in x und stoer
+    in z. Rueckgabe (Modell, Spitze)."""
+    import math
+    from statik3d.model import Model, Material
+    m = Model("L")
+    m.add_material(Material("ST", E=E, nu=0.3, rho=0.0, fy=355e6))
+    m.add_section(_rechteck("P"))
+    st = _rechteck("S")
+    if art == "stummel":
+        st.It = kt * l0 / G_W
+    m.add_section(st)
+    m.design.imperfektionen = False
+    m.netz.stabteilung = 1
+    r = math.radians(90.0)
+
+    def strecke(a_id, b_xyz, nn, sec, ecc_=None):
+        a = np.array(m.nodes[a_id], float)
+        b = np.array(b_xyz, float)
+        ids = [a_id] + [m.add_node(*(a + (b - a) * j / nn)) for j in range(1, nn + 1)]
+        for j in range(nn):
+            kw = {"roll": r}
+            if ecc_ is not None:
+                kw["exzentrizitaet"] = [list(ecc_), list(ecc_)]
+            m.add_element("beam", [ids[j], ids[j + 1]], "ST", sec, **kw)
+        return ids
+    w = math.radians(180.0 - winkel)
+    pb = np.array([L, 0.0, 0.0])
+    t = np.array([math.cos(w), math.sin(w), 0.0])
+    start = m.add_node(0, 0, 0)
+    ids = strecke(start, tuple(pb), n, "P")
+    s_ids = strecke(ids[-1], tuple(pb + l0 * t), 1, "S", ecc if art == "stummel" else None)
+    erstes = len(m.elements)
+    ids = strecke(s_ids[-1], tuple(pb + L * t), n, "P")
+    el = m.elements[erstes]
+    if ecc is not None:
+        el.exzentrizitaet = [list(ecc), list(ecc)]
+    if art == "feder":
+        el.hinge_springs = [(3, kt)]
+    m.fix(start, "all")
+    m.load_node(ids[-1], Fx=-P, Fz=stoer)
+    return m, ids[-1]
+
+
+def _th3_direkt(m, schritte=10):
+    from statik3d.theorie3 import solve_theorie3
+    r, info = _still(solve_theorie3, m, {m.active_case: 1.0}, m.active_case, schritte=schritte,
+                     imperfektionen=False, stabteilung=False)
+    return np.asarray(r.u, float), info, r
+
+
+# Spitze nach Theorie II. Ordnung mit Momentenglied (Runde k11, Gegenpruefung
+# 3, logs/v3b_neu.txt, Stummel l0 = 0,02 m) [m]
+TH2_K11 = {90.0: (-4.774022e-04, 1.785847e-04, 4.049460e-04),
+           60.0: (-3.586039e-04, -5.102490e-05, 2.654552e-04)}
+
+
+def test_d_kurze_elemente():
+    for winkel in (90.0, 60.0):
+        for l0 in (0.02, 0.005):
+            for ecc in ((None, (0.0, 0.0, 0.05)) if winkel == 90.0 else (None,)):
+                m, sp = l_rahmen(winkel, l0, ecc=ecc)
+                u, info, r = _th3_direkt(m)
+                txt = f"(d) L-Rahmen {winkel:.0f}°, Stummel {l0} m" + (", Versatz 0,05 m" if ecc else "")
+                check(f"{txt}: Theorie III. Ordnung konvergiert", not info.fehler, info.fehler)
+                if info.fehler:
+                    continue
+                u20, info20, _r = _th3_direkt(l_rahmen(winkel, l0, ecc=ecc)[0], 20)
+                d = float(np.abs(u[sp, :3] - u20[sp, :3]).max()) * 1e3
+                check("… 10 und 20 Laststufen ergeben dieselbe Spitze (auf 0,00001 mm)",
+                      not info20.fehler and d <= 1e-5, f"{d:.2e} mm")
+                Rk = np.asarray(r.reactions).reshape(-1, 6)
+                check("… Gleichgewicht: Summe Rx = P, Summe Rz = -stoer (auf 0,001 N)",
+                      abs(Rk[:, 0].sum() - 1e3) <= 1e-3 and abs(Rk[:, 2].sum() + 2.0) <= 1e-3,
+                      f"{Rk[:, 0].sum():.6f} / {Rk[:, 2].sum():.6f} N")
+                if l0 == 0.02 and ecc is None:
+                    ref = np.asarray(TH2_K11[winkel])
+                    d2 = float(np.abs(u[sp, :3] - ref).max()) * 1e3
+                    check("… Spitze = Theorie II. Ordnung mit Momentenglied (Runde k11) auf 0,001 mm",
+                          d2 <= 1e-3, f"{d2:.6f} mm, Th III {np.round(u[sp, :3] * 1e3, 6)} mm")
+
+
+TESTS = [test_a_restschranke, test_b_kleine_last, test_c_ipe_vorverformung, test_c_hallenreihe,
+         test_d_kurze_elemente]
 
 
 def main():

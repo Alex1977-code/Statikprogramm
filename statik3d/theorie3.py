@@ -577,6 +577,12 @@ def _nur_staebe(model: Model, aktiv) -> bool:
 _LAST_REST = 1e-13
 _LAST_REST_MAX = 1e-3
 
+# Abschluss auf Rundungsniveau (solve_theorie3): die Newton-Korrektur unter
+# _KONV_RUNDUNG (Verschiebung bezogen auf die Modellgroesse, Drehung in rad)
+# bei einem Residuum unter _KONV_RUNDUNG_RESIDUUM der Last
+_KONV_RUNDUNG = 1e-12
+_KONV_RUNDUNG_RESIDUUM = 1e-3
+
 
 def _lastknoten(model: Model, nn: int, factors: dict = None) -> np.ndarray:
     """Maske (nn,) der Knoten, an die assemble.load_vector in der Rechnung mit
@@ -1260,6 +1266,8 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
         raise ValueError(f"Gleichungssystem singulär: {ex}") from ex
 
     lastnorm = float(np.linalg.norm(F_ref[fi])) or 1.0
+    # Modellgroesse fuer die Korrektur auf Rundungsniveau
+    l_ref = max(float(np.ptp(X0, axis=0).max()) if len(X0) else 0.0, 1.0)
     F_imp = np.zeros(ndof)
     zust = _z
     f_int = _f0
@@ -1392,6 +1400,22 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
                 dth = delta[n, 3:]
                 if np.any(dth):
                     R[n] = rot_exp(dth) @ R[n]
+            # Residuum auf Rundungsniveau: die Korrektur aendert die Lage
+            # nicht mehr (Verschiebung unter 1e-12 der Modellgroesse, Drehung
+            # unter 1e-12), das Residuum ist unter 0,1 % der Last - dann ist
+            # die Lage so genau, wie die Rechnung sie darstellen kann. Das
+            # Rauschen der Stabendkraefte aus der Rundung der Drehungen (etwa
+            # 2e-16 rad) ist etwa 6 E I / L² · 2e-16 und waechst an kurzen
+            # Staeben: am Stummel 0,005 m eines Rahmens (Rechteck 20 x 400 mm)
+            # etwa 0,001 N, ueber der Schranke 1e-6 der Last der ersten Stufe
+            # (100 N). Bis zur Runde k10d (16.11.2026) blieb die Rechnung dort
+            # bei Korrekturen um 1e-16 m stehen und meldete „keine
+            # Konvergenz“.
+            if (konv < _KONV_RUNDUNG_RESIDUUM
+                    and float(np.abs(delta[:, :3]).max(initial=0.0)) <= _KONV_RUNDUNG * l_ref
+                    and float(np.abs(delta[:, 3:]).max(initial=0.0)) <= _KONV_RUNDUNG):
+                konvergiert = True
+                break
         if not konvergiert:
             info.hinweise.append(
                 f"Laststufe {schritt}: nach {it} Iterationen nicht konvergiert "
