@@ -11229,13 +11229,14 @@ def _laengslast_hinweise_sammeln(an, progress=None) -> None:
     und Kombinationen nach Theorie II./III. Ordnung und alpha_cr: je Text
     einmal ins Protokoll, nach an.info["laengslast_teilung"] und damit in die
     Zusammenfassung."""
-    from .stabteilung import LAENGSLAST_KENNUNG, VORKRUEMMUNG_KENNUNG
+    from .stabteilung import LAENGSLAST_KENNUNG, VORKRUEMMUNG_KENNUNG, VORKRUEMMUNG_KENNUNG_II
     texte = []
     for th in (an.theorie2, an.theorie3):
         for info in (getattr(th, "kombinationen", None) or {}).values():
             for h in getattr(info, "hinweise", None) or []:
                 # dazu die Vorkruemmung an einem nicht teilbaren Stab (Runde k10d)
-                if (LAENGSLAST_KENNUNG in h or VORKRUEMMUNG_KENNUNG in h) and h not in texte:
+                if (LAENGSLAST_KENNUNG in h or VORKRUEMMUNG_KENNUNG in h
+                        or VORKRUEMMUNG_KENNUNG_II in h) and h not in texte:
                     texte.append(h)
     if texte:
         an.info["laengslast_teilung"] = texte

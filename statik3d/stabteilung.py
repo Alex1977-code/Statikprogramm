@@ -320,6 +320,10 @@ def kraefte_theorie1(model, system, factors: dict) -> dict:
 #: gedrueckter Stab bekommt darum mindestens TEILUNG_VORGABE mal
 #: FAKTOR_THEORIE3 Teile, auch bei kleinerer Stabteilung der
 #: Netzeinstellungen (:func:`vorkruemmung_mindest`, Verfahrensstand 74).
+#: Theorie II. Ordnung (Streckenlast im Element) teilt ihn mindestens in
+#: TEILUNG_VORGABE Teile (:func:`fein_system` mit ``vorkruemmung``,
+#: Nachbesserung 2): in einem Element war die Streckenlast bei Versatz in
+#: Stabrichtung und bei Federgelenken falsch (bis 42,5 N/mm²).
 #: Gemessen am IPE 300, 6 m, 200 kN, e_0 = L/250 (Runde k10d, 16.11.2026;
 #: Bezug 11,517 kNm, Streckenlast von Hand in 80 Elementen): 1 Teil 0,
 #: 4 Teile 10,77, 10 Teile 11,39, 20 Teile 11,48 kNm.
@@ -356,9 +360,11 @@ def vorkruemmung_mindest(model, kraefte: dict, aktiv=None, faktor: int = 1) -> d
 
 #: Woran der Hinweis zu erkennen ist
 VORKRUEMMUNG_KENNUNG = "Vorkrümmung nach Theorie III. Ordnung unvollständig"
+#: dasselbe nach Theorie II. Ordnung (Runde k10d, Nachbesserung 2)
+VORKRUEMMUNG_KENNUNG_II = "Vorkrümmung nach Theorie II. Ordnung ungenau"
 
 
-def vorkruemmung_hinweise(model, mindest: dict, zahlen: dict) -> list:
+def vorkruemmung_hinweise(model, mindest: dict, zahlen: dict, theorie: str = "III") -> list:
     """Hinweise zu den gedrueckten Staeben (``mindest``,
     :func:`vorkruemmung_mindest`), die Theorie III. Ordnung nicht in so viele
     Abschnitte teilen kann (``zahlen`` aus :func:`teilzahlen`): ein Element
@@ -380,6 +386,14 @@ def vorkruemmung_hinweise(model, mindest: dict, zahlen: dict) -> list:
             k = sum(int(zahlen.get(i, 1)) for i in idx)
             ganz = [i for i in idx if i in mindest and i not in zahlen and _hat_versatz(model.elements[i])]
             if k < soll and ganz:
+                if theorie == "II":
+                    # Theorie II. Ordnung (Nachbesserung 2): die Streckenlast
+                    # wirkt, ist aber in zu wenigen Elementen ungenau
+                    out.append(f"Stab {name} (Element {ganz[0]}): {VORKRUEMMUNG_KENNUNG_II} – der Stab "
+                               f"lässt sich wegen seines Versatzes nicht intern teilen und rechnet in {k} "
+                               f"{'Element' if k == 1 else 'Elementen'}; die Vorkrümmung ist dort ungenau. "
+                               f"Den Stab im Modell in mindestens {soll} Elemente teilen.")
+                    continue
                 out.append(f"Stab {name} (Element {ganz[0]}): {VORKRUEMMUNG_KENNUNG} – der Stab lässt sich "
                            f"wegen seines Versatzes nicht intern teilen und rechnet in {k} "
                            f"{'Element' if k == 1 else 'Elementen'}; die Vorkrümmung wirkt nur an den Knoten "
@@ -743,7 +757,8 @@ def teilen(model, aktiv=None, zahlen: dict = None):
     return m2, abb, aktiv2
 
 
-def fein_system(model, system, factors: dict, kraefte=None):
+def fein_system(model, system, factors: dict, kraefte=None, vorkruemmung: bool = False,
+                hinweise: list = None):
     """(feines Modell, sein StaticSystem, Abbildung) zu ``model``, ``system``
     und den Lastfaktoren ``factors`` (sie bestimmen ueber die Normalkraefte
     nach Theorie I. Ordnung, welche Balken geteilt werden) - je System und
@@ -751,15 +766,29 @@ def fein_system(model, system, factors: dict, kraefte=None):
     {Element: N} oder eine Funktion, die sie liefert (nur gerufen, wenn ein
     Balken in Frage kommt): die Normalkraefte liegen schon vor (das Knicken
     nimmt die seines Grundzustands - keine zweite Loesung, mit PyAMG waere es
-    eine volle Iteration); ohne sie :func:`kraefte_theorie1`."""
+    eine volle Iteration); ohne sie :func:`kraefte_theorie1`.
+
+    ``vorkruemmung`` (Theorie II. Ordnung mit Ersatzimperfektionen): gedrueckte
+    Staebe mindestens in TEILUNG_VORKRUEMMUNG Teilen, auch bei Stabteilung 1
+    (:func:`vorkruemmung_mindest`, Runde k10d Nachbesserung 2, Stand 74). In
+    einem Element war die Vorkruemmung als Streckenlast bei Versatz in
+    Stabrichtung und bei Federgelenken falsch (IPE 300, 6 m, 200 kN, Arm
+    1,0 m: 17,29 statt 13,87 kNm; Federgelenke 2000 kNm/rad: 4,38 statt
+    3,23 kNm im Feld). ``hinweise``: dorthin die Hinweise zu gedrueckten
+    Staeben, die sich nicht teilen lassen (:func:`vorkruemmung_hinweise`)."""
     aktiv = getattr(system, "aktiv", None)
-    if not teilzahlen(model, aktiv):
+    vork = bool(vorkruemmung) and bool(getattr(model, "members", None))
+    if not teilzahlen(model, aktiv) and not vork:
         return None
     if callable(kraefte):
         kraefte = kraefte()
     if kraefte is None:
         kraefte = kraefte_theorie1(model, system, factors)
-    zahlen = teilzahlen(model, aktiv, kraefte=kraefte)
+    mindest = vorkruemmung_mindest(model, kraefte, aktiv, 1) if vork else None
+    zahlen = teilzahlen(model, aktiv, kraefte=kraefte, mindest=mindest)
+    if mindest and hinweise is not None:
+        hinweise.extend(h for h in vorkruemmung_hinweise(model, mindest, zahlen, theorie="II")
+                        if h not in hinweise)
     if not zahlen:
         return None
     schluessel = (len(model.nodes), len(model.elements), tuple(sorted(zahlen.items())),

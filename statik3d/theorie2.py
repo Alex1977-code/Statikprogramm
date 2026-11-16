@@ -344,7 +344,11 @@ def ersatzlasten_vorkruemmung(model: Model, res, elastisch: bool = True,
     Feldmoment zwischen den Knoten (3 Teile 10,36, 5 Teile 11,11 kNm).
     Ohne ``stablasten`` (Theorie III. Ordnung, deren Stablasten im
     mitgehenden System fest sind) wie bisher als Knotenkraefte - dort teilt
-    statik3d.stabteilung den Stab fein genug (vorkruemmung_mindest).
+    statik3d.stabteilung den Stab fein genug (vorkruemmung_mindest). Auch
+    Theorie II. Ordnung teilt gedrueckte Staebe mit Ersatzimperfektionen
+    mindestens in 10 Teile (stabteilung.fein_system, Nachbesserung 2): in
+    einem Element ist die Streckenlast bei Versatz in Stabrichtung und bei
+    Federgelenken ungenau (Arm 1,0 m: 17,29 statt 13,87 kNm).
     """
     F = np.zeros(model.ndof)
     je_stab, uebersprungen, meldungen = [], [], []
@@ -864,7 +868,12 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
         # Elementen: Hinweis, kein geaenderter Wert (Runde k7, 14.11.2026)
         ll_hinweise = laengslast_hinweise(model, factors, getattr(system, "aktiv", None), 1,
                                           kraefte=lambda: kraefte_theorie1(model, system, factors))
-        fein = fein_system(model, system, factors)
+        # mit Ersatzimperfektionen gedrueckte Staebe mindestens in
+        # TEILUNG_VORKRUEMMUNG Teilen, auch bei Stabteilung 1 (Runde k10d,
+        # Nachbesserung 2, Stand 74): in einem Element war die Vorkruemmung
+        # bei Versatz in Stabrichtung und bei Federgelenken falsch
+        fein = fein_system(model, system, factors, vorkruemmung=bool(imperfektionen),
+                           hinweise=ll_hinweise)
         if fein is not None:
             m2, sys2, abb = fein
             res2, info = solve_theorie2(m2, factors, name, sys2, imperfektionen=imperfektionen,

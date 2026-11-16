@@ -4188,8 +4188,9 @@ MERKMALE: list = [
         name="vorkruemmung_streckenlast", titel="Vorkrümmung als Streckenlast im Element",
         texte={"alt": "Vorkrümmung als Knotenkraft an den Elementknoten (in einem Element je Stab ohne Wirkung), "
                       "Richtung je Element, V am Knoten ohne Versatz",
-               "neu": "Theorie II. Ordnung: Streckenlast im Element; Theorie III. Ordnung: gedrückte Stäbe "
-                      "mindestens in 20 Teilen; eine Richtung je Stab, V am versetzten Stabende"},
+               "neu": "Theorie II. Ordnung: Streckenlast im Element, gedrückte Stäbe mindestens in 10 Teilen; "
+                      "Theorie III. Ordnung: gedrückte Stäbe mindestens in 20 Teilen; eine Richtung je Stab, "
+                      "V am versetzten Stabende"},
         wechsel=(Wechsel(stand=74, datum="16.11.2026", commit="fix/k10-ec3", alt="alt", neu="neu",
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Ersatzimperfektionen an und ein Stab mit Balken nach Theorie II. oder III. Ordnung",
