@@ -11717,6 +11717,12 @@ def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = Non
     with parallel.arbeiter(model, workers):
         K = asm.stiffness(model, workers, aktiv)
         M = asm.mass(model, workers, aktiv)
+    # Strafanteil der Starrkoerper getrennt (statik3d.strafanteil), bevor der
+    # Kontakt K ersetzt; die Kontaktfedern kommen als Zusatz dazu.
+    strafanteil = getattr(K, "_strafanteil", None)
+    if strafanteil is not None and not strafanteil.kopplungen:
+        strafanteil = None
+    strafe_zusatz = []
     if zusatzmasse is not None:
         M = (M + zusatzmasse).tocsr()
     kontakt_text, n_kontakt = "", 0
@@ -11734,6 +11740,7 @@ def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = Non
         n_kontakt = int(cs.n_active)
         if Kc is not None and getattr(Kc, "nnz", 0):
             K = (K + Kc).tocsr()
+            strafe_zusatz.append(Kc)
         if progress:
             _melde(progress, f"Kontakt: {kontakt_text}", 0.3)
     # Gesperrt sind Lager und Freiheitsgrade ohne Steifigkeit, nicht die ohne
@@ -11810,12 +11817,28 @@ def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = Non
     # Bis k10b kam dort „ARPACK error -9999" oder eine Form, in der der lose
     # Teil beliebig mitlief, am Stand f537ead4 eine Abweisung des rechenbaren
     # Modells (Gegenpruefung k10b, Befund 1).
+    #
+    # Pruefung mit getrenntem Strafanteil (Zusammenfuehrung k10, 16.11.2026):
+    # wie in der Statik (StaticSystem._strafe_pruefung). Der frei definierte
+    # RBE3 traegt seit fix/k10-ring je Masterbewegung eine eigene Straffeder;
+    # allein ihr Rundungsrest hob das Residuum der Probe ueber die Schranke
+    # (Kragarm mit Kreisring aus 64 Speichen, RBE3 und weichem Arm: 0,000014
+    # gegen 0,000001), obwohl A regulaer ist. Dann ging die Rechnung an
+    # _MasselosFrei, und das nahm die Verdrehung des Kragarms als „frei" aus
+    # jeder Loesung: f1 = 2,816645 statt 1,910132 Hz (Hand und Modell ohne
+    # RBE3). Die Pruefung mit Strafanteil laeuft nur ohne angehobene Pivots
+    # (LinearSolver.solve) - ein wirklich singulaeres A geht weiter an
+    # _MasselosFrei.
+    strafe = None
+    if strafanteil is not None:
+        strafe = strafanteil.lokal(fi, tuple(strafe_zusatz) + ((-sigma) * M,))
     frei = None
     try:
         loeser, ursache = LinearSolver(A), None
     except (RuntimeError, ValueError) as ex:
         loeser, ursache = None, ex
     if loeser is not None:
+        loeser.strafe = strafe
         # Die Modalanalyse faktorisiert selbst, ohne StaticSystem - das Ausweichen
         # meldete hier bis zum 22.09.2026 nur warnings.warn (Befund K2).
         if loeser.ausweichgrund:
@@ -11828,7 +11851,7 @@ def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = Non
         # Die Zerlegung von A (falls es eine gibt) geht an _MasselosFrei ueber
         eigene = loeser is None
         try:
-            loeser, frei = None, _MasselosFrei(A, Mff, loeser, progress)
+            loeser, frei = None, _MasselosFrei(A, Mff, loeser, progress, strafe=strafe)
             loeser = frei
         except (RuntimeError, ValueError) as ex2:
             raise RuntimeError(_modal_singulaer_text(model, K, fi, ursache, progress, ex2)) from None
@@ -11947,9 +11970,22 @@ MODAL_NU_REL = 1e-12
 #: max|diag A| · I (ein gleichmaessiger Shift dreht die Eigenvektoren nicht).
 MODAL_FREI_EPS = 1e-12
 #: Eine Ritz-Richtung z gilt als frei, wenn A z bis auf Rundung null ist
-#: (‖A z‖ hoechstens dieser Bruchteil von ‖|A| |z|‖ - komponentenweise, damit
-#: Straffedern den Massstab nicht verschieben) ...
+#: (‖A z‖ hoechstens dieser Bruchteil von ‖|A| |z|‖ - komponentenweise).
+#: Mit Starrkoerpern (Straffedern) wird A z getrennt gerechnet
+#: (_MasselosFrei._frei_mass_strafe, Zusammenfuehrung k10, 16.11.2026): der
+#: Rest ausserhalb der Zeilenraeume der Straffedern hoechstens dieser
+#: Bruchteil von ‖|A₀| |z|‖ (A₀ ohne Straffedern) plus MODAL_FREI_RUND mal
+#: die Rundung der Straffedern, die Verletzung der Zwangsbedingung hoechstens
+#: dieser Bruchteil von max|z|. Gegen |A| |z| mit Straffedern lag eine von
+#: den Elementen gehaltene Richtung unter der Schranke (Verdrehung eines
+#: Kragarms mit Kreisring-RBE3 ueber G It: 0,0000000000016) und wurde aus
+#: jeder Loesung genommen ...
 MODAL_FREI_A = 1e-10
+#: Rundung der Straffedern im Rest der freien Richtung, in Vielfachen von
+#: eps ‖|A| |z|‖: gemessen bis 7,8 an wirklich freien Richtungen (loser
+#: RBE3-Slave), ab 7 200 an gehaltenen (Kreisring-RBE3, Verdrehung ueber G It)
+MODAL_FREI_RUND = 100.0
+_EPS = float(np.finfo(float).eps)
 #: ... und sie keine Masse traegt (z^T M z hoechstens dieser Bruchteil der
 #: groessten Hauptdiagonale von M, z Einheitsvektor). Weiche Formen mit Masse
 #: haben unter starren Kopplungen Ritz-Werte bis 1e-11 · max diag A (gemessen am
@@ -11984,7 +12020,10 @@ class _MasselosFrei:
     Eigenformen zeigen den losen Teil ohne seine (unbestimmte) freie Bewegung,
     und der Hinweis nennt seine Knoten."""
 
-    def __init__(self, A, M, loeser: "LinearSolver" = None, progress=None):
+    def __init__(self, A, M, loeser: "LinearSolver" = None, progress=None, strafe=None):
+        #: Pruefung mit getrenntem Strafanteil (statik3d.strafanteil) fuer A,
+        #: None ohne Starrkoerper
+        self.strafe = strafe
         try:
             self.A = sparse.csr_matrix(A)
             self.M = sparse.csr_matrix(M)
@@ -12035,7 +12074,11 @@ class _MasselosFrei:
             a_rel = (np.linalg.norm(self.A @ V, axis=0)
                      / np.maximum(np.linalg.norm(absA @ np.abs(V), axis=0), 1e-300))
             m_rel = np.abs(np.einsum("ij,ij->j", V, self.M @ V)) / max(mmax, 1e-300)
-            frei = (a_rel <= MODAL_FREI_A) & (m_rel <= MODAL_FREI_M)
+            if self.strafe is not None:
+                ohne_a = self._frei_mass_strafe(V) <= 1.0
+            else:
+                ohne_a = a_rel <= MODAL_FREI_A
+            frei = ohne_a & (m_rel <= MODAL_FREI_M)
             c = int(frei.sum())
             if c < p or p >= n:
                 break
@@ -12051,6 +12094,39 @@ class _MasselosFrei:
             return np.zeros((n, 0))
         Z, _r = np.linalg.qr(V[:, frei])
         return Z
+
+    def _frei_mass_strafe(self, V: np.ndarray) -> np.ndarray:
+        """Je Spalte z von V, wie weit „A z bis auf Rundung null" mit
+        getrenntem Strafanteil erfuellt ist (frei bei hoechstens 1): Rest
+        ausserhalb der Zeilenraeume der Straffedern gegen MODAL_FREI_A
+        ‖|A₀| |z|‖ + MODAL_FREI_RUND eps ‖|A| |z|‖ und Verletzung der
+        Zwangsbedingung gegen MODAL_FREI_A max|z|. Frei heisst A z = 0, mit
+        A = A₀ + Σ k Gᵀ G (beide positiv semidefinit) also A₀ z = 0 und
+        G z = 0 - genau das pruefen beide Masse, ohne dass die Straffedern
+        den Massstab der Elemente setzen."""
+        pr = self.strafe
+        n = V.shape[0]
+        null = np.zeros(n)
+        pr.residuum(V[:, 0], null, self.A)          # baut A0R
+        absA, absA0R = abs(self.A), abs(pr.A0R)
+        out = np.empty(V.shape[1])
+        for j in range(V.shape[1]):
+            z = V[:, j]
+            rest, verl = pr.zerlegen(pr.residuum(z, null, self.A))
+            az = np.abs(z)
+            voll = absA @ az
+            comp = voll.copy()
+            if pr.R.size:
+                comp[pr.R] = absA0R @ az
+            # Schranke: die Elemente (|A₀| |z|) und die Rundung der
+            # Straffedern (eps |A| |z|) - an einem Knoten nur an Kopplungen
+            # (loser RBE3-Slave) ist |A₀| |z| fast null, der Rest dort Rundung
+            schranke = (MODAL_FREI_A * float(np.linalg.norm(comp))
+                        + MODAL_FREI_RUND * _EPS * float(np.linalg.norm(voll)))
+            q = float(np.linalg.norm(rest)) / max(schranke, 1e-300)
+            v = verl / max(MODAL_FREI_A * float(az.max()), 1e-300)
+            out[j] = max(q, v)
+        return out
 
     def ohne_frei(self, x: np.ndarray) -> np.ndarray:
         """``x`` (Vektor oder Spalten) ohne Anteil im Nullraum."""
