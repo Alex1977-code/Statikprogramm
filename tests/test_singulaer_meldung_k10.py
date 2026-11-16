@@ -422,11 +422,42 @@ def test_kreisring():
         nr = f"{type(ex).__name__}: {ex}"
     check("Kreisring 64 Slaves: Nullrang Diagnose = dicht = Hand (186)", nr == dicht == 186,
           f"Diagnose {nr}, dicht {dicht}")
-    check("Kreisring: Rechnung meldet singulär", "Gleichungssystem singulär" in text, text[:120])
-    check("Kreisring: Ringknoten in allen drei Richtungen frei verschieblich, 186 Bewegungen",
-          f"Ohne Steifigkeit beweglich: Knoten K{ring[0]}, K{ring[1]}, K{ring[2]} und 61 weitere in allen "
-          "drei Richtungen frei verschieblich. Sie hängen" in text
-          and "Das sind 186 unabhängige Bewegungen" in text, text[-700:])
+    # Zusammenfuehrung k10 (16.11.2026): Hier stand „Rechnung meldet
+    # singulär“ und die Meldung der 186 Bewegungen. fix/k10-ring
+    # (Nachbesserung 2) rechnet einen Ring mit abgeschalteten Speichen wie
+    # jedes frei bewegliche Teil: die Zerlegung haelt die 186 Bewegungen, die
+    # 64 Ringknoten werden als frei beweglich genannt (res.info
+    # "freie_teile"), der Master am Bolzenstab stimmt mit der Hand ueberein -
+    # dieselbe Regel wie test_rbe3_ring_k10.test_speichen_aus_bleibt_abgewiesen.
+    # Geprueft wird darum das: gerechnet, genau die Ringknoten frei in allen
+    # drei Richtungen, w(P) nach Hand und nach der Gegenrechnung ohne RBE3.
+    from statik3d import solver
+    try:
+        res = _still(solver.solve_static, m, case="LF1")
+        fehler = ""
+    except RuntimeError as ex:
+        res, fehler = None, str(ex)
+    teile = list((res.info.get("freie_teile") or []) if res is not None else [])
+    frei = {int(k) for e in teile for k in (e.get("knoten") or [])}
+    n_frei = sum(int(e.get("knoten_anzahl") or 0) for e in teile)
+    check("Kreisring: gerechnet, die 64 Ringknoten als frei beweglich genannt (in allen drei Richtungen)",
+          res is not None and n_frei == len(ring) and frei and frei <= set(ring)
+          and all(e.get("bewegung") == "in allen drei Richtungen frei verschieblich" for e in teile),
+          fehler[:120] or f"{n_frei} Knoten, {[e.get('bewegung') for e in teile]}")
+    if res is not None:
+        w = -float(np.asarray(res.u, float).reshape(-1, 6)[p, 2])
+        hand = F * (L + 0.5) ** 3 / (3 * E * I)
+        sk = list(m.starrkoerper)
+        m.starrkoerper.clear()
+        try:
+            w0 = -float(np.asarray(_still(solver.solve_static, m, case="LF1").u, float).reshape(-1, 6)[p, 2])
+        except RuntimeError:
+            w0 = float("nan")
+        finally:
+            m.starrkoerper.extend(sk)
+        check("Kreisring: w(P) = F (L + 0,5)³/(3 E I) = Gegenrechnung ohne RBE3 (auf 0,000001 mm)",
+              abs(w - hand) <= 1e-9 and abs(w - w0) <= 1e-9,
+              f"ist {w * 1e3:.6f} mm, Hand {hand * 1e3:.6f} mm, ohne RBE3 {w0 * 1e3:.6f} mm")
     check(f"Kreisring: Master K{p} und Kragarmende K1 heißen nicht „frei“ (gehalten über die Stäbe)",
           f"Knoten K{p} " not in text and "Knoten K1 " not in text and "Knoten K1," not in text,
           text[-700:])
@@ -553,7 +584,17 @@ def test_kreisring_kette():
     Billionstel der Diagonale“ hielt Knoten mit grosser RBE3-Strafsteifigkeit
     fuer frei - Kreisring mit Kette aus 100 bis 27 000 Staeben: 191 und 192
     statt 186 Bewegungen, Master und eingespannte Kettenknoten „frei“."""
-    for n in (100, 500, 2000):
+    # Zusammenfuehrung k10 (16.11.2026): Bis dahin n = 100, 500 und 2000. Die
+    # 2000 bestand nur, solange die automatische Fesselung sich auf die
+    # Straffeder des RBE3 bezog und dabei 8 000 FHG der Kette mit echter
+    # Steifigkeit still festhielt (Verschiebung x und Drehungen jedes
+    # Kettenknotens; behoben in fix/k10-ring, Merkmal rbe3_fesselung_bezug).
+    # Mit der ganzen Kette liegen bei 2000 Staeben von 1,5 mm drei
+    # Biegebewegungen der Kette an der Grenze der Rechengenauigkeit; die
+    # Meldung sagt dann „mindestens 185 … nicht sicher bestimmbar“. Die
+    # genaue Aussage wird darum bis n = 1500 geprueft (gemessen: 1000 und
+    # 1500 genau), n = 2000 unten auf das, was dort bestimmbar ist.
+    for n in (100, 500, 1000, 1500):
         m, p, rk = kreisring_kette(n)
         text = _meldung(m)
         check(f"Kreisring mit Kette n = {n}: nur die Ringknoten frei, „Das sind 186 unabhängige Bewegungen“",
@@ -569,6 +610,27 @@ def test_kreisring_kette():
             dicht = _dichter_nullrang_ohne_strafe(m, sy)
             check(f"Kreisring mit Kette n = {n}, zweiter Weg: dicht ohne Straf-Skalierung 186 = Hand",
                   dicht == 186, f"dicht {dicht}")
+    # n = 2000: abgewiesen; „ohne Steifigkeit beweglich“ heissen nur die
+    # Ringknoten, in allen drei Richtungen; die Zahl ist nie groesser als 186
+    # und nie als genau behauptet, wenn sie es nicht ist; was an der Grenze
+    # der Rechengenauigkeit liegt, steht als „nicht sicher bestimmbar“ da;
+    # der Master heisst nirgends frei.
+    m, p, rk = kreisring_kette(2000)
+    text = _meldung(m)
+    satz = re.search(r"Ohne Steifigkeit beweglich: (.*?)\. Sie hängen", text)
+    im_satz = {int(x) for x in re.findall(r"\bK(\d+)\b", satz.group(1))} if satz else set()
+    check("Kreisring mit Kette n = 2000: „Ohne Steifigkeit beweglich“ nur Ringknoten, in allen drei Richtungen",
+          satz is not None and im_satz and im_satz <= set(rk)
+          and satz.group(1) == f"Knoten K{rk[0]}, K{rk[1]}, K{rk[2]} und 61 weitere in allen drei Richtungen "
+                               "frei verschieblich", (satz.group(1) if satz else text[-300:])[:200])
+    genau = re.search(r"Das sind (\d+) unabhängige Bewegungen", text)
+    mind = re.search(r"Es sind mindestens (\d+) unabhängige Bewegungen", text)
+    zahl_ok = (genau is not None and int(genau.group(1)) == 186) or (
+        mind is not None and int(mind.group(1)) <= 186 and "nicht sicher bestimmbar" in text)
+    check("Kreisring mit Kette n = 2000: „Das sind 186“ oder „mindestens N“ (N <= 186) mit „nicht sicher "
+          "bestimmbar“", zahl_ok, (genau or mind).group(0) if (genau or mind) else text[-300:])
+    check(f"Kreisring mit Kette n = 2000: Master K{p} wird nicht genannt",
+          f"K{p}" not in text, text[-300:])
 
 
 def test_gesunder_kreisring():
