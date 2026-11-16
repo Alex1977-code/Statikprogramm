@@ -1539,6 +1539,135 @@ def mittelknoten_nachfuehren(model: Model, u: np.ndarray) -> np.ndarray:
     return u
 
 
+#: Nur fuer Ruecknahmeproben (tests.test_rbe3_ring_k10): True stellt die
+#: Straffeder des frei definierten RBE3 vor Runde k10c, Nachbesserung 2,
+#: wieder her (k Gᵀ G mit den unbearbeiteten Zeilen). Im Programm False.
+RBE3_ZEILEN_ALT = False
+
+#: Strafbeiwert des frei definierten RBE3 je Zeile (Nachbesserung 2): so oft
+#: die Steifigkeit, mit der die Slaves der jeweiligen Masterbewegung
+#: widerstehen (rbe3_zeilen_master), wie bei den uebrigen Straffedern 1e4.
+#: Gemessen 16.11.2026 gegen die exakte Zwangsbedingung am Kreisring vor
+#: dem Kragarm: mit 1e5 und 1e6 wird K so schlecht konditioniert, dass
+#: Knickfaktoren um bis zu 0,3 % und Eigenfrequenzen streuen; mit 1e4 treffen
+#: sie die exakte Zwangsbedingung auf 0,02 %. Allein waere 1e4 bei vielen
+#: weichen Slaves zu ungenau (441 Slaves eines Elastomers, 37,8 mm: Master
+#: 0,0049 mm daneben) - dafuer die Untergrenze RBE3_STEIF_MIN.
+RBE3_FAKTOR = 1e4
+
+#: Untergrenze des Strafbeiwerts der steifsten Verschiebungszeile eines frei
+#: definierten RBE3 in N/m (Nachbesserung 2): die Luecke zwischen Master und
+#: Slaves ist Kopplungskraft / k, mit 1e15 N/m also 0,000001 mm je 1 MN, gleich
+#: wie weich die Slaves sind. Die uebrigen Zeilen werden im selben Verhaeltnis
+#: angehoben. Am Kreisring aus Stahl liegt 1e4 mal die Steifigkeit der Slaves
+#: darueber (dort greift die Grenze nicht), an 441 Slaves eines Elastomers
+#: (E = 5 N/mm²) hebt sie den Faktor auf rund 10 000 000.
+RBE3_STEIF_MIN = 1e15
+
+
+def rbe3_zeilensummen(K: sparse.spmatrix, G: np.ndarray, d: np.ndarray) -> np.ndarray:
+    """Zeilensummen von |K| ueber die Verschiebungs-FHG der Slaves eines RBE3
+    (Spalten 6... von ``G``, FHG ``d``), an den uebrigen Stellen null - die
+    Schranke fuer :func:`rbe3_zeilen_master`: Σ_il |b_i| |K_il| |b_l| <=
+    Σ_i b_i² Σ_l |K_il| (Gershgorin), anders als die Hauptdiagonale allein
+    eine sichere obere Schranke von bᵀ K b, auch wenn Nebendiagonalen positiv
+    sind (hex8: an 441 Slaves eines Elastomers ist die mittlere Bewegung
+    1,3-mal so steif wie die Summe der Diagonalen)."""
+    d = np.asarray(d, np.int64)
+    pos = np.flatnonzero(np.any(np.asarray(G)[:, 6:] != 0.0, axis=0)) + 6
+    r = np.zeros(len(d))
+    if pos.size:
+        B = abs(K.tocsr()[d[pos]][:, d[pos]])
+        r[pos] = np.asarray(B.sum(axis=1)).ravel()
+    return r
+
+
+def rbe3_zeilen_master(G: np.ndarray, d: np.ndarray, gross: float,
+                       faktor: float = None) -> np.ndarray:
+    """Die Straffeder eines frei definierten RBE3 je Bewegung des Masters
+    (Runde k10c, Nachbesserung 2, 16.11.2026). Rueckgabe G_s mit
+    G_sᵀ G_s = Σ_j k_j g_jᵀ g_j; None, wenn die Slaves die sechs
+    Masterbewegungen nicht eindeutig festlegen (Slaves auf einer Geraden,
+    ein oder zwei Slaves) - dann bleibt es bei k Gᵀ G wie bisher.
+
+    ``G`` aus verbindung.starrkoerper_matrix (6 Zeilen, Spalten [Master 6,
+    je Slave 6]), ``d`` je FHG die Zeilensumme von |K| ohne Straffedern
+    ueber die Verschiebungen der Slaves (:func:`rbe3_zeilensummen`),
+    ``gross`` die groesste Hauptdiagonale des Modells.
+
+    Warum. Bis dahin stand k Gᵀ G mit k = 1e4 mal der groessten
+    Hauptdiagonale und den unbearbeiteten Zeilen in K. Am Master kam die
+    Gewichtssumme im Quadrat dazu (64 Slaves zu je 1: das 5120-fache von k),
+    und liegt der Master neben den Slaves (Bolzen 0,5 bis 2 m vor einem Ring
+    von 0,02 bis 0,1 m), sind Kraft- und Momentenzeilen in seinen Spalten
+    fast parallel: G_m ist schlecht konditioniert. Ein gesunder Kreisring-RBE3
+    wurde dann als „numerisch singulaer" abgewiesen (PARDISO hob Pivots an
+    oder die Loesung war ungenau), das Knicken lieferte still falsche
+    Verzweigungsfaktoren (2,45 statt 46,04) und die Eigenformen brachen ab
+    (ARPACK -9999). Der erste Versuch (ef235e50, Zeilen orthonormiert,
+    k = 1e4 mal die groesste Diagonale der gekoppelten FHG) verlor dagegen
+    die Genauigkeit bei vielen Slaves: der Master haengt an der mittleren
+    Bewegung der Slaves, und die hat rund die Summe ihrer Steifigkeiten -
+    bei 441 Slaves auf einem Elastomer lag er 0,198 mm daneben.
+
+    Wie. Die Zeilen werden mit G_m^-1 umgeformt (derselbe Zeilenraum, dieselbe
+    Zwangsbedingung): g_j = [e_j, b_j], die Masterbewegung j ist die
+    Kombination b_j der Slaveverschiebungen. Jede Zeile bekommt ihren eigenen
+    Strafbeiwert k_j = ``faktor`` mal die Steifigkeit, mit der die Slaves der
+    Bewegung b_j widerstehen, abgeschaetzt nach oben mit
+    S_j = Σ b_ji² d_i / (Σ b_ji²)² (Cauchy-Schwarz und Gershgorin: die
+    Steifigkeit gegen die Verletzung der Zeile, 1/(bᵀ K⁻¹ b), ist hoechstens
+    bᵀ K b / |b|⁴, und bᵀ K b <= Σ b_i² d_i; fuer die Verschiebung mit
+    Gewichten 1 ist das rund die Summe der Steifigkeiten der Slaves, fuer die
+    Drehung die Summe d_i r_i²). Die Luecke zwischen Master und Slaves ist
+    dann Kopplungskraft / k_j, hoechstens 1/``faktor`` der Bewegung der
+    Slaves, gleich wie viele es sind. Die Zeilen stehen am Master senkrecht
+    aufeinander, keine Mischrichtung bleibt schwach gehalten, und die
+    Eintraege an den Slaves sind etwa ``faktor``/n mal ihre Diagonale.
+    Haben die Slaves in einer Zeile keine Steifigkeit, gilt ``gross``.
+    Liegt k der steifsten Verschiebungszeile dabei unter RBE3_STEIF_MIN
+    (weiche Slaves), werden alle Zeilen im selben Verhaeltnis angehoben: die
+    Luecke ist dann hoechstens Kopplungskraft / 1e15 N/m, 0,000001 mm je MN.
+    Jede Zeile verschwindet fuer jede Starrkoerperbewegung: die
+    Kopplungskraefte bleiben im Gleichgewicht."""
+    f = RBE3_FAKTOR if faktor is None else float(faktor)
+    G = np.asarray(G, float)
+    if G.shape[0] != 6 or G.shape[1] < 12:
+        return None
+    Gm = G[:, :6]
+    # dimensionslos fuer die Konditionszahl: Drehungen mal L, Momente durch L
+    L = 1.0
+    sp = np.flatnonzero(np.any(G[:, 6:] != 0.0, axis=0))
+    if not sp.size:
+        return None
+    try:
+        Dm = np.ones(6)
+        q = float(np.abs(Gm[3:, 3:]).max()) / max(float(np.abs(Gm[:3, :3]).max()), 1e-300)
+        L = math.sqrt(q) if q > 0 else 1.0
+        Dm[3:] = L
+        A = (Gm * Dm[None, :])
+        A[3:] /= L
+        if not np.all(np.isfinite(A)) or np.linalg.cond(A) > 1e10:
+            return None
+        Gn = np.linalg.solve(Gm, G)
+    except np.linalg.LinAlgError:
+        return None
+    Gn[:, :6] = np.eye(6)
+    Gn[:, 6:][:, np.all(G[:, 6:] == 0.0, axis=0)] = 0.0
+    d = np.abs(np.asarray(d, float))
+    S = np.empty(6)
+    for j in range(6):
+        b2 = Gn[j, 6:] ** 2
+        nb2 = float(b2.sum())
+        if not nb2 > 0.0:
+            return None
+        zaehler = float(b2 @ d[6:])
+        S[j] = zaehler / nb2 ** 2 if zaehler > 0.0 else float(gross) / nb2
+    # Untergrenze in N/m an der steifsten Verschiebungszeile (siehe RBE3_STEIF_MIN)
+    f = max(f, RBE3_STEIF_MIN / float(S[:3].max())) if faktor is None else f
+    return np.sqrt(f * S)[:, None] * Gn
+
+
 def starrkoerper(model: Model, K: sparse.spmatrix = None, K_bezug: sparse.spmatrix = None,
                  sammeln: list = None) -> sparse.spmatrix:
     """Steifigkeit der starren Koerper (RBE2) und Verteilkopplungen (RBE3)
@@ -1557,7 +1686,13 @@ def starrkoerper(model: Model, K: sparse.spmatrix = None, K_bezug: sparse.spmatr
     ``sammeln`` (seit 16.11.2026, Runde k10c): eine Liste, in die jede
     Straffeder als strafanteil.Kopplung (FHG, G, k) kommt - fuer die Pruefung
     des Residuums ohne den Rundungsrest des Strafanteils (statik3d.strafanteil).
-    Die Matrix aendert sich dadurch nicht."""
+    Die Matrix aendert sich dadurch nicht.
+
+    Frei definierter RBE3 (seit 16.11.2026, Runde k10c, Nachbesserung 2):
+    die Zeilen je Masterbewegung umgeformt und je Zeile ein eigener
+    Strafbeiwert aus der Steifigkeit der Slaves (:func:`rbe3_zeilen_master`)
+    statt k Gᵀ G mit den unbearbeiteten Zeilen. RBE2 und die verteilenden
+    Kopplungen (Scheibe, Stabende) sind unveraendert."""
     from . import strafanteil as _sa
     sk_liste = getattr(model, "starrkoerper", None) or []
     if not sk_liste:
@@ -1597,10 +1732,16 @@ def starrkoerper(model: Model, K: sparse.spmatrix = None, K_bezug: sparse.spmatr
         G = vb.starrkoerper_matrix(model.nodes[int(sk.master)], model.nodes[slaves], sk.art, gew)
         d = np.array(list(range(NDOF * int(sk.master), NDOF * int(sk.master) + NDOF))
                      + [x for sl_ in slaves for x in range(NDOF * sl_, NDOF * sl_ + NDOF)], int)
-        Ke = vb.starrkoerper_steifigkeit(G, k)
+        k_sk = k
+        if str(sk.art).upper() == "RBE3" and not RBE3_ZEILEN_ALT:
+            Gs = rbe3_zeilen_master(G, rbe3_zeilensummen(K, G, d), gross)
+            if Gs is not None:
+                # k_j steckt als Wurzel in den Zeilen: k Gᵀ G = Σ k_j g_jᵀ g_j
+                G, k_sk = Gs, 1.0
+        Ke = vb.starrkoerper_steifigkeit(G, k_sk)
         if sammeln is not None:
             ist_rbe2 = str(sk.art).upper() == "RBE2"
-            sammeln.append(_sa.Kopplung(d, G, k, sk.art, knoten=np.vstack(
+            sammeln.append(_sa.Kopplung(d, G, k_sk, sk.art, knoten=np.vstack(
                 [model.nodes[int(sk.master)][None, :], model.nodes[slaves]]) if ist_rbe2 else None,
                 name=_sa.schluessel(sk), allgemein=not ist_rbe2))
         r, c = np.meshgrid(d, d, indexing="ij")

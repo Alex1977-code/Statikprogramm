@@ -35,6 +35,16 @@ Hauptdiagonale ohne die Straffedern der frei definierten RBE3 (Merkmal
 rbe3_fesselung_bezug, Stand 70, Fehlerkorrektur: ein Gelenkstab neben einer
 Flaeche mit 441 Slaves bog sich auf c0dc985c um 0 statt 0,794 mm).
 
+Nachbesserung 2 (16.11.2026): Die zweite Gegenpruefung fand auf 345c1ef3
+still falsche Knickfaktoren (-3,27 / 2,45 statt 46,04), weiter abgewiesene
+Varianten (R = 0,02 m, 128 und 256 Slaves, Master 2 m vor dem Ring, Master im
+Zentrum) und abbrechende Eigenformen (ARPACK -9999). Ursache war die
+Kondition der Straffeder selbst: unbearbeitete Zeilen mit der Gewichtssumme
+im Quadrat, fast parallele Kraft- und Momentenzeilen. Seither wird der frei
+definierte RBE3 je Masterbewegung umgeformt, mit eigenem Strafbeiwert je
+Zeile aus der Steifigkeit der Slaves (assemble.rbe3_zeilen_master,
+Faktor 1e4, Untergrenze 1e15 N/m).
+
 Sollwerte, zwei Wege:
 * Gegenrechnung: dasselbe Modell mit dem RBE3 als exakter Zwangsbedingung
   (Lagrange-Multiplikatoren, G hier unabhaengig von verbindung.py aus der
@@ -422,8 +432,18 @@ def test_viele_slaves():
 def test_speichen_aus_bleibt_abgewiesen():
     """Schutz: sind die Speichen abgeschaltet (Situation), haengen die 64
     Ringknoten nur am RBE3 - 186 Bewegungen ohne Steifigkeit (3 x 64 - 6).
-    Das bleibt eine Abweisung; die neue Pruefung greift nur ohne angehobene
-    Pivots. (ef235e50 rechnete hier mit Ringknoten bis 41 mm weit.)"""
+    Die Pruefung mit getrenntem Strafanteil greift nur ohne angehobene
+    Pivots. (ef235e50 rechnete hier mit Ringknoten bis 41 mm weit.)
+
+    Nachbesserung 2 (16.11.2026): Mit den Zeilen je Masterbewegung ist die
+    Matrix so gut konditioniert, dass PARDISO die 186 Bewegungen ueber
+    angehobene Pivots haelt und die bisherige Pruefung besteht - wie bei
+    jedem anderen frei beweglichen Teil (B5, tests/test_freie_teile.py) wird
+    dann gerechnet und das Teil genannt. Bis dahin scheiterte nur das
+    Residuum an der schlechten Kondition (0,0000073). Nie still: entweder
+    abgewiesen oder die 64 Ringknoten als frei beweglich gemeldet, und der
+    Master, den der Bolzenstab traegt, stimmt mit der Hand ueberein
+    (Kragarm L + a: w = F (L + a)³ / (3 E I))."""
     from statik3d.model import Situation
     from statik3d import solver
     m, b, p, rk = modell(1)
@@ -432,11 +452,19 @@ def test_speichen_aus_bleibt_abgewiesen():
     m.situationen["s"] = Situation("s", "", speichen)
     m.load_cases["LF1"].situation = "s"
     try:
-        _still(solver.solve_static, m, case="LF1")
-        txt = "rechnet"
+        res = _still(solver.solve_static, m, case="LF1")
     except RuntimeError as ex:
         txt = str(ex)
-    check("Schutz: Ring mit abgeschalteten Speichen wird abgewiesen („singulaer“)", "singul" in txt, txt[:120])
+        check("Schutz: Ring mit abgeschalteten Speichen abgewiesen („singulaer“) oder gemeldet", "singul" in txt,
+              txt[:120])
+        return
+    frei = {int(k) for e in (res.info.get("freie_teile") or []) for k in (e.get("knoten") or [])}
+    n_frei = max([int(e.get("knoten_anzahl") or 0) for e in (res.info.get("freie_teile") or [])] + [0])
+    check("Schutz: Ring mit abgeschalteten Speichen - die 64 Ringknoten als frei beweglich gemeldet",
+          n_frei >= len(rk) and frei <= ring and frei, f"{n_frei} Knoten gemeldet")
+    u = np.asarray(res.u, float).reshape(-1, 6)
+    nah("Schutz: Master am Bolzenstab, w(P) = F (L + a)³ / (3 E I)", -u[p, 2] * 1e3,
+        F * (L + AH) ** 3 / (3 * EI) * 1e3, 0.00001)
 
 
 def test_automatische_fesselung():
@@ -484,11 +512,249 @@ def test_strafanteil_getrennt():
         check(f"Strafanteil {name}: Zeilen K0R gleich K0", dR == 0.0, f"{dR}")
 
 
+# --------------------------------------------------------------------------
+# Nachbesserung 2 (16.11.2026): Straffeder des frei definierten RBE3 je
+# Masterbewegung (assemble.rbe3_zeilen_master). Befunde der zweiten
+# Gegenpruefung auf 345c1ef3: Knicken still falsch (-3,27 / 2,45 statt 46,04),
+# nahe Varianten der Statik weiter „numerisch singulaer“, Eigenformen mit
+# „ARPACK error -9999“. Sollwerte: dasselbe Modell mit dem RBE3 als exakter
+# Zwangsbedingung (G aus g_definition, Nullraum bzw. Lagrange), K0, Kg und M
+# aus dem Programm ohne Starrkoerper.
+
+def modell_var(n_stab=1, ring=64, Rr=R, a=AH, bolzen=True, rho=0.0, lasten=None):
+    """Wie modell(), mit Ringradius ``Rr``, Abstand ``a`` des Masters, Zahl
+    der Slaves ``ring``, ohne Bolzenstab (``bolzen`` False) und mit Masse."""
+    from statik3d.model import Model, Material, Section
+    m = Model("k10c-n2")
+    m.add_material(Material("ST", E=E, nu=0.3, rho=rho, fy=355e6))
+    m.add_section(Section("Q", A=A, Iy=I, Iz=I, It=1e-5, zmax=0.1, ymax=0.1))
+    m.design.imperfektionen = False
+    m.netz.stabteilung = 1
+    h = L / n_stab
+    kn = [m.add_node(i * h, 0, 0) for i in range(n_stab + 1)]
+    for i in range(n_stab):
+        m.add_element("beam", [kn[i], kn[i + 1]], "ST", "Q")
+    m.fix(kn[0], "all")
+    b = kn[-1]
+    rk = []
+    for i in range(ring):
+        t = 2 * np.pi * i / ring
+        k = m.add_node(L, Rr * np.cos(t), Rr * np.sin(t))
+        m.add_element("beam", [b, k], "ST", "Q")
+        rk.append(k)
+    p = m.add_node(L + a, 0, 0)
+    if bolzen and a > 0:
+        m.add_element("beam", [b, p], "ST", "Q")
+    m.add_starrkoerper(p, rk, "RBE3", name="Ring")
+    m.add_load_case("LF1", "G")
+    m.load_cases["LF1"].gravity = [0.0, 0.0, 0.0]
+    m.load_node(p, case="LF1", **(lasten or {"Fz": -F}))
+    return m, b, p, rk
+
+
+def _ohne_starrkoerper(m, fn):
+    sk = list(m.starrkoerper)
+    m.starrkoerper.clear()
+    try:
+        return fn()
+    finally:
+        m.starrkoerper.extend(sk)
+
+
+def _nullraum(m, p, rk):
+    import scipy.linalg as sl
+    X = np.asarray(m.nodes, float)
+    G = g_definition(X, p, rk)
+    fr = np.arange(6, 6 * m.nn)
+    return fr, sl.null_space(G[:, fr])
+
+
+def knick_exakt(m, p, rk, lasten, k=4):
+    """Verzweigungsfaktoren mit dem RBE3 als exakter Zwangsbedingung: K0 und
+    Kg (aus der exakten statischen Loesung) im Nullraum von G, dicht."""
+    import scipy.linalg as sl
+    from statik3d import assemble as asm
+    ue = exakt_allgemein(m, p, rk, {p: lasten}).ravel()
+    K = _ohne_starrkoerper(m, lambda: asm.stiffness(m).toarray())
+    Kg = _ohne_starrkoerper(m, lambda: asm.geometric_stiffness(m, ue, None, symmetrisch=True).toarray())
+    fr, Z = _nullraum(m, p, rk)
+    Kr = Z.T @ K[np.ix_(fr, fr)] @ Z
+    Kgr = Z.T @ Kg[np.ix_(fr, fr)] @ Z
+    mu = sl.eigh(-Kgr, Kr, eigvals_only=True)
+    mu = mu[np.abs(mu) > 1e-12]
+    return np.sort(1.0 / mu[np.argsort(-np.abs(mu))][:k])
+
+
+def eigen_exakt(m, p, rk, k=6):
+    """Eigenfrequenzen (Hz) mit dem RBE3 als exakter Zwangsbedingung."""
+    import scipy.linalg as sl
+    from statik3d import assemble as asm
+    K = _ohne_starrkoerper(m, lambda: asm.stiffness(m).toarray())
+    M = _ohne_starrkoerper(m, lambda: asm.mass(m).toarray())
+    fr, Z = _nullraum(m, p, rk)
+    mu = sl.eigh(Z.T @ M[np.ix_(fr, fr)] @ Z, Z.T @ K[np.ix_(fr, fr)] @ Z, eigvals_only=True)
+    mu = np.sort(mu[mu > 0])[::-1][:k]
+    return np.sqrt(1.0 / mu) / (2 * np.pi)
+
+
+VAR_LAST = {"Fy": 3e3, "Fz": -1e3, "Mx": 2e3}
+
+
+def test_varianten_statik():
+    """Befund 2: nahe Varianten des allgemeinen Kreisrings (Fy 3 kN, Fz -1 kN,
+    Mx 2 kNm) wurden auf 345c1ef3 als „numerisch singulaer“ abgewiesen
+    (R = 0,02 m Residuum 51, 128 Slaves 1,1, 256 Slaves 72, Master 2 m vor dem
+    Ring 2 300, Master im Zentrum ohne Bolzen 0,58)."""
+    from statik3d import solver
+    for titel, kw in (("R = 0,02 m", dict(Rr=0.02)), ("128 Slaves", dict(ring=128)),
+                      ("256 Slaves", dict(ring=256)), ("Master 2 m vor dem Ring", dict(a=2.0)),
+                      ("Master im Zentrum ohne Bolzen", dict(a=0.0, bolzen=False)),
+                      ("R = 0,05 m", dict(Rr=0.05))):
+        m, b, p, rk = modell_var(lasten=VAR_LAST, **kw)
+        try:
+            res = _still(solver.solve_static, m, case="LF1")
+        except RuntimeError as ex:
+            check(f"Variante {titel}: rechnet", False, str(ex)[:140])
+            continue
+        check(f"Variante {titel}: rechnet", True)
+        u = np.asarray(res.u, float)[:6 * m.nn].reshape(-1, 6)
+        ue = exakt_allgemein(m, p, rk, {p: VAR_LAST})
+        dv = float(np.abs(u[:, :3] - ue[:, :3]).max()) * 1e3
+        check(f"Variante {titel}: Verschiebungen gegen exakte Zwangsbedingung <= 0,00001 mm", dv <= 1e-5,
+              f"Abweichung {dv:.7f} mm, |u(P)| {np.linalg.norm(ue[p, :3]) * 1e3:.6f} mm")
+
+
+def _knick_fall(titel, tol12, tol34, **kw):
+    from statik3d import solver
+    lasten = kw.pop("lasten")
+    m, b, p, rk = modell_var(10, lasten=lasten, **kw)
+    soll = knick_exakt(m, p, rk, lasten)
+    try:
+        br = _still(solver.solve_buckling, m, nmodes=4, case="LF1")
+        ist = np.sort(np.asarray(br.buckling_factors, float))[:4]
+    except Exception as ex:                 # noqa: BLE001
+        check(f"Knicken {titel}: rechnet", False, str(ex)[:140])
+        return
+    d12 = float(np.abs(ist[:2] - soll[:2]).max())
+    d34 = float(np.abs(ist[2:4] - soll[2:4]).max())
+    check(f"Knicken {titel}: 1. und 2. Faktor gegen exakte Zwangsbedingung <= {tol12}", d12 <= tol12,
+          f"ist {np.round(ist, 4).tolist()}, soll {np.round(soll, 4).tolist()}")
+    check(f"Knicken {titel}: 3. und 4. Faktor <= {tol34}", d34 <= tol34, f"Abweichung {d34:.4f}")
+
+
+def test_knicken():
+    """Befund 1: Knicken mit dem allgemeinen Kreisring (10 Staebe) lieferte auf
+    345c1ef3 still -3,27 / 2,45 / 2,65 / 3,13 statt 46,04 / 46,04 / 414,37 /
+    414,37, mit Fx allein 46,66 und 47,61. Gemessen nachher: Grundfall auf
+    0,0001, R = 0,02 m auf 0,002 bzw. 0,043 (Kondition der Straffeder am
+    kleinen Ring; die Scheibe liegt dort 0,19 daneben)."""
+    _knick_fall("Fx -100 kN", 0.001, 0.005, lasten={"Fx": -1e5})
+    _knick_fall("Fx -100 kN, Fz -1 kN, Mx 0,5 kNm", 0.001, 0.005, lasten={"Fx": -1e5, "Fz": -1e3, "Mx": 500.0})
+    _knick_fall("16 Slaves, Fx -100 kN", 0.001, 0.005, ring=16, lasten={"Fx": -1e5})
+    _knick_fall("Master 2 m vor dem Ring", 0.001, 0.005, a=2.0, lasten={"Fx": -1e5, "Fz": -1e3, "Mx": 500.0})
+    _knick_fall("R = 0,02 m", 0.005, 0.1, Rr=0.02, lasten={"Fx": -1e5, "Fz": -1e3, "Mx": 500.0})
+
+
+def test_eigenformen():
+    """Befund 3: Eigenformen des allgemeinen Kreisrings brachen auf 345c1ef3
+    mit „ARPACK error -9999“ ab. Masse an allen Staeben (7 850 kg/m³)."""
+    from statik3d import solver
+    for titel, kw in (("Grundfall", dict()), ("ohne Bolzen", dict(bolzen=False)), ("R = 0,02 m", dict(Rr=0.02)),
+                      ("256 Slaves", dict(ring=256))):
+        m, b, p, rk = modell_var(10, rho=7850.0, **kw)
+        soll = eigen_exakt(m, p, rk)
+        try:
+            r = _still(solver.solve_modal, m, nmodes=6)
+            ist = np.asarray(r.freqs, float)[:6]
+        except Exception as ex:             # noqa: BLE001
+            check(f"Eigenformen {titel}: rechnet", False, str(ex)[:140])
+            continue
+        d = float(np.abs(ist - soll).max())
+        check(f"Eigenformen {titel}: sechs Frequenzen gegen exakte Zwangsbedingung <= 0,001 Hz", d <= 1e-3,
+              f"ist {np.round(ist, 4).tolist()}, soll {np.round(soll, 4).tolist()}")
+
+
+def test_viele_slaves_grosse_last():
+    """Untergrenze RBE3_STEIF_MIN: 441 Slaves auf dem Elastomer wie
+    test_viele_slaves, Fz = 1,6 MN (37,8 mm). Mit dem Strafbeiwert 1e4 mal
+    der Steifigkeit der Slaves allein lag der Master 0,0049 mm daneben, auf
+    345c1ef3 0,000048 mm."""
+    from tests.pruefkoerper import quader
+    from statik3d import solver
+    nx, Lq, H, Fz = 20, 0.4, 0.02, 1.6e6
+    m, ids = quader("hex8", nx, nx, 1, Lq, Lq, H, E=5e6, nu=0.3)
+    X0 = np.asarray(m.nodes, float)
+    oben = [k for k in range(m.nn) if abs(X0[k, 2] - H) < 1e-9]
+    unten = [k for k in range(m.nn) if abs(X0[k, 2]) < 1e-9]
+    for k in unten:
+        m.fix(k, [0, 1, 2])
+    P = m.add_node(Lq / 2, Lq / 2, H + 0.1)
+    m.add_starrkoerper(P, oben, "RBE3", name="Flaeche")
+    m.add_load_case("LF1", "G")
+    m.load_cases["LF1"].gravity = [0.0, 0.0, 0.0]
+    m.load_node(P, Fz=-Fz, Mx=Fz * 0.01, case="LF1")
+    res = _still(solver.solve_static, m, case="LF1")
+    u = np.asarray(res.u, float)[:6 * m.nn].reshape(-1, 6)
+    n = 6 * m.nn
+    fest = {6 * k + j for k in unten for j in range(3)}
+    frei = [i for i in range(n) if i not in fest and (i % 6 < 3 or i // 6 == P)]
+    ue = exakt_allgemein(m, P, oben, {P: {"Fz": -Fz, "Mx": Fz * 0.01}}, frei=frei)
+    dm = float(np.abs(u[P, :3] - ue[P, :3]).max()) * 1e3
+    check("441 Slaves, 1,6 MN: Master gegen exakte Zwangsbedingung <= 0,00001 mm", dm <= 1e-5,
+          f"Abweichung {dm:.7f} mm bei {np.abs(ue[P, :3]).max() * 1e3:.4f} mm")
+
+
+def test_strafe_je_zeile():
+    """Schutz: der Strafbeiwert je Zeile. Am Kreisring vor dem Kragarm ist die
+    Straffeder am Master hoechstens 20 000-mal die Summe der Diagonalen der
+    Slaves (Faktor 10 000, Zeilensummen statt Diagonalen hoechstens doppelt),
+    mit den unbearbeiteten Zeilen war sie ueber 1000-mal groesser."""
+    from statik3d import assemble as asm
+    m, b, p, rk = modell_var(1)
+    K0 = _ohne_starrkoerper(m, lambda: asm.stiffness(m))
+    d0 = np.abs(np.asarray(K0.diagonal()).ravel())
+
+    def am_master():
+        K = asm.stiffness(m)
+        return float((np.abs(np.asarray(K.diagonal()).ravel()) - d0)[6 * p:6 * p + 3].max())
+    zu = am_master()
+    asm.RBE3_ZEILEN_ALT = True
+    try:
+        alt = am_master()
+    finally:
+        asm.RBE3_ZEILEN_ALT = False
+    s_ring = float(sum(d0[6 * k + j] for k in rk for j in range(3)))
+    check("Ring: Straffeder am Master <= 20 000 x Summe der Diagonalen der Slaves", zu <= 2e4 * s_ring,
+          f"{zu:.4g} N/m, Slaves {s_ring:.4g} N/m")
+    check("Ring: unbearbeitete Zeilen ueber 1000-mal steifer", alt >= 1e3 * zu, f"alt {alt:.4g} N/m")
+
+
+def test_ruecknahme_zeilen():
+    """Ruecknahmeprobe: mit den unbearbeiteten Zeilen (assemble.RBE3_ZEILEN_ALT)
+    kommt das Knicken wieder still falsch heraus oder bricht ab."""
+    from statik3d import assemble as asm, solver
+    asm.RBE3_ZEILEN_ALT = True
+    try:
+        lasten = {"Fx": -1e5, "Fz": -1e3, "Mx": 500.0}
+        m, b, p, rk = modell_var(10, lasten=lasten)
+        try:
+            br = _still(solver.solve_buckling, m, nmodes=4, case="LF1")
+            ist = np.sort(np.asarray(br.buckling_factors, float))
+            txt = f"{np.round(ist, 4).tolist()}"
+            falsch = abs(ist[0] - 46.0382) > 0.01
+        except Exception as ex:             # noqa: BLE001
+            txt, falsch = str(ex)[:100], True
+    finally:
+        asm.RBE3_ZEILEN_ALT = False
+    check("Ruecknahme: unbearbeitete Zeilen -> Knicken falsch oder abgewiesen", falsch, txt)
+
+
 def main():
     tests = [test_ring_allgemein, test_ring_scheibe, test_lastrichtungen, test_viele_slaves,
              test_speichen_aus_bleibt_abgewiesen, test_automatische_fesselung, test_strafanteil_getrennt,
              test_pruefung_kraftsumme, test_verteilung_hand, test_ruecknahme, test_gelenkstab_neben_rbe3,
-             test_merkmal]
+             test_merkmal, test_varianten_statik, test_knicken, test_eigenformen,
+             test_viele_slaves_grosse_last, test_strafe_je_zeile, test_ruecknahme_zeilen]
     fehl = []
     for t in tests:
         print(f"\n--- {t.__name__} ---")

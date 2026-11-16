@@ -72,8 +72,10 @@ class Kopplung:
         self.art = str(art).upper()
         self.knoten = None if knoten is None else np.asarray(knoten, float)
         self.name = str(name)
-        #: frei definierter RBE3 (nicht Stabende/Scheibe): seine Zeilen tragen
-        #: die Gewichtssumme, am Master steht k mal deren Quadrat
+        #: frei definierter RBE3 (nicht Stabende/Scheibe): bis Nachbesserung 2
+        #: trugen seine Zeilen die Gewichtssumme (am Master k mal deren
+        #: Quadrat); seither je Zeile ein eigener Strafbeiwert, der in G steckt
+        #: (assemble.rbe3_zeilen_master, k = 1)
         self.allgemein = bool(allgemein)
 
 
