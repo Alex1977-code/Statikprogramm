@@ -4224,6 +4224,23 @@ MERKMALE: list = [
         modellmerkmal="Stab mit Versatz, den die interne Stabteilung nur verteilt teilen kann, mit α_cr, "
                       "Knicken oder Theorie II./III. Ordnung",
         betrifft=_versatz_verteilt, im_ergebnis=_versatz_stabteilung_im_ergebnis),
+    # Runde k10d, Nachbesserung 3 (16.11.2026): der Armanteil des Versatzes
+    # nahm nach Theorie II. Ordnung die Stabendkraft ohne k_G (Theorie I.
+    # Ordnung) - an Zwischenknoten eines geteilten Stabs mit Versatz quer
+    # summierte sie sich nicht zu 0, und V der Vorkruemmung am Arm zaehlte
+    # als Kraft im Arm. IPE 300, 6 m, 200 kN, Versatz y 0,1 m an beiden Enden:
+    # Mz 53,57 statt 54,07 kNm (10 Teile), mit Vorkruemmung 64,80 statt
+    # 65,59 kNm (9,85 N/mm2). Seither die Stabendkraft mit k + k_G des
+    # vorigen Schritts, ohne V. alpha_cr und Knicken unveraendert.
+    # Fehlerkorrektur
+    Merkmal(
+        name="versatz_arm_endkraft_th2", titel="Versatz-Arm nach Theorie II. Ordnung: Stabendkraft mit k_G",
+        texte={"alt": "Armanteil mit der Stabendkraft nach Theorie I. Ordnung, V der Vorkrümmung im Arm",
+               "neu": "Armanteil mit der Stabendkraft am verformten System (k + k_G), ohne V der Vorkrümmung"},
+        wechsel=(Wechsel(stand=74, datum="16.11.2026", commit="fix/k10-ec3", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Stab mit Versatz der Stabenden, nach Theorie II. Ordnung gerechnet",
+        betrifft=_stab_mit_versatz, im_ergebnis=_theorie2_gerechnet_im_ergebnis),
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle

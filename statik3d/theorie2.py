@@ -354,6 +354,7 @@ def ersatzlasten_vorkruemmung(model: Model, res, elastisch: bool = True,
     je_stab, uebersprungen, meldungen = [], [], []
     feq_v: dict = {}
     q_v: dict = {}
+    arm_v: dict = {}
     for name, mem in model.members.items():
         if not mem.elements:
             continue
@@ -411,6 +412,18 @@ def ersatzlasten_vorkruemmung(model: Model, res, elastisch: bool = True,
         V = 4.0 * Nc * e0 / L
         _kraft_am_stabende(model, ea, ja, -V * y_stab, F)
         _kraft_am_stabende(model, model.elements[els[-1]], jb, -V * y_stab, F)
+        if stablasten is not None:
+            # V am Arm (Versatz): fuer den Armanteil der geometrischen
+            # Steifigkeit (Nachbesserung 3, Stand 74) traegt der Arm nur
+            # Stabendkraft minus V - V steht fuer die Neigung N e_0' der
+            # vorgekruemmten Stabachse, nicht fuer eine Kraft am Arm
+            for ie_, j_ in ((els[0], ja), (els[-1], jb)):
+                el_ = model.elements[ie_]
+                if el_.typ != "beam" or bm.versatz_vektoren(getattr(el_, "exzentrizitaet", None)) is None:
+                    continue
+                T3_, _l = asm.stab_achsen(model, el_)
+                v_ = arm_v.setdefault(ie_, np.zeros(12))
+                v_[6 * j_:6 * j_ + 3] += T3_ @ (-V * y_stab)
         je_stab.append({"stab": name, "L": L, "kurve": kurve, "e0_L": e0 / L,
                         "e_0": e0, "N_Ed": Nc, "q": q, "V": V,
                         "lambda": krit.get("lambda", 0.0),
@@ -420,6 +433,7 @@ def ersatzlasten_vorkruemmung(model: Model, res, elastisch: bool = True,
     if stablasten is not None:
         stablasten["feq"] = feq_v
         stablasten["q"] = q_v
+        stablasten["arm"] = arm_v
     aus = {"je_stab": je_stab, "uebersprungen": uebersprungen,
            "elastisch": elastisch, "anzahl": len(je_stab)}
     if meldungen:
@@ -972,12 +986,35 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
         # symmetrische Teil in der Matrix, der schiefsymmetrische als Last aus
         # dem vorigen Schritt (die Matrix bleibt symmetrisch, ama); ohne
         # Versatz ist K_schief None und alles wie bisher
+        # Der Arm nimmt die Stabendkraft am verformten System: die des
+        # vorigen Schritts mit k + k_G (postprocess mit n_geo), im ersten
+        # Schritt die nach Theorie I. Ordnung (Runde k10d, Nachbesserung 3,
+        # Stand 74). Bis dahin nahm er die Kraft ohne k_G (asm.
+        # stab_endkraefte_linear); ihr fehlt der Querkraftanteil N theta. An
+        # einem Zwischenknoten eines geteilten Stabs mit Versatz quer, dessen
+        # Arme zu demselben Punkt der Stabachse fuehren, summieren sich die
+        # Kraefte mit k_G zu 0, die ohne k_G nicht: IPE 300, 6 m, 200 kN,
+        # Versatz y 0,1 m an beiden Enden - Mz 53,57 statt 54,07 kNm in 10
+        # Teilen, Randmoment 19,82 statt N e = 20,00 kNm; mit Vorkruemmung
+        # 64,80 statt 65,59 kNm (9,85 N/mm2 auf der unsicheren Seite)
+        # (tests/test_versatz_quer_th2_k10d.py)
+        # V der Vorkruemmung am versetzten Stabende traegt der Arm nicht
+        # (sl_v["arm"], ersatzlasten_vorkruemmung): ohne den Abzug Randmoment
+        # 19,96 statt 20,00 kNm, Mz 65,49 statt 65,59 kNm. Im ersten Schritt
+        # (res1, ohne Ersatzlasten) nichts abzuziehen
+        end_it = dict(getattr(res, "beam_end", None) or {})
+        if imperfektionen and res is not res1:
+            for i_, v_ in (sl_v.get("arm") or {}).items():
+                if i_ in end_it:
+                    end_it[i_] = np.asarray(end_it[i_], float) - v_
+        end_it = end_it or None
         if voll:
-            Kg = asm.geometric_stiffness(model, u, aktiv, n_anfang=n_anf, feq=feq_it)
+            Kg = asm.geometric_stiffness(model, u, aktiv, n_anfang=n_anf, feq=feq_it, endkraefte=end_it)
             K_schief = None
         else:
-            Kg = asm.geometric_stiffness(model, u, aktiv, n_anfang=n_anf, feq=feq_it, symmetrisch=True)
-            K_schief = asm.versatz_arm_schief(model, u, aktiv, feq_it)
+            Kg = asm.geometric_stiffness(model, u, aktiv, n_anfang=n_anf, feq=feq_it, symmetrisch=True,
+                                         endkraefte=end_it)
+            K_schief = asm.versatz_arm_schief(model, u, aktiv, feq_it, endkraefte=end_it)
         # dieselben Normalkraefte wie in K_g fuer die Stabendkraefte und das
         # Feld (A8, 09.11.2026: postprocess rechnet sie mit k + k_G)
         n_geo = normalkraefte_kg(model, u, aktiv, n_anf, feq)
