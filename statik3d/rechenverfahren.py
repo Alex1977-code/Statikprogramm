@@ -2185,6 +2185,82 @@ def _theorie3_starrkoerper(model) -> bool:
         return True
 
 
+def _theorie3_gelenk(model) -> bool:
+    """Ein Lastfall oder eine Kombination nach Theorie III. Ordnung und ein
+    Stab (Balken) mit Drehgelenk oder Drehfedergelenk, dessen Gelenke und
+    Federgelenke alle Drehungen sind - dort bildet Theorie III. Ordnung seit
+    Stand 75 (Runde k10d) das Gleichgewicht am Gelenk um die mitgedrehte
+    Gelenkachse (theorie3._Stab._gelenk_lage) statt kondensiert um die Sehne."""
+    try:
+        if not any(model.theorie_von(o) == "III"
+                   for o in list(model.load_cases.values()) + list(model.combinations.values())):
+            return False
+    except Exception:                       # noqa: BLE001 - Pruefung, nie Abbruch
+        return False
+    dreh = (3, 4, 5, 9, 10, 11)
+    for e in getattr(model, "elements", None) or []:
+        if getattr(e, "typ", "") != "beam":
+            continue
+        federn = [int(d) for d, k in (getattr(e, "hinge_springs", None) or []) if k and k > 0]
+        gelenke = [int(d) for d in (getattr(e, "hinges", None) or [])]
+        if (federn or gelenke) and all(d in dreh for d in federn + gelenke):
+            return True
+    return False
+
+
+def _theorie3_anschluss_neu(model) -> list:
+    """Lastfaelle und Kombinationen nach Theorie III. Ordnung, die seit Stand
+    66 (Runde k10) abgewiesen werden und davor gerechnet wurden: der Anschluss
+    eines Stabendes an einen Koerper (Kopplung „Stabende“ oder verteilende
+    Kopplung) wirkt, obwohl kein Koerperknoten mittraegt - die Koerperseite
+    erreicht ueber Starrkoerper und Kopplungen einen Lager- oder Lastknoten
+    (Knoten-, Linien-, Flaechenlager; Knotenlast oder Punktmasse unter
+    Eigengewicht, je Lastfall bzw. Kombination mit deren Lastfaellen und
+    Faktoren - theorie3._lastknoten; ohne Situation wirkten diese
+    Kopplungen in Theorie I. Ordnung immer, die Starrkoerper immer) oder
+    einen mittragenden Knoten (zweites Stabende). Vergleich der Abweisung
+    heute und mit der Regel bis Runde k10 (theorie3.kopplung_sperre_modell,
+    ``alt``); nur das Ob zaehlt, nicht der Text."""
+    if not (getattr(model, "starrkoerper", None) or getattr(model, "kopplungen", None)):
+        return []
+    from .theorie3 import kopplung_sperre_modell
+    neu = {n: t for t, namen in kopplung_sperre_modell(model).items() for n in namen}
+    if not neu:
+        return []
+    alt = {n: t for t, namen in kopplung_sperre_modell(model, alt=True).items() for n in namen}
+    # nur, was vorher gar nicht abgewiesen wurde - ein anderer Text der
+    # Abweisung (eine zweite Kopplung kommt dazu) aendert kein Ergebnis
+    return sorted(n for n in neu if n not in alt)
+
+
+def _theorie3_anschluss_betrifft(model) -> bool:
+    """Modellmerkmal theorie3_stabende_anschluss (Stand 66)."""
+    try:
+        return bool(_theorie3_anschluss_neu(model))
+    except Exception:                       # noqa: BLE001 - nicht pruefbar: möglicherweise betroffen
+        return True
+
+
+def _theorie3_anschluss_im_ergebnis(model, an) -> str:
+    """Ergebnisse nach Theorie III. Ordnung der Lastfaelle und Kombinationen
+    aus :func:`_theorie3_anschluss_neu` (bei einer Ergebniskombination auch
+    ihre Alternativen „EK [k]“)."""
+    try:
+        namen_neu = set(_theorie3_anschluss_neu(model))
+    except Exception:                       # noqa: BLE001
+        return ""
+    if not namen_neu:
+        return ""
+    th3 = getattr(an, "theorie3", None)
+    namen = [str(n) for n in (getattr(th3, "kombinationen", None) or {})]
+    for n, r in _ergebnis_paare(an):
+        if str((getattr(r, "info", None) or {}).get("theorie", "")).startswith("III"):
+            namen.append(str(n))
+    namen = sorted({n for n in namen if n in namen_neu or n.split(" [")[0] in namen_neu})
+    return ("Theorie III. Ordnung mit Anschluss eines Stabendes: " + ", ".join(namen[:6])
+            + (" …" if len(namen) > 6 else "")) if namen else ""
+
+
 def _ergebnis_paare(an) -> list:
     try:
         return list(an.all_results().items()) + list((getattr(an, "alternativen", None) or {}).items())
@@ -2691,8 +2767,19 @@ def _th3_stabende_lastfaelle(model, kopp: list) -> set:
         return set()
     if not objekte:
         return set()
-    from .theorie3 import _wirksame_knoten_th3, _nur_staebe
-    from .situationen import kopplung_bleibt, abgeschaltete_knoten
+    # Zusammenfuehrung k10 (16.11.2026): Theorie III. Ordnung entscheidet
+    # ueber den Anschluss eines Stabendes mit theorie3._th3_wirkung (fix/k10-th3,
+    # Stand 66) - der Anschluss zaehlt ueber das Stabende, wenn die
+    # Koerperseite einen Lager-, Last- oder mittragenden Knoten erreicht. Die
+    # Regel des Stands 71 (Koerperknoten ohne jedes Element) ist darin
+    # enthalten, ausser bei einem Koerperknoten, der nichts haelt und nichts
+    # traegt (dort weist Theorie III. Ordnung nicht ab, sie rechnet richtig).
+    # Verglichen wird darum die Wirkung heute mit der Regel davor (``alt``,
+    # nur ueber einen mittragenden Koerperknoten wie situationen.kopplung_bleibt
+    # bis Stand 70); ohne Faktoren zaehlen die Lasten aller Lastfaelle.
+    from .theorie3 import _th3_wirkung, _nur_staebe
+    idx = [i for i, kp in enumerate(getattr(model, "kopplungen", None) or [])
+           if any(kp is s for s in starr)]
     out: set = set()
     je: dict = {}
     for o in objekte:
@@ -2706,11 +2793,10 @@ def _th3_stabende_lastfaelle(model, kopp: list) -> set:
                 aktiv = None
             neu_ = alt_ = False
             if _nur_staebe(model, aktiv):
-                kn = _wirksame_knoten_th3(model, aktiv)
-                kn_alt = _wirksame_knoten_th3(model, aktiv, bis_70=True)
-                tot = abgeschaltete_knoten(model, aktiv, len(kn))
-                neu_ = any(kopplung_bleibt(model, kp, kn, tot) for kp in starr)
-                alt_ = any(kopplung_bleibt(model, kp, kn_alt) for kp in starr)
+                kp_neu = _th3_wirkung(model, aktiv)[2]
+                kp_alt = _th3_wirkung(model, aktiv, alt=True)[2]
+                neu_ = any(kp_neu[i] for i in idx)
+                alt_ = any(kp_alt[i] for i in idx)
             je[sit] = neu_ and not alt_
         if je[sit]:
             name = str(o.name)
@@ -4483,6 +4569,37 @@ MERKMALE: list = [
                       "auch im Spannschritt (Anker mit Sollkraft, Weg „spannen und verriegeln“) und in der "
                       "Schwingung eines Schwingungsnachweises in der Situation seines Wasserdruck-Generierers",
         betrifft=_maske_starrkoerper_betroffen, im_ergebnis=_maske_starrkoerper_im_ergebnis),
+    # Runde k10 (15.11.2026, Fehlerkorrektur): die Abweisung nach Theorie III.
+    # Ordnung (Stand 64) liess den Anschluss eines Stabendes an einen Koerper
+    # (Kopplung „Stabende“, verteilende Kopplung) nur mit mittragendem
+    # Koerperknoten gelten. Kopplung „Stabende“ an einem Knoten Q ohne Element,
+    # daran per RBE2 der Lastknoten: Theorie I. Ordnung 0,5357 mm, Theorie III.
+    # Ordnung still 0,0000 mm (Summe Rz 0); Last direkt an Q: 100,5357 statt
+    # 0,5357 mm; RBE3 „Stabende“ an einem gelagerten, abgeschalteten Koerper:
+    # Theorie I. Ordnung und Gegenrechnung 0,0000 mm, Theorie III. Ordnung
+    # 0,5357 mm (theorie3._th3_wirkung); ebenso mit Linien- oder Flaechenlager,
+    # ueber einen RBE2 an einem gelagerten Knoten (Kette) und mit zwei
+    # Stabenden am selben abgeschalteten Koerper (Theorie I. Ordnung und
+    # Gegenrechnung 0,4377/0,0980 mm, Theorie III. Ordnung 0,5357/0,0000 mm)
+    # und mit einer Punktmasse unter Eigengewicht an der Koerperseite
+    # (Theorie I. Ordnung 0,5357 mm, Theorie III. Ordnung still 100,5357 mm
+    # bzw. 0 mm). Seither mit Klartext abgewiesen - je Lastfall bzw.
+    # Kombination mit deren Lasten (eine Last nur in einem anderen Lastfall
+    # zaehlt nicht).
+    Merkmal(
+        name="theorie3_stabende_anschluss", titel="Anschluss eines Stabendes nach Theorie III. Ordnung",
+        texte={"alt": "Anschluss eines Stabendes (Kopplung „Stabende“, RBE3) nur mit mittragendem "
+                      "Körperknoten erkannt: hielt oder belastete die Körperseite über Lager, Last, weitere "
+                      "Starrkörper oder ein zweites Stabende, still als weiche Feder oder weggelassen",
+               "neu": "auch dort erkannt und mit Klartext abgewiesen"},
+        wechsel=(Wechsel(stand=66, datum="15.11.2026", commit="fix/k10-th3", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Lastfall oder Kombination nach Theorie III. Ordnung mit einer Kopplung „Stabende“ "
+                      "oder einer verteilenden Kopplung eines Stabendes, deren Körperseite nicht mitträgt, "
+                      "aber über Starrkörper oder Kopplungen einen Lagerknoten (Knoten-, Linien-, "
+                      "Flächenlager), einen in diesem Lastfall bzw. dieser Kombination belasteten Knoten "
+                      "(Knotenlast oder Punktmasse unter Eigengewicht) oder ein zweites Stabende erreicht",
+        betrifft=_theorie3_anschluss_betrifft, im_ergebnis=_theorie3_anschluss_im_ergebnis),
     # Runde k10 (15.11.2026, vom Anwender freigegeben): bei einer Elementmaske
     # trug ein Lagerknoten, an dem nur abgeschaltete Elemente haengen, nicht mit
     # (situationen._lagerknoten_ohne_element), und eine Last, die ueber eine
@@ -4676,10 +4793,31 @@ MERKMALE: list = [
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Stab mit Versatz der Stabenden, nach Theorie II. Ordnung gerechnet",
         betrifft=_stab_mit_versatz, im_ergebnis=_theorie2_gerechnet_im_ergebnis),
+    # Runde k10d (16.11.2026, Fehlerkorrektur): Theorie III. Ordnung
+    # kondensierte Drehgelenke und Drehfedergelenke wie die lineare Rechnung
+    # und bildete das Gleichgewicht am Gelenk um die Sehne des Stabs statt um
+    # die mit dem Knoten mitgedrehte Gelenkachse; das Moment M mal
+    # Biegedrehung des Stabendes fehlte. L-Rahmen (Rechteck 20 x 400, je 2 m,
+    # 1 kN, Torsionsfeder 2 kNm/rad an der Ecke): Verdrehung der Spitze 6 %
+    # unter dem gleichwertigen Stummelmodell (Theorie II. Ordnung mit
+    # Momentenglied 0,6 %); mit Torsionsgelenk bei 3 kN 0,0036 mm Verschiebung
+    # neben dem Stummelmodell; ein Traeger mit Gabellagern, Randmomenten und
+    # Torsionsgelenk in der Mitte verdrillte unsymmetrisch (0,635 gegen 0,486
+    # µrad an den Spiegelknoten). Seither am Gelenk mit der Gelenkdrehung
+    # (theorie3._Stab._gelenk_lage).
+    Merkmal(
+        name="theorie3_gelenk_achse", titel="Dreh- und Drehfedergelenke nach Theorie III. Ordnung",
+        texte={"alt": "Gelenk kondensiert, Gleichgewicht am Gelenk um die Sehne des Stabs",
+               "neu": "Gelenkdrehung am Stabende, Gleichgewicht um die mitgedrehte Gelenkachse"},
+        wechsel=(Wechsel(stand=75, datum="16.11.2026", commit="fix/k10-th3", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Lastfall oder Kombination nach Theorie III. Ordnung und ein Balken mit Drehgelenk "
+                      "oder Drehfedergelenk (alle Gelenke des Stabs Drehungen)",
+        betrifft=_theorie3_gelenk, im_ergebnis=_theorie3_im_ergebnis),
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 74
+VERFAHRENSSTAND = 75
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

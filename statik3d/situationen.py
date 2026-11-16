@@ -135,6 +135,11 @@ def wirksame_knoten(model: Model, aktiv, kn: np.ndarray = None) -> np.ndarray:
       einen wirksamen Koerperknoten braucht, :func:`kopplung_bleibt`); ein
       Slave ohne jedes Element ist aber kein Koerperknoten. Dieselbe Regel
       wie theorie3._wirksame_knoten_th3.
+      Die Abweisung nach Theorie III. Ordnung (theorie3._th3_wirkung) zaehlt
+      den Anschluss eines Stabendes seit Runde k10 auch, wenn nur das
+      Stabende mittraegt und die Koerperseite ueber Starrkoerper und
+      Kopplungen einen Lager- oder Lastknoten oder ein zweites Stabende
+      erreicht.
 
     Ein Starrkoerper oder eine Kopplung, deren ganze Kette an keinem
     wirksamen Element und keinem Lagerknoten haengt (ein ganz abgeschalteter

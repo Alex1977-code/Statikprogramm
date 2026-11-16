@@ -316,8 +316,33 @@ def _kraft_am_stabende(model: Model, el, j: int, f, F: np.ndarray) -> None:
     F[nd * NDOF + 3:nd * NDOF + 6] += np.cross(T3n.T @ rr[j], f)
 
 
+def vorkruemmung_entscheid(model: Model, res) -> dict:
+    """{Stab: Kriterium} nach 5.3.2(6) (:func:`vorkruemmung_noetig`) mit den
+    Normalkraeften aus ``res`` fuer alle Staebe, die
+    :func:`ersatzlasten_vorkruemmung` betrachtet; Zug oder keine Normalkraft:
+    nicht noetig. Theorie III. Ordnung legt damit fest, welche Staebe eine
+    Vorkruemmung bekommen, statt in jeder Iteration neu zu entscheiden
+    (Runde k10d, 16.11.2026)."""
+    out = {}
+    for name, mem in model.members.items():
+        if not mem.elements or model.elements[mem.elements[0]].typ not in ("beam", "truss"):
+            continue
+        N = _member_N(model, mem, res)
+        if N >= 0 or model.member_length(mem) <= 0:
+            out[name] = {"noetig": False, "grund": "keine Druckkraft"}
+        else:
+            out[name] = vorkruemmung_noetig(model, mem, -N)
+    return out
+
+
+def vorkruemmung_staebe(entscheid: dict) -> set:
+    """Die Staebe mit Vorkruemmung aus :func:`vorkruemmung_entscheid`."""
+    return {n for n, k in (entscheid or {}).items() if k.get("noetig")}
+
+
 def ersatzlasten_vorkruemmung(model: Model, res, elastisch: bool = True,
-                              alle: bool = False, stablasten: dict = None) -> tuple:
+                              alle: bool = False, stablasten: dict = None,
+                              entscheid: dict = None) -> tuple:
     """
     Aequivalente Querlasten aus der Vorkruemmung, 5.3.2(7), Bild 5.4:
 
@@ -349,6 +374,10 @@ def ersatzlasten_vorkruemmung(model: Model, res, elastisch: bool = True,
     mindestens in 10 Teile (stabteilung.fein_system, Nachbesserung 2): in
     einem Element ist die Streckenlast bei Versatz in Stabrichtung und bei
     Federgelenken ungenau (Arm 1,0 m: 17,29 statt 13,87 kNm).
+
+    ``entscheid`` ({Stab: Kriterium}, :func:`vorkruemmung_entscheid`): das
+    Kriterium 5.3.2(6) kommt von dort statt aus der Normalkraft von ``res``;
+    die Groesse der Ersatzlast bleibt N_Ed aus ``res``.
     """
     F = np.zeros(model.ndof)
     je_stab, uebersprungen, meldungen = [], [], []
@@ -367,7 +396,8 @@ def ersatzlasten_vorkruemmung(model: Model, res, elastisch: bool = True,
         L = model.member_length(mem)
         if L <= 0:
             continue
-        krit = vorkruemmung_noetig(model, mem, Nc)
+        krit = (entscheid[name] if entscheid is not None and name in entscheid
+                else vorkruemmung_noetig(model, mem, Nc))
         if krit.get("meldung") and krit["meldung"] not in meldungen:
             meldungen.append(krit["meldung"])
         if not alle and not krit["noetig"]:

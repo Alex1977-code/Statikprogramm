@@ -4461,6 +4461,25 @@ def rand_projizieren(model: Model, sk: dict, aktiv=None, faelle=None, merker: di
     return sk
 
 
+def inaktive_nullen(model: Model, res: Results, inaktiv) -> None:
+    """Abgeschaltete Elemente (Situation, Stab „aus“) bekommen Nullen - je
+    Elementart in ihr Ergebnisfeld. Gemeinsam fuer postprocess und Theorie
+    III. Ordnung (theorie3.solve_theorie3, seit 15.11.2026)."""
+    for i in inaktiv:
+        e = model.elements[i]
+        if e.typ in asm.LINE_TYPES:
+            res.beam_end[i] = np.zeros(12)
+        elif e.typ in asm.SHELL_TYPES:
+            res.shell_res[i] = np.zeros(6)
+        elif e.typ == "feder":
+            res.feder_res[i] = np.zeros(6)
+        elif e.typ in asm.GRENZSCHICHT_TYPES:
+            res.grenzschicht_res[i] = np.zeros(3)
+        else:
+            res.solid_res[i] = np.zeros(6)
+            res.solid_mittel[i] = np.zeros(6)
+
+
 def postprocess(model: Model, u: np.ndarray, res: Results, feq: dict = None,
                 q: dict = None, temp: dict = None, workers: int = None, aktiv=None,
                 system=None, n_geo: dict = None):
@@ -4485,19 +4504,7 @@ def postprocess(model: Model, u: np.ndarray, res: Results, feq: dict = None,
     if aktiv is not None:
         inaktiv = [i for i in range(len(model.elements)) if not aktiv[i]]
         res.info["inaktiv"] = inaktiv
-        for i in inaktiv:
-            e = model.elements[i]
-            if e.typ in asm.LINE_TYPES:
-                res.beam_end[i] = np.zeros(12)
-            elif e.typ in asm.SHELL_TYPES:
-                res.shell_res[i] = np.zeros(6)
-            elif e.typ == "feder":
-                res.feder_res[i] = np.zeros(6)
-            elif e.typ in asm.GRENZSCHICHT_TYPES:
-                res.grenzschicht_res[i] = np.zeros(3)
-            else:
-                res.solid_res[i] = np.zeros(6)
-                res.solid_mittel[i] = np.zeros(6)
+        inaktive_nullen(model, res, inaktiv)
     seile_quer = []
     for i, kind, val in items:
         if kind == "beam":
