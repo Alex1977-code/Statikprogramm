@@ -688,9 +688,33 @@ def _paket_schreiben(model, results: dict, zustaende: dict = None) -> str:
     return pfad
 
 
+#: Felder von solver.Results, die _strip **nicht** an die Arbeitsprozesse
+#: schickt. Der Stabnachweis liest sie nicht (er liest ueber member_forces
+#: beam_end, beam_q, beam_th2, beam_teile sowie name und info), und sie
+#: koennen gross sein: Volumen- und Schalenspannungen, Kontakt, Eigen- und
+#: Knickfiguren. Jedes andere Feld geht mit - auch eines, das spaeter dazukommt.
+STRIP_OHNE = frozenset({
+    "model", "_cache", "shell_res", "solid_res", "solid_mittel", "solid_knoten",
+    "grenzschicht_res", "contact", "kontaktzustand", "contact_forces",
+    "modes", "buckling_modes", "buckling_modes_teile"})
+
+
 def _strip(r):
-    """Results-Kopie ohne Modell/Cache fuer den Versand."""
+    """Results-Kopie ohne Modell/Cache fuer den Versand an die Arbeitsprozesse.
+
+    Kopiert wird jedes Feld ausser :data:`STRIP_OHNE`. Bis zum 15.11.2026
+    (Runde k10, Stand 69) nannte die Kopie ihre Felder einzeln - name, kind,
+    u, reactions, beam_end, beam_q, info - und liess so die beiden Felder
+    weg, die nach Theorie II. Ordnung das Feldmoment tragen: ``beam_th2``
+    (Anteil N·w im Element, A8 vom 09.11.2026) und ``beam_teile`` (interne
+    Stabteilung seit 12.11.2026). Der Nachweis ueber Arbeitsprozesse (ab 24
+    Staeben bei mehreren Arbeitern) rechnete dann mit dem Moment ohne diesen
+    Anteil: IPE 300, 6 m, N = 200 kN, M = 60 kNm, ein Element, M_Ed 60,0
+    statt 63,2 kNm (Handrechnung M_0/cos(kL/2) = 63,21 kNm), Ausnutzung
+    2,399 statt 2,480 - seriell war richtig."""
+    import dataclasses
     from ..solver import Results
-    rr = Results(name=r.name, kind=r.kind, u=r.u, reactions=r.reactions,
-                 beam_end=r.beam_end, beam_q=r.beam_q, info=dict(r.info))
-    return rr
+    werte = {f.name: getattr(r, f.name) for f in dataclasses.fields(Results)
+             if f.name not in STRIP_OHNE and hasattr(r, f.name)}
+    werte["info"] = dict(getattr(r, "info", None) or {})
+    return Results(**werte)

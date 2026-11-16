@@ -2965,6 +2965,129 @@ def _rbe3_fesselung_im_ergebnis(model, an) -> str:
             + (" …" if len(namen) > 6 else ""))
 
 
+#: Ab so vielen Staeben mit Nachweis lief der EC3-Nachweis bei mehreren
+#: Arbeitern von selbst ueber Arbeitsprozesse (ec3.design.check_members)
+EC3_AUFTRAEGE_AB = 24
+
+
+def _ec3_staebe_mit_nachweis(model) -> int:
+    ne = len(getattr(model, "elements", None) or [])
+    return sum(1 for mem in (getattr(model, "members", None) or {}).values()
+               if getattr(mem, "design", False)
+               and any(0 <= int(e) < ne for e in (getattr(mem, "elements", None) or [])))
+
+
+def _ec3_auftraege_moeglich(model) -> bool:
+    """Ob der EC3-Nachweis dieses Modells ueber Arbeitsprozesse gelaufen sein
+    kann: ab 24 Staeben mit Nachweis (bei mehreren Arbeitern) oder ueber die
+    Rechnerfarm (jede Stabzahl)."""
+    n = _ec3_staebe_mit_nachweis(model)
+    if n >= EC3_AUFTRAEGE_AB:
+        return True
+    if not n:
+        return False
+    try:
+        from . import parallel
+        return parallel.settings().backend == "farm"
+    except Exception:                       # noqa: BLE001 - nicht pruefbar: möglicherweise betroffen
+        return True
+
+
+def _ec3_auftraege_th2_betroffen(model) -> bool:
+    """Modellmerkmal ec3_auftraege_th2: ein EC3-Nachweis, der ueber
+    Arbeitsprozesse laufen kann, und ein Lastfall oder eine Kombination nach
+    Theorie II. oder III. Ordnung. Bis Stand 68 liess ec3.design._strip beim
+    Versand an die Arbeitsprozesse die Felder beam_th2 und beam_teile weg
+    (Runde k10, Stand 69)."""
+    if not _ec3_auftraege_moeglich(model):
+        return False
+    try:
+        return any(model.theorie_von(o) in ("II", "III")
+                   for o in list(model.load_cases.values()) + list(model.combinations.values()))
+    except Exception:                       # noqa: BLE001 - nicht pruefbar: möglicherweise betroffen
+        return True
+
+
+def _ec3_auftraege_th2_im_ergebnis(model, an) -> str:
+    """Ergebnisse nach Theorie II./III. Ordnung, gegen die ein EC3-Nachweis
+    im Ergebnis steht - nur, wenn er ueber Arbeitsprozesse gelaufen sein kann."""
+    if getattr(an, "design", None) is None or not _ec3_auftraege_moeglich(model):
+        return ""
+    namen = sorted({str(n) for n, r in _ergebnis_paare(an)
+                    if str((getattr(r, "info", None) or {}).get("theorie", "")).startswith("II")})
+    return ("EC3-Nachweis über Arbeitsprozesse nach Theorie II./III. Ordnung: " + ", ".join(namen[:6])
+            + (" …" if len(namen) > 6 else "")) if namen else ""
+
+def _vorkruemmung_moeglich(model) -> bool:
+    """Modellmerkmal vorkruemmung_streckenlast: Ersatzimperfektionen an, ein
+    Stab (Member) mit Balken und ein Lastfall oder eine Kombination nach
+    Theorie II. oder III. Ordnung. Bis Stand 73 ging die Vorkruemmung als
+    Knotenkraft an die Elementknoten (in einem Element je Stab hob sie sich
+    auf) - Runde k10d, Stand 74."""
+    try:
+        if not bool(getattr(getattr(model, "design", None), "imperfektionen", True)):
+            return False
+        els = getattr(model, "elements", None) or []
+        ne = len(els)
+        if not any(getattr(els[int(i)], "typ", "") == "beam"
+                   for mem in (getattr(model, "members", None) or {}).values()
+                   for i in (getattr(mem, "elements", None) or []) if 0 <= int(i) < ne):
+            return False
+        return any(model.theorie_von(o) in ("II", "III")
+                   for o in list(model.load_cases.values()) + list(model.combinations.values()))
+    except Exception:                       # noqa: BLE001 - nicht pruefbar: möglicherweise betroffen
+        return True
+
+
+def _biegegelenke_beidseitig(model) -> bool:
+    """Modellmerkmal stabteilung_biegegelenke: ein teilbarer Balken mit
+    Biegegelenk an beiden Enden um dieselbe Achse, dessen Querverschiebung
+    an keinem Ende frei ist (stabteilung._endgelenk_bleibt) - bis Stand 73
+    strich die interne Stabteilung das Gelenk am Ende."""
+    try:
+        from .stabteilung import BIEGEGELENKE, teilbar
+        for i, e in enumerate(getattr(model, "elements", None) or []):
+            frei = {int(d) for d in (getattr(e, "hinges", None) or [])}
+            if not frei or getattr(e, "typ", "") != "beam":
+                continue
+            if any(b in frei and b + 6 in frei and q not in frei and q + 6 not in frei
+                   for b, q in BIEGEGELENKE.items()) and teilbar(model, i):
+                return True
+        return False
+    except Exception:                       # noqa: BLE001 - Pruefung, nie Abbruch
+        return False
+
+
+def _versatz_verteilt(model) -> bool:
+    """Modellmerkmal versatz_verteilt: ein Balken mit Versatz, den die interne
+    Stabteilung (Stabteilung, doppelt fuer Theorie III. Ordnung, mindestens
+    20 Teile) nur verteilt teilen kann - bis Stand 73 blieb er ungeteilt."""
+    try:
+        from .stabteilung import (_hat_versatz, versatz_nur_verteilt, soll_teilung, FAKTOR_THEORIE3,
+                                  TEILUNG_VORKRUEMMUNG)
+        # die feinste Teilung: kuerzere Teile scheitern eher (Arm laenger als ein Teil)
+        n = max(soll_teilung(model, FAKTOR_THEORIE3), TEILUNG_VORKRUEMMUNG * FAKTOR_THEORIE3)
+        for i, e in enumerate(getattr(model, "elements", None) or []):
+            if getattr(e, "typ", "") == "beam" and _hat_versatz(e) and versatz_nur_verteilt(model, i, n):
+                return True
+        return False
+    except Exception:                       # noqa: BLE001 - Pruefung, nie Abbruch
+        return False
+
+
+def _vorkruemmung_im_ergebnis(model, an) -> str:
+    """Rechnungen nach Theorie II./III. Ordnung, die eine Vorkruemmung
+    angesetzt haben."""
+    namen = []
+    for th in (getattr(an, "theorie2", None), getattr(an, "theorie3", None)):
+        for n, info in ((getattr(th, "kombinationen", None) or {}).items() if th is not None else []):
+            vk = getattr(info, "vorkruemmung", None) or {}
+            if isinstance(vk, dict) and int(vk.get("anzahl", 0) or 0) > 0:
+                namen.append(str(n))
+    namen = sorted(set(namen))
+    return ("Vorkrümmung nach Theorie II./III. Ordnung: " + ", ".join(namen[:6])
+            + (" …" if len(namen) > 6 else "")) if namen else ""
+
 #: Die Tabelle (Einstufung des Anwenders vom 16.10.2026). Stand 1: Abbruch der
 #: Plastizitaet (a1194ef, 13.10.2026 19:32); Stand 1.5: die Korrekturen dazwischen
 #: (13.10. 23:09 bis 15.10. 12:56) - eine Datei ohne Angabe erkennt sie nur an
@@ -4422,6 +4545,23 @@ MERKMALE: list = [
                          art=FEHLERKORREKTUR),),
         modellmerkmal="Teile ohne Masse (gewichtsloser Werkstoff, Knoten ohne Element an einem RBE3 oder an einer Kopplung in weniger als drei Richtungen)",
         betrifft=_modal_masselos_betroffen, im_ergebnis=_modal_masselos_im_ergebnis),
+    # Runde k10 (15.11.2026, vom Anwender freigegeben): der EC3-Nachweis ueber
+    # Arbeitsprozesse (ab 24 Staeben bei mehreren Arbeitern, oder Farm) bekam
+    # die Ergebnisse ohne beam_th2 und beam_teile (ec3.design._strip) und wies
+    # nach Theorie II. Ordnung das Moment ohne den Anteil N·w im Feld nach:
+    # IPE 300, ein Element, M_Ed 60,0 statt 63,2 kNm (Handrechnung 63,21),
+    # Ausnutzung 2,399 statt 2,480; Geschossrahmen mit 87 Staeben 0,8590 statt
+    # 0,8666. Seriell war richtig. Fehlerkorrektur
+    Merkmal(
+        name="ec3_auftraege_th2", titel="EC3-Nachweis über Arbeitsprozesse nach Theorie II. Ordnung",
+        texte={"alt": "Arbeitsprozesse bekamen die Ergebnisse ohne beam_th2 und beam_teile: Feldmomente "
+                      "nach Theorie II. Ordnung ohne den Anteil der Stabkraft an der Durchbiegung",
+               "neu": "Arbeitsprozesse bekommen jedes Feld, das der Stabnachweis liest: gleich wie seriell"},
+        wechsel=(Wechsel(stand=69, datum="15.11.2026", commit="fix/k10-ec3", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="EC3-Nachweis mit mindestens 24 Stäben (oder über die Rechnerfarm) und ein Lastfall "
+                      "oder eine Kombination nach Theorie II. oder III. Ordnung",
+        betrifft=_ec3_auftraege_th2_betroffen, im_ergebnis=_ec3_auftraege_th2_im_ergebnis),
     # Runde k10c (16.11.2026): die automatische Fesselung (FHG ohne
     # Steifigkeit, Diagonale unter 1e-12 der groessten) bezog sich auf die
     # groesste Hauptdiagonale samt der Straffeder eines frei definierten RBE3 -
@@ -4466,10 +4606,80 @@ MERKMALE: list = [
                       "oder weiteren Kopplung dahinter, in einer Rechnung mit Elementmaske (Situation, Stab „aus“, "
                       "auch ein Stab „aus“ ohne Elemente) - oder starr nach Theorie III. Ordnung",
         betrifft=_maske_stabende_betroffen, im_ergebnis=_maske_stabende_im_ergebnis),
+    # Runde k10d (16.11.2026): die Vorkruemmung (5.3.2(7), Bild 5.4) ging je
+    # Element als Knotenkraft halb und halb an die Elementknoten. In einem
+    # Element je Stab hob sie sich mit den Endquerkraeften V auf und fehlte
+    # still: IPE 300, 6 m, N = 200 kN, ein Element, Stabteilung 1: Mz_Ed 0
+    # statt 11,52 kNm, Ausnutzung 1,638 statt 2,484. In wenigen Teilen fehlte
+    # das Feldmoment zwischen den Knoten (3 Teile 10,36, 5 Teile 11,11, 10
+    # Teile 11,47 kNm). Theorie II. Ordnung setzt sie jetzt als Streckenlast
+    # im Element an, Theorie III. Ordnung teilt gedrueckte Staebe mindestens
+    # in 20 Teile. Mit derselben Korrektur (Nachbesserung 1): eine Richtung
+    # je Stab (ein umgedrehtes Element bekam q gegen die anderen), V an den
+    # wirklichen Stabenden und am versetzten Stabende mit dem Moment des Arms
+    # (Stab 6,5 m, Arm 0,5 m in Stabrichtung: Th II 10,53 statt 12,67 kNm).
+    # Fehlerkorrektur
+    Merkmal(
+        name="vorkruemmung_streckenlast", titel="Vorkrümmung als Streckenlast im Element",
+        texte={"alt": "Vorkrümmung als Knotenkraft an den Elementknoten (in einem Element je Stab ohne Wirkung), "
+                      "Richtung je Element, V am Knoten ohne Versatz",
+               "neu": "Theorie II. Ordnung: Streckenlast im Element, gedrückte Stäbe mindestens in 10 Teilen; "
+                      "Theorie III. Ordnung: gedrückte Stäbe mindestens in 20 Teilen; eine Richtung je Stab, "
+                      "V am versetzten Stabende"},
+        wechsel=(Wechsel(stand=74, datum="16.11.2026", commit="fix/k10-ec3", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Ersatzimperfektionen an und ein Stab mit Balken nach Theorie II. oder III. Ordnung",
+        betrifft=_vorkruemmung_moeglich, im_ergebnis=_vorkruemmung_im_ergebnis),
+    # Runde k10d, Nachbesserung 1 (16.11.2026): die interne Stabteilung
+    # strich das Biegegelenk am Ende eines Balkens, der an beiden Enden ein
+    # Biegegelenk hat - der Gelenkstab war am Ende eingespannt. IPE 300, 6 m,
+    # q 5 kN/m, Theorie II. Ordnung, Stabteilung 10: 28,33 statt 54,00 kNm
+    # im Feld; mit 200 kN Druck und Vorkruemmung nach Theorie III. Ordnung
+    # 6,03 statt 11,48 kNm. Fehlerkorrektur
+    Merkmal(
+        name="stabteilung_biegegelenke", titel="Interne Stabteilung: Biegegelenke an beiden Enden",
+        texte={"alt": "Biegegelenk am Stabende entfiel beim Teilen, wenn auch der Stabanfang eines hatte",
+               "neu": "Biegegelenke bleiben an beiden Enden des geteilten Stabs"},
+        wechsel=(Wechsel(stand=74, datum="16.11.2026", commit="fix/k10-ec3", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Balken mit Biegegelenk an beiden Enden (gleiche Achse) mit α_cr, Knicken oder Theorie "
+                      "II./III. Ordnung",
+        betrifft=_biegegelenke_beidseitig, im_ergebnis=_versatz_stabteilung_im_ergebnis),
+    # Runde k10d, Nachbesserung 1 (16.11.2026): ein Stab mit Versatz, dessen
+    # Arm laenger als ein Teil gegen die Stabrichtung ist, blieb ungeteilt;
+    # nach Theorie III. Ordnung (20 Teile) fehlte die Vorkruemmung in einem
+    # Element still (Stab 6,5 m, Arm 0,5 m: Mz 0 statt 12,67 kNm). Seither
+    # verteilt geteilt (stabteilung.versatz_teile). Fehlerkorrektur
+    Merkmal(
+        name="versatz_verteilt", titel="Interne Stabteilung: Versatz auf alle Teile verteilt",
+        texte={"alt": "Stab mit Versatz, dessen Arm länger als ein Teil ist, ungeteilt",
+               "neu": "Stab verteilt geteilt: Zwischenknoten auf der Knotenlinie, Arm linear auf alle Teile"},
+        wechsel=(Wechsel(stand=74, datum="16.11.2026", commit="fix/k10-ec3", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Stab mit Versatz, den die interne Stabteilung nur verteilt teilen kann, mit α_cr, "
+                      "Knicken oder Theorie II./III. Ordnung",
+        betrifft=_versatz_verteilt, im_ergebnis=_versatz_stabteilung_im_ergebnis),
+    # Runde k10d, Nachbesserung 3 (16.11.2026): der Armanteil des Versatzes
+    # nahm nach Theorie II. Ordnung die Stabendkraft ohne k_G (Theorie I.
+    # Ordnung) - an Zwischenknoten eines geteilten Stabs mit Versatz quer
+    # summierte sie sich nicht zu 0, und V der Vorkruemmung am Arm zaehlte
+    # als Kraft im Arm. IPE 300, 6 m, 200 kN, Versatz y 0,1 m an beiden Enden:
+    # Mz 53,57 statt 54,07 kNm (10 Teile), mit Vorkruemmung 64,80 statt
+    # 65,59 kNm (9,85 N/mm2). Seither die Stabendkraft mit k + k_G des
+    # vorigen Schritts, ohne V. alpha_cr und Knicken unveraendert.
+    # Fehlerkorrektur
+    Merkmal(
+        name="versatz_arm_endkraft_th2", titel="Versatz-Arm nach Theorie II. Ordnung: Stabendkraft mit k_G",
+        texte={"alt": "Armanteil mit der Stabendkraft nach Theorie I. Ordnung, V der Vorkrümmung im Arm",
+               "neu": "Armanteil mit der Stabendkraft am verformten System (k + k_G), ohne V der Vorkrümmung"},
+        wechsel=(Wechsel(stand=74, datum="16.11.2026", commit="fix/k10-ec3", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Stab mit Versatz der Stabenden, nach Theorie II. Ordnung gerechnet",
+        betrifft=_stab_mit_versatz, im_ergebnis=_theorie2_gerechnet_im_ergebnis),
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 71
+VERFAHRENSSTAND = 74
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

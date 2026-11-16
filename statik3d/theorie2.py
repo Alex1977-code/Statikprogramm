@@ -296,8 +296,28 @@ def vorkruemmung_noetig(model: Model, mem, Nc: float) -> dict:
                       "nach 5.3.2(6) nicht erforderlich")}
 
 
+def _kraft_am_stabende(model: Model, el, j: int, f, F: np.ndarray) -> None:
+    """Die Kraft ``f`` (global, (3,)) am Stabende ``j`` (0 Anfang, 1 Ende) des
+    Elements ``el`` in den Lastvektor F: am Knoten, bei einem Balken mit
+    Versatz der Stabenden dazu das Moment des starren Arms a_j x f - die
+    Kraft greift am versetzten Stabende an, nicht am Knoten (Runde k10d,
+    16.11.2026; bis dahin ohne Arm: Stab 6,5 m mit Arm 0,5 m in Stabrichtung
+    am Ende, Theorie II. Ordnung Mz 11,26 statt 12,67 kNm)."""
+    nd = int(el.nodes[j])
+    f = np.asarray(f, float)
+    F[nd * NDOF:nd * NDOF + 3] += f
+    if el.typ != "beam":
+        return
+    rr = bm.versatz_vektoren(getattr(el, "exzentrizitaet", None))
+    if rr is None:
+        return
+    X = np.asarray(model.nodes[el.nodes[:2]], float)
+    T3n, _l = bm.local_axes(X[0], X[1], el.roll)
+    F[nd * NDOF + 3:nd * NDOF + 6] += np.cross(T3n.T @ rr[j], f)
+
+
 def ersatzlasten_vorkruemmung(model: Model, res, elastisch: bool = True,
-                              alle: bool = False) -> tuple:
+                              alle: bool = False, stablasten: dict = None) -> tuple:
     """
     Aequivalente Querlasten aus der Vorkruemmung, 5.3.2(7), Bild 5.4:
 
@@ -306,11 +326,35 @@ def ersatzlasten_vorkruemmung(model: Model, res, elastisch: bool = True,
 
     Angesetzt wird in der lokalen **y**-Richtung des Stabes: e_0 stammt aus
     der Knicklinie fuer die schwache Achse z, und Knicken um z bedeutet
-    Ausweichen in y.  Nur gedrueckte Staebe bekommen eine Vorkruemmung, und
+    Ausweichen in y (die y-Achse des ersten Elements gilt fuer den ganzen
+    Stab; V greift an den Stabenden an, mit Versatz am versetzten Stabende,
+    :func:`_kraft_am_stabende`).  Nur gedrueckte Staebe bekommen eine Vorkruemmung, und
     nur die nach 5.3.2(6) schlanken (``alle=True`` setzt sie fuer alle an).
+
+    ``stablasten`` (ein leeres dict): q wirkt auf den Balken als Streckenlast
+    im Element - Festeinspannkraefte wie eine Streckenlast des Anwenders, in
+    F eingebaut (asm.stablasten_einbauen, mit Gelenken und Versatz), und im
+    dict unter "feq" (lokale Ersatzknotenlasten je Element) und "q"
+    (Abschnitte je Element) fuer Stabendkraefte und Feld. So rechnet Theorie
+    II. Ordnung seit Verfahrensstand 74 (Runde k10d, 16.11.2026). Bis dahin
+    ging q je Element halb und halb als Knotenkraft an die Elementknoten: in
+    einem Element je Stab hoben sich diese Kraefte mit V an den Stabenden
+    auf, und die Vorkruemmung fehlte still ganz (IPE 300, 6 m, 200 kN,
+    Stabteilung 1: Mz 0 statt 11,52 kNm); in wenigen Teilen fehlte das
+    Feldmoment zwischen den Knoten (3 Teile 10,36, 5 Teile 11,11 kNm).
+    Ohne ``stablasten`` (Theorie III. Ordnung, deren Stablasten im
+    mitgehenden System fest sind) wie bisher als Knotenkraefte - dort teilt
+    statik3d.stabteilung den Stab fein genug (vorkruemmung_mindest). Auch
+    Theorie II. Ordnung teilt gedrueckte Staebe mit Ersatzimperfektionen
+    mindestens in 10 Teile (stabteilung.fein_system, Nachbesserung 2): in
+    einem Element ist die Streckenlast bei Versatz in Stabrichtung und bei
+    Federgelenken ungenau (Arm 1,0 m: 17,29 statt 13,87 kNm).
     """
     F = np.zeros(model.ndof)
     je_stab, uebersprungen, meldungen = [], [], []
+    feq_v: dict = {}
+    q_v: dict = {}
+    arm_v: dict = {}
     for name, mem in model.members.items():
         if not mem.elements:
             continue
@@ -332,26 +376,64 @@ def ersatzlasten_vorkruemmung(model: Model, res, elastisch: bool = True,
         kurve, _sec, _fy = _knicklinie(model, mem)
         e0 = e0_durch_L(kurve, elastisch) * L
         q = 8.0 * Nc * e0 / L ** 2
-        for ie in mem.elements:
+        els = [int(x) for x in mem.elements]
+        ea = model.elements[els[0]]
+        T3a, _ = asm.stab_achsen(model, ea)
+        # eine Richtung fuer den ganzen Stab: die lokale y-Achse seines
+        # ersten Elements, global. Bis Stand 73 je Element die eigene - ein
+        # umgedrehtes Element bekam q gegen die anderen (Runde k10d)
+        y_stab = np.asarray(T3a[1], float)
+        for ie in els:
             el = model.elements[ie]
             # Achsen und Laenge des Stabs (mit verschiedenem Versatz zwischen
             # den versetzten Enden, wie member_length; 12.11.2026)
             T3, Le = asm.stab_achsen(model, el)
-            ny = T3[1]                            # lokale y-Achse global
-            fk = 0.5 * q * Le
-            for nd in (int(el.nodes[0]), int(el.nodes[1])):
-                F[nd * NDOF:nd * NDOF + 3] += fk * ny
-        ea = model.elements[mem.elements[0]]
-        T3a, _ = asm.stab_achsen(model, ea)
-        na = int(ea.nodes[0])
-        nb = int(model.elements[mem.elements[-1]].nodes[-1])
+            ql = T3 @ (q * y_stab)
+            ql[0] = 0.0                           # quer zum Stab
+            if stablasten is not None and el.typ == "beam":
+                # als Streckenlast in lokalen Achsen, wie asm.element_equivalent_loads
+                # und element_distributed_loads eine Last des Anwenders
+                Lel = model.element_length(ie)
+                phy, phz = asm.stab_schubparameter(model, el, Lel)
+                feq_v[ie] = feq_v.get(ie, np.zeros(12)) + asm.trapezoid_fixed_end_forces(
+                    ql, ql, Lel, phy, phz)
+                q_v[ie] = asm.abschnitte_zusammen(q_v.get(ie), [0.0, Lel, *ql, *ql])
+                continue
+            fk = 0.5 * Le * (T3.T @ ql)           # global, je Stabende des Elements
+            for j in (0, 1):
+                _kraft_am_stabende(model, el, j, fk, F)
+        # V an den Enden des Stabs (bei umgedrehtem erstem oder letztem
+        # Element der andere Knoten) und am versetzten Stabende: mit Versatz
+        # das Moment des Arms dazu. Bis Stand 73 immer nodes[0] des ersten und
+        # nodes[-1] des letzten Elements, ohne Arm (Runde k10d)
+        from .stabteilung import _vorwaerts
+        ja = 0 if _vorwaerts(model, els, 0) else 1
+        jb = 1 if _vorwaerts(model, els, len(els) - 1) else 0
         V = 4.0 * Nc * e0 / L
-        F[na * NDOF:na * NDOF + 3] -= V * T3a[1]
-        F[nb * NDOF:nb * NDOF + 3] -= V * T3a[1]
+        _kraft_am_stabende(model, ea, ja, -V * y_stab, F)
+        _kraft_am_stabende(model, model.elements[els[-1]], jb, -V * y_stab, F)
+        if stablasten is not None:
+            # V am Arm (Versatz): fuer den Armanteil der geometrischen
+            # Steifigkeit (Nachbesserung 3, Stand 74) traegt der Arm nur
+            # Stabendkraft minus V - V steht fuer die Neigung N e_0' der
+            # vorgekruemmten Stabachse, nicht fuer eine Kraft am Arm
+            for ie_, j_ in ((els[0], ja), (els[-1], jb)):
+                el_ = model.elements[ie_]
+                if el_.typ != "beam" or bm.versatz_vektoren(getattr(el_, "exzentrizitaet", None)) is None:
+                    continue
+                T3_, _l = asm.stab_achsen(model, el_)
+                v_ = arm_v.setdefault(ie_, np.zeros(12))
+                v_[6 * j_:6 * j_ + 3] += T3_ @ (-V * y_stab)
         je_stab.append({"stab": name, "L": L, "kurve": kurve, "e0_L": e0 / L,
                         "e_0": e0, "N_Ed": Nc, "q": q, "V": V,
                         "lambda": krit.get("lambda", 0.0),
                         "grenze": krit.get("grenze", 0.0)})
+    if feq_v:
+        asm.stablasten_einbauen(model, feq_v, F)
+    if stablasten is not None:
+        stablasten["feq"] = feq_v
+        stablasten["q"] = q_v
+        stablasten["arm"] = arm_v
     aus = {"je_stab": je_stab, "uebersprungen": uebersprungen,
            "elastisch": elastisch, "anzahl": len(je_stab)}
     if meldungen:
@@ -800,7 +882,12 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
         # Elementen: Hinweis, kein geaenderter Wert (Runde k7, 14.11.2026)
         ll_hinweise = laengslast_hinweise(model, factors, getattr(system, "aktiv", None), 1,
                                           kraefte=lambda: kraefte_theorie1(model, system, factors))
-        fein = fein_system(model, system, factors)
+        # mit Ersatzimperfektionen gedrueckte Staebe mindestens in
+        # TEILUNG_VORKRUEMMUNG Teilen, auch bei Stabteilung 1 (Runde k10d,
+        # Nachbesserung 2, Stand 74): in einem Element war die Vorkruemmung
+        # bei Versatz in Stabrichtung und bei Federgelenken falsch
+        fein = fein_system(model, system, factors, vorkruemmung=bool(imperfektionen),
+                           hinweise=ll_hinweise)
         if fein is not None:
             m2, sys2, abb = fein
             res2, info = solve_theorie2(m2, factors, name, sys2, imperfektionen=imperfektionen,
@@ -876,24 +963,58 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
     while True:
         it += 1
         Fimp = np.zeros(model.ndof)
+        feq_it, q_it = feq, q
         if imperfektionen:
             Fs, s_info = ersatzlasten_schiefstellung(model, res, richtung)
+            # die Vorkruemmung als Streckenlast im Element (Verfahrensstand
+            # 74): ihre Festeinspannkraefte und Abschnitte zu denen der Lasten
+            sl_v: dict = {}
             Fv, v_info = ersatzlasten_vorkruemmung(model, res, elastisch,
-                                                   alle=alle_vorkruemmungen)
+                                                   alle=alle_vorkruemmungen, stablasten=sl_v)
             Fimp = Fs + Fv
             info.schiefstellung, info.vorkruemmung = s_info, v_info
+            if sl_v.get("feq"):
+                feq_it = dict(feq)
+                for i_, f_ in sl_v["feq"].items():
+                    feq_it[i_] = feq_it.get(i_, 0.0) + f_
+                q_it = dict(q)
+                for i_, z_ in sl_v["q"].items():
+                    q_it[i_] = asm.abschnitte_zusammen(q_it.get(i_), z_)
         Fges = F + Fimp
         # mit dem Armanteil der Staebe mit Versatz (14.11.2026): voll, die
         # Statik des gedrehten Arms wie nach Theorie III. Ordnung - der
         # symmetrische Teil in der Matrix, der schiefsymmetrische als Last aus
         # dem vorigen Schritt (die Matrix bleibt symmetrisch, ama); ohne
         # Versatz ist K_schief None und alles wie bisher
+        # Der Arm nimmt die Stabendkraft am verformten System: die des
+        # vorigen Schritts mit k + k_G (postprocess mit n_geo), im ersten
+        # Schritt die nach Theorie I. Ordnung (Runde k10d, Nachbesserung 3,
+        # Stand 74). Bis dahin nahm er die Kraft ohne k_G (asm.
+        # stab_endkraefte_linear); ihr fehlt der Querkraftanteil N theta. An
+        # einem Zwischenknoten eines geteilten Stabs mit Versatz quer, dessen
+        # Arme zu demselben Punkt der Stabachse fuehren, summieren sich die
+        # Kraefte mit k_G zu 0, die ohne k_G nicht: IPE 300, 6 m, 200 kN,
+        # Versatz y 0,1 m an beiden Enden - Mz 53,57 statt 54,07 kNm in 10
+        # Teilen, Randmoment 19,82 statt N e = 20,00 kNm; mit Vorkruemmung
+        # 64,80 statt 65,59 kNm (9,85 N/mm2 auf der unsicheren Seite)
+        # (tests/test_versatz_quer_th2_k10d.py)
+        # V der Vorkruemmung am versetzten Stabende traegt der Arm nicht
+        # (sl_v["arm"], ersatzlasten_vorkruemmung): ohne den Abzug Randmoment
+        # 19,96 statt 20,00 kNm, Mz 65,49 statt 65,59 kNm. Im ersten Schritt
+        # (res1, ohne Ersatzlasten) nichts abzuziehen
+        end_it = dict(getattr(res, "beam_end", None) or {})
+        if imperfektionen and res is not res1:
+            for i_, v_ in (sl_v.get("arm") or {}).items():
+                if i_ in end_it:
+                    end_it[i_] = np.asarray(end_it[i_], float) - v_
+        end_it = end_it or None
         if voll:
-            Kg = asm.geometric_stiffness(model, u, aktiv, n_anfang=n_anf, feq=feq)
+            Kg = asm.geometric_stiffness(model, u, aktiv, n_anfang=n_anf, feq=feq_it, endkraefte=end_it)
             K_schief = None
         else:
-            Kg = asm.geometric_stiffness(model, u, aktiv, n_anfang=n_anf, feq=feq, symmetrisch=True)
-            K_schief = asm.versatz_arm_schief(model, u, aktiv, feq)
+            Kg = asm.geometric_stiffness(model, u, aktiv, n_anfang=n_anf, feq=feq_it, symmetrisch=True,
+                                         endkraefte=end_it)
+            K_schief = asm.versatz_arm_schief(model, u, aktiv, feq_it, endkraefte=end_it)
         # dieselben Normalkraefte wie in K_g fuer die Stabendkraefte und das
         # Feld (A8, 09.11.2026: postprocess rechnet sie mit k + k_G)
         n_geo = normalkraefte_kg(model, u, aktiv, n_anf, feq)
@@ -912,7 +1033,7 @@ def solve_theorie2(model: Model, factors: dict, name: str, system=None,
         verschiebungen_eintragen(model, res, u, system.reactions(
             u, Fges, K_extra=Kg if K_schief is None else Kg + K_schief))
         auto_gehalten_abtrennen(model, getattr(system, "auto", None), res, Fges, aktiv)
-        postprocess(model, u, res, feq, q, temp, aktiv=aktiv, n_geo=n_geo)
+        postprocess(model, u, res, feq_it, q_it, temp, aktiv=aktiv, n_geo=n_geo)
         info.iterationen = it
         info.konvergenz = d / bezug
         if d / bezug < tol:

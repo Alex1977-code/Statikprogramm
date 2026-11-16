@@ -421,10 +421,37 @@ def _p_fuer(ziel, e=0.3):
     return 100e3 * a100 / ziel
 
 
+def _endkraefte_th2(m, u, feq):
+    """{Element: Stabendkraefte (12,) mit k + k_G} der Balken mit Versatz
+    (ohne Gelenke, ohne Woelbkrafttorsion) - fuer die dichte Loesung, selbst
+    gerechnet: f = k u_s - f0 + k_G(N) u_s an den versetzten Stabenden."""
+    from statik3d import assemble as asm
+    from statik3d.elements import beam3d as bm
+    aus = {}
+    for i, e in enumerate(m.elements):
+        A = asm.stab_versatz(m, e)
+        if e.typ != "beam" or A is None:
+            continue
+        kl, _T3, T, L_ = asm.beam_local(m, e)
+        ul = A @ (T @ u[asm.element_dofs(e, m)[:12]])
+        f0 = np.asarray(feq.get(i, np.zeros(12)), float)
+        sec = m.sections[e.sec]
+        N_ = asm.stab_normalkraft(m, e, u, 0.0, f0=feq.get(i))
+        aus[i] = kl @ ul - f0 + bm.kg_local_beam(N_, L_, sec.A, sec.Iy + sec.Iz) @ ul
+    return aus
+
+
 def test_theorie2_konvergenz():
     """α_cr 1,4: die Iteration mit dem schiefsymmetrischen Teil als Last
     stockte. Weg 1 das Programm, Weg 2 die dichte Lösung derselben Gleichung
-    (K + K_G(u) + K_a(u)) u = F mit der vollen Matrix je Schritt."""
+    (K + K_G(u) + K_a(u)) u = F mit der vollen Matrix je Schritt.
+
+    K_a nimmt seit Stand 74 (Runde k10d, Nachbesserung 3) die Stabendkraft
+    am verformten System, k + k_G (theorie2.solve_theorie2); die dichte
+    Lösung rechnet sie hier selbst (_endkraefte_th2). Bis dahin nahm K_a die
+    Kraft ohne k_G, und Weg 2 rechnete ebenso: φx 2,6415 statt 0,4304 mrad,
+    u_z 267,04 statt 276,96 mm (das gleichwertige Modell mit steifen Armen
+    0,4309 mrad und 276,96 mm, tests/test_versatz_quer_th2_k10d.py)."""
     from statik3d import theorie2, solver, assemble as asm
     P = _p_fuer(1.4)
     quer = {"Fy": 1e3, "Fz": 1e3}
@@ -437,7 +464,7 @@ def test_theorie2_konvergenz():
     K = sy.Kff.toarray()
     u = sy.solve(F)
     for _it in range(200):
-        Kg = asm.geometric_stiffness(m, u, feq=feq).toarray()
+        Kg = asm.geometric_stiffness(m, u, feq=feq, endkraefte=_endkraefte_th2(m, u, feq)).toarray()
         un = np.zeros(m.ndof)
         un[fi] = np.linalg.solve(K + Kg[np.ix_(fi, fi)], F[fi])
         d = np.abs(un - u).max() / np.abs(un).max()
@@ -453,11 +480,13 @@ def test_theorie2_konvergenz():
           info.gerechnet and not info.fehler and info.konvergenz < 1e-6 and rel < 1e-4
           and abs(phx / ref[3] - 1) < 1e-2,
           f"it {info.iterationen}, φx {phx * 1e3:.4f} / dicht {ref[3] * 1e3:.4f} mrad, rel {rel:.2e}")
-    # bleibt sie unkonvergiert (hier: zu wenige Schritte erlaubt), ist es ein Fehler
+    # bleibt sie unkonvergiert (hier: zu wenige Schritte erlaubt), ist es ein
+    # Fehler. Seit Stand 74 (Nachbesserung 3) konvergiert dieser Fall in 3 + 3
+    # Schritten; 2 Schritte bleiben unkonvergiert (Änderung 1,07e-5)
     m, ids = _stuetze_seitlich(0.3, P, quer=quer)
     r3, info3 = theorie2.solve_theorie2(m, {"LF1": 1.0}, "LF1", imperfektionen=False, stabteilung=False,
-                                        max_iter=3)
-    check("A4 Th II mit Versatz unkonvergiert (3 Schritte erlaubt): Fehler mit klarer Meldung, nicht gerechnet",
+                                        max_iter=2)
+    check("A4 Th II mit Versatz unkonvergiert (2 Schritte erlaubt): Fehler mit klarer Meldung, nicht gerechnet",
           not info3.gerechnet and "nicht konvergiert" in info3.fehler and "e-" not in info3.fehler,
           info3.fehler[:140])
 

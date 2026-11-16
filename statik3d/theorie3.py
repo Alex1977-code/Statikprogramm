@@ -704,7 +704,7 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
     ll_hinweise = []
     if stabteilung:
         from .stabteilung import (teilen, zurueck, teilzahlen, kraefte_theorie1, FAKTOR_THEORIE3,
-                                  laengslast_hinweise)
+                                  laengslast_hinweise, vorkruemmung_mindest, vorkruemmung_hinweise)
         gemerkt: dict = {}
 
         def _kraefte():
@@ -720,10 +720,21 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
         # Elementen: Hinweis, kein geaenderter Wert (Runde k7, 14.11.2026)
         ll_hinweise = laengslast_hinweise(model, factors, aktiv, FAKTOR_THEORIE3, kraefte=_kraefte)
         fein = None
-        if teilzahlen(model, aktiv):
+        # mit Ersatzimperfektionen: gedrueckte Staebe mindestens in
+        # TEILUNG_VORKRUEMMUNG mal FAKTOR_THEORIE3 Teilen, auch bei
+        # Stabteilung 1 - die Vorkruemmung wirkt hier als Knotenkraft an den
+        # Teilen und fehlte in einem Element still (Runde k10d, Stand 74)
+        imp = (bool(getattr(model.design, "imperfektionen", True)) if imperfektionen is None
+               else bool(imperfektionen))
+        if teilzahlen(model, aktiv) or (imp and getattr(model, "members", None)):
             kraefte = _kraefte()
             if kraefte is not None:
-                fein = teilen(model, aktiv, teilzahlen(model, aktiv, FAKTOR_THEORIE3, kraefte))
+                mindest = vorkruemmung_mindest(model, kraefte, aktiv, FAKTOR_THEORIE3) if imp else None
+                zahlen = teilzahlen(model, aktiv, FAKTOR_THEORIE3, kraefte, mindest=mindest)
+                # nicht teilbar (Versatz): Hinweis statt still ohne Vorkruemmung
+                ll_hinweise = ll_hinweise + vorkruemmung_hinweise(model, mindest, zahlen)
+                if zahlen:
+                    fein = teilen(model, aktiv, zahlen)
         if fein is not None:
             m2, abb, aktiv2 = fein
             res2, info = solve_theorie3(m2, factors, name, schritte=schritte, max_iter=max_iter,

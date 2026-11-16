@@ -2299,11 +2299,15 @@ def versatz_arm_kg(model: Model, u: np.ndarray, aktiv=None, feq: dict = None,
     return rows, cols, vals
 
 
-def versatz_arm_schief(model: Model, u: np.ndarray, aktiv=None, feq: dict = None):
+def versatz_arm_schief(model: Model, u: np.ndarray, aktiv=None, feq: dict = None,
+                       endkraefte: dict = None):
     """Der schiefsymmetrische Teil des Armanteils (:func:`versatz_arm_kg`) als
     Matrix (ndof, ndof), oder None ohne Stab mit Versatz. Die Iteration nach
-    Theorie II. Ordnung setzt ihn als Last -K_s u des vorigen Schritts an."""
-    arm = versatz_arm_kg(model, u, aktiv, feq, "schief")
+    Theorie II. Ordnung setzt ihn als Last -K_s u des vorigen Schritts an.
+    ``endkraefte`` wie bei :func:`versatz_arm_kg` (die Iteration nach Theorie
+    II. Ordnung gibt seit Stand 74 die Stabendkraefte mit k + k_G des vorigen
+    Schritts)."""
+    arm = versatz_arm_kg(model, u, aktiv, feq, "schief", endkraefte)
     if arm is None:
         return None
     n = model.ndof
