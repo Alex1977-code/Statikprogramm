@@ -375,9 +375,11 @@ def test_merkmal():
     from statik3d import rechenverfahren as rv
     from statik3d import solver
     mk = rv.merkmal("theorie3_rbe2_angehaengt")
-    check("Merkmal theorie3_rbe2_angehaengt: Stand 77, Fehlerkorrektur, 16.11.2026, VERFAHRENSSTAND 77 = höchster",
+    # Bis zur Zusammenfuehrung k10e (16.11.2026) stand hier VERFAHRENSSTAND == 77;
+    # gemeint ist wie in tests/test_gleitweg.py: Stand >= 77 und der hoechste der Tabelle
+    check("Merkmal theorie3_rbe2_angehaengt: Stand 77, Fehlerkorrektur, 16.11.2026, VERFAHRENSSTAND >= 77 = höchster",
           mk is not None and mk.wechsel[-1].stand == 77 and mk.wechsel[-1].art == rv.FEHLERKORREKTUR
-          and mk.wechsel[-1].datum == "16.11.2026" and rv.VERFAHRENSSTAND == 77
+          and mk.wechsel[-1].datum == "16.11.2026" and rv.VERFAHRENSSTAND >= 77
           and rv.VERFAHRENSSTAND == max(w.stand for x in rv.MERKMALE for w in x.wechsel),
           f"{mk and mk.wechsel} {rv.VERFAHRENSSTAND}")
     m, b, q, p = angehaengt()

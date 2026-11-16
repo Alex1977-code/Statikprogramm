@@ -379,9 +379,12 @@ def test_vorgabe():
 def test_merkmal():
     from statik3d import rechenverfahren as rv
     mk = rv.merkmal("th2_mindestteilung")
-    check("Merkmal th2_mindestteilung: Stand 76, Fehlerkorrektur, 16.11.2026, VERFAHRENSSTAND 76",
+    # Bis zur Zusammenfuehrung k10e (16.11.2026) stand hier VERFAHRENSSTAND == 76;
+    # gemeint ist wie in tests/test_gleitweg.py: Stand >= 76 und der hoechste der Tabelle
+    check("Merkmal th2_mindestteilung: Stand 76, Fehlerkorrektur, 16.11.2026, VERFAHRENSSTAND >= 76 "
+          "(höchster Stand der Tabelle)",
           mk is not None and mk.wechsel[-1].stand == 76 and mk.wechsel[-1].art == rv.FEHLERKORREKTUR
-          and mk.wechsel[-1].datum == "16.11.2026" and rv.VERFAHRENSSTAND == 76
+          and mk.wechsel[-1].datum == "16.11.2026" and rv.VERFAHRENSSTAND >= 76
           and rv.VERFAHRENSSTAND == max(w.stand for x in rv.MERKMALE for w in x.wechsel),
           f"{mk and mk.wechsel} {rv.VERFAHRENSSTAND}")
     if mk is None:
