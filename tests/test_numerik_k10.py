@@ -765,7 +765,13 @@ def test_lose_teile_ohne_masse():
                 continue
             fr = np.asarray(res.freqs, float)
             soll = min(8, len(ref))
-            ok = (len(fr) == soll and ref[0] < 1e-3 and fr[0] < solver.STARR_HZ
+            # Die Nullform der dichten Gegenrechnung entsteht als 1/nu - s mit
+            # s = 0,000001 c; ihr Rundungsrest haengt von der Zerlegung ab
+            # (Gesamtlauf 985f0713 mit vier Arbeitern: 0,00348 Hz). Fuer beide
+            # Seiten gilt deshalb dieselbe Schwelle wie im Programm
+            # (solver.STARR_HZ, 0,01 Hz); die uebrigen Formen bleiben auf
+            # relativ 0,000001 verglichen.
+            ok = (len(fr) == soll and ref[0] < solver.STARR_HZ and fr[0] < solver.STARR_HZ
                   and np.allclose(fr[1:], ref[1:soll], rtol=1e-6))
             check(f"{was}: eine Starrkörperform (0 Hz), übrige gleich der dichten Gegenrechnung (relativ 0,000001)",
                   ok and res.info.get("starrkoerper") == 1, f"{np.round(fr, 5)} / {np.round(ref[:soll], 5)}")
