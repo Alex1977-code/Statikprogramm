@@ -257,12 +257,37 @@ def test_schwingung():
 def test_theorie3():
     from statik3d.theorie3 import starre_kopplung_sperre, solve_theorie3
     from statik3d import solver
+    # Zusammenfuehrung k10 (16.11.2026): Hier stand „abgewiesen wie die
+    # Gegenrechnung“ - ohne Last an Q. Theorie III. Ordnung entscheidet seit
+    # fix/k10-th3 (Stand 66, theorie3._th3_wirkung) ueber den Anschluss eines
+    # Stabendes danach, ob die Koerperseite etwas haelt oder traegt. An Q ohne
+    # Element, Last und Lager traegt die starre Kopplung nichts: Theorie III.
+    # Ordnung rechnet w(b) = w(Q) = F L³/(3 E I) wie Theorie I. Ordnung und
+    # Gegenrechnung, unter jeder Maske - eine Abweisung waere falsch (Fehlerbegriff:
+    # falsche Abweisung eines rechenbaren Modells). Geprueft wird darum, dass sie
+    # rechnet und dabei Hand und Theorie I. Ordnung trifft; mit Last an Q
+    # (unten) weist sie weiter ab.
+    from statik3d.theorie3 import kopplung_sperre
     for maske in ("geloescht", "keine") + MASKEN:
         m, b, q = fall_q(maske)
+        m.load_node(b, Fz=-F, case="LF1")
         aktiv = np.ones(len(m.elements), bool) if maske == "eins" else _aktiv(m, maske)
-        t = starre_kopplung_sperre(m, aktiv)
-        check(f"Th III starre Kopplung „Stabende“ an Q ohne Element, Maske {maske}: abgewiesen wie die "
-              "Gegenrechnung", TEXT_KP in t, t[:90])
+        t = starre_kopplung_sperre(m, aktiv) + kopplung_sperre(m, aktiv, factors={"LF1": 1.0})
+        an = _still(solver.solve_all, m, workers=1, design=False)
+        u1 = np.asarray(an.cases["LF1"].u).reshape(-1, 6)
+        try:
+            r3, _info = _still(solve_theorie3, m, {"LF1": 1.0}, "LF1", imperfektionen=False, aktiv=aktiv)
+            u3 = np.asarray(r3.u).reshape(-1, 6)
+            w3 = (-u3[b, 2], -u3[q, 2])
+        except Exception as ex:          # noqa: BLE001
+            w3 = (float("nan"), float("nan"))
+            print(f"     Th III {maske}: {type(ex).__name__}: {str(ex)[:160]}")
+        check(f"Th III starre Kopplung „Stabende“ an Q ohne Element, ohne Last, Maske {maske}: nicht abgewiesen, "
+              "w(b) und w(Q) = Hand = Theorie I. Ordnung",
+              not t and all(abs(w - HAND) <= 1e-6 * HAND for w in w3)
+              and abs(-u1[b, 2] - HAND) <= 1e-6 * HAND and abs(-u1[q, 2] - HAND) <= 1e-6 * HAND,
+              f"„{t[:60]}“ Th III {w3[0] * 1e3:.6f}/{w3[1] * 1e3:.6f} mm, Th I {-u1[b, 2] * 1e3:.6f}/"
+              f"{-u1[q, 2] * 1e3:.6f} mm")
     # ueber den Einstieg: kein Ergebnis nach Theorie III. Ordnung mit weicher Feder
     for maske in ("keine", "eins", "aus"):
         m, b, q = fall_q(maske)
@@ -417,9 +442,11 @@ def test_merkmal():
     from statik3d import rechenverfahren as rv
     from statik3d import solver
     mk = rv.merkmal("maske_stabende_kopplung")
-    check("Merkmal maske_stabende_kopplung: Stand 71, Fehlerkorrektur, fix/k10-maske2, VERFAHRENSSTAND = 71",
+    check("Merkmal maske_stabende_kopplung: Stand 71, Fehlerkorrektur, fix/k10-maske2, VERFAHRENSSTAND >= 71 "
+          "und der hoechste der Tabelle",
           mk is not None and mk.wechsel[-1].stand == 71 and mk.wechsel[-1].art == rv.FEHLERKORREKTUR
-          and mk.wechsel[-1].commit == "fix/k10-maske2" and rv.VERFAHRENSSTAND == 71,
+          and mk.wechsel[-1].commit == "fix/k10-maske2" and rv.VERFAHRENSSTAND >= 71
+          and rv.VERFAHRENSSTAND == max(w.stand for x in rv.MERKMALE for w in x.wechsel),
           f"{mk and mk.wechsel} {rv.VERFAHRENSSTAND}")
     if mk is None:
         return

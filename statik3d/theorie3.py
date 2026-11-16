@@ -932,6 +932,14 @@ def _th3_wirkung(model: Model, aktiv, alt: bool = False, factors: dict = None) -
 
     Bis Runde k10 (15.11.2026) brauchte der Anschluss in jedem Fall einen
     mittragenden Koerperknoten (``alt=True``, wie situationen.kopplung_bleibt).
+    ``alt=True`` ist die Regel des Programms bis Stand 65 im Ganzen: dazu
+    zaehlt ein Lagerknoten nur, wenn im ganzen Modell kein Element an ihm
+    haengt (vor Stand 67, fix/k10-maske). Sonst verglichen die Merkmale
+    theorie3_stabende_anschluss und maske_stabende_kopplung mit einem Stand,
+    den es nie gab, und eine Ergebnisdatei vom Stand 65 mit still falschem
+    Wert galt als gueltig (Zusammenfuehrung k10, 16.11.2026: RBE3 „Stabende“
+    an einem gelagerten, abgeschalteten Stab und die Kette ueber einen RBE2
+    an einen gelagerten Knoten eines abgeschalteten Stabs).
     Zwei Luecken: (a) Kopplung „Stabende“ Kragarmende b - Knoten Q ohne
     Element, daran per RBE2 der Lastknoten P, ohne Situation: Theorie I.
     Ordnung (alle Kopplungen wirken) w(b) = 0,5357 mm, Theorie III. Ordnung
@@ -957,10 +965,14 @@ def _th3_wirkung(model: Model, aktiv, alt: bool = False, factors: dict = None) -
     # Gegenrechnung mit geloeschten Elementen ist er einer ohne Element (wie
     # situationen._lagerknoten_ohne_element); bis dahin zaehlte er nicht, und
     # eine starre Kopplung an ihm entging der Sperre.
+    gelagert = np.zeros(nn, dtype=bool)
     for sp in (getattr(model, "supports", None) or []):
         n = int(sp.node)
         if 0 <= n < nn:
-            kn[n] = True
+            gelagert[n] = True
+    if alt:
+        gelagert &= ~np.asarray(aktive_knoten(model, np.ones(ne, dtype=bool)), bool)
+    kn |= gelagert
     sk_liste = list(getattr(model, "starrkoerper", None) or [])
     kopp = list(getattr(model, "kopplungen", None) or [])
     # je Starrkoerper/Kopplung: (Stabende-Seite, Koerperseite, alle Knoten) -

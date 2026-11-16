@@ -300,7 +300,12 @@ def test_merkmal():
     check("Merkmal versatz_arm_endkraft_th2: Stand 74, Fehlerkorrektur",
           mk is not None and mk.wechsel[-1].stand == 74 and mk.wechsel[-1].art == rv.FEHLERKORREKTUR,
           f"{mk and mk.texte}")
-    check("Verfahrensstand 74", rv.VERFAHRENSSTAND == 74, f"{rv.VERFAHRENSSTAND}")
+    # Zusammenfuehrung k10 (16.11.2026): der Stand des Programms reicht den
+    # Wechsel ein und ist der hoechste der Tabelle (spaetere Staende kommen dazu)
+    check("Verfahrensstand mindestens 74 und der hoechste der Tabelle",
+          rv.VERFAHRENSSTAND >= 74
+          and rv.VERFAHRENSSTAND == max(w.stand for x in rv.MERKMALE for w in x.wechsel),
+          f"{rv.VERFAHRENSSTAND}")
     if mk is not None:
         check("Merkmal versatz_arm_endkraft_th2: Modell mit Versatz betroffen, ohne Versatz nicht",
               mk.betrifft(stab(e_y=0.1)) and not mk.betrifft(stab()), "")
