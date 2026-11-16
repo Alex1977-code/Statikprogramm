@@ -44,9 +44,11 @@ Federnde Kopplungen rechnet es mit.
 """
 from __future__ import annotations
 
+import functools
 import math
 import time
 from dataclasses import dataclass, field
+from fractions import Fraction
 
 import numpy as np
 from scipy import sparse
@@ -670,20 +672,32 @@ def _nur_staebe(model: Model, aktiv) -> bool:
 
 
 # Rest, bis zu dem sich die Lastbeitraege an einem Knoten als aufgehoben
-# gelten (Rundung der Faktoren, z. B. 0,1 und 0,3): _LAST_REST je Beitrag mal
-# die Betragssumme der Beitraege, hoechstens aber _LAST_REST_MAX (N bzw. Nm).
-# Die Summe von n Beitraegen (je ein Produkt Faktor mal Last) rundet um
-# hoechstens etwa n * 2,2e-16 der Betragssumme; die Schranke
-# 4 * n * 2,2e-16 liegt mit Abstand darueber und bleibt auf Rundungsniveau.
-# Ein groesserer Rest ist eine echte Last, die auch der Lastvektor von
-# Theorie I. Ordnung aufloest. Bis zur Runde k10d (16.11.2026) war die
-# Schranke 1e-9 der Betragssumme: an einem weichen Kragarm (L = 10 m,
-# I = 1e-6 m^4, 1 N am Ende) mit -1e7 N / +1e7 N und einem Rest von 0,0009 N
-# am Slave eines RBE3 „Stabende“ lag sie bei 0,001 N, und Theorie III.
-# Ordnung rechnete still 1,587302 statt 1,588730 mm. Mit 1e-13 der
-# Betragssumme (erster Stand der Runde k10d) blieb dasselbe ab einer
-# Betragssumme von 1e10 N (±5e9 N, Gegenpruefung 1 zu k10d).
-_LAST_REST = 4.0 * 2.2e-16
+# gelten (Rundung der Faktoren, z. B. 0,1 und 0,3). Die Summe der Produkte
+# Faktor mal Last (bzw. Masse mal Faktor mal g) wird exakt gebildet
+# (fractions.Fraction); unsicher ist dann nur noch die Darstellung der
+# Eingaben, die nicht genau ihr Dezimalwert sind (0,1, 1,35, 9,81, 0,0009 -
+# nicht 1,0, 0,5 oder 3e12): eine eingetippte Zahl (bis 15 Stellen) weicht
+# hoechstens _LAST_EPS (halbe Stelle, 2^-53) relativ von ihrem Dezimalwert
+# ab, eine errechnete (16 oder 17 Stellen, z. B. 0,30000000000000004) mit
+# _LAST_GEWICHT_LANG gewichtet, weil sie mehrfach gerundet sein kann. Die
+# Schranke ist das Doppelte dieser Unsicherheit, summiert ueber die
+# Beitraege, hoechstens _LAST_REST_MAX (N bzw. Nm). Ein groesserer Rest ist
+# eine echte Last, die auch der Lastvektor von Theorie I. Ordnung aufloest.
+# Ab einer Betragssumme von etwa 1e12 N erreicht die Schranke die Kappung;
+# dort sind Rest und Rundung nicht mehr zu trennen, und ein Rest ueber
+# 0,001 N zaehlt (Abweisung statt stiller Rechnung).
+#
+# Bis zur Runde k10d (16.11.2026) war die Schranke 1e-9 der Betragssumme: an
+# einem weichen Kragarm (L = 10 m, I = 1e-6 m^4, 1 N am Ende) mit
+# -1e7 N / +1e7 N und einem Rest von 0,0009 N am Slave eines RBE3 „Stabende“
+# lag sie bei 0,001 N, und Theorie III. Ordnung rechnete still 1,587302 statt
+# 1,588730 mm. Mit 1e-13 der Betragssumme (erster Stand der Runde k10d)
+# blieb dasselbe ab einer Betragssumme von 1e10 N (±5e9 N, Gegenpruefung 1
+# zu k10d), mit 4 * n * 2,2e-16 der Betragssumme bei n Beitraegen
+# (Nachbesserung 1) ab ±2e11 N einzeln bzw. ±5e10 N auf 10 + 10 Beitraege
+# verteilt (Gegenpruefung 2 zu k10d).
+_LAST_EPS = 2.0 ** -53
+_LAST_GEWICHT_LANG = 4.0
 _LAST_REST_MAX = 1e-3
 
 # Abschluss auf Rundungsniveau (solve_theorie3): die Newton-Korrektur unter
@@ -712,11 +726,12 @@ def _lastknoten(model: Model, nn: int, factors: dict = None) -> np.ndarray:
     ohne Last an Q wurde abgewiesen, weil LF2 nach Theorie I. Ordnung dort
     Last hat (richtig 0,5357 mm wie Theorie I. Ordnung und Hand).
 
-    Ein Knoten zaehlt nur, wenn die Summe in einer Komponente groesser ist als
-    _LAST_REST mal die Zahl und die Betragssumme der Beitraege. Bis zur Gegenpruefung
-    zu k10b wurde exakt mit null verglichen: LK1 = LF1 + 0,1 LF2 + 0,3 LF3 mit
-    -3 N an Q in LF2 und +1 N in LF3 (Rest -5,55e-17 N) wurde abgewiesen,
-    obwohl Theorie I. Ordnung w(b) = 0,535714 mm = Hand ergibt.
+    Ein Knoten zaehlt nur, wenn die exakte Summe der Produkte in einer
+    Komponente groesser ist als die Rundung der Eingaben (:func:`_rest_zaehlt`).
+    Bis zur Gegenpruefung zu k10b wurde exakt mit null verglichen: LK1 = LF1
+    + 0,1 LF2 + 0,3 LF3 mit -3 N an Q in LF2 und +1 N in LF3 (Rest
+    -5,55e-17 N) wurde abgewiesen, obwohl Theorie I. Ordnung w(b) =
+    0,535714 mm = Hand ergibt.
 
     Die Schranke ist zudem auf _LAST_REST_MAX = 0,001 N bzw. Nm begrenzt.
     Bis zur zweiten Gegenpruefung zu k10b galt nur die relative Schranke:
@@ -736,32 +751,99 @@ def _lastknoten(model: Model, nn: int, factors: dict = None) -> np.ndarray:
         gruppen = [[(lcs[n], float(f)) for n, f in factors.items() if f and n in lcs]]
     out = np.zeros(nn, dtype=bool)
     for gruppe in gruppen:
-        S = np.zeros((nn, 6))
-        A = np.zeros((nn, 6))               # Betragssumme der Beitraege
-        Z = np.zeros((nn, 6))               # Zahl der Beitraege
+        # je Knoten die Beitraege als Eingaben (Faktor, Last) bzw. (Faktor,
+        # Masse, g) - das Produkt ist der Beitrag
+        eingaben = []
         for lc, f in gruppe:
             for ld in (getattr(lc, "nodal_loads", None) or []):
                 n = int(ld.node)
                 if 0 <= n < nn:
-                    beitrag = f * np.asarray(ld.F, float)[:6]
-                    S[n] += beitrag
-                    A[n] += np.abs(beitrag)
-                    Z[n] += beitrag != 0.0
+                    F = np.zeros(6)
+                    w = np.asarray(ld.F, float).ravel()[:6]
+                    F[:len(w)] = w
+                    eingaben.append((n, (f,), F))
             # gravity ist eine Liste oder ein numpy-Feld (Model.set_gravity,
             # Model.gravity); ``Feld or Liste`` waere mehrdeutig (ValueError)
             g_lc = getattr(lc, "gravity", None)
-            g = f * (np.zeros(3) if g_lc is None
-                     else np.asarray(g_lc, float).ravel()[:3])
+            g = np.zeros(6)
+            if g_lc is not None:
+                w = np.asarray(g_lc, float).ravel()[:3]
+                g[:len(w)] = w
             if np.any(g):
                 for p in pm:
-                    beitrag = float(p.masse) * g
-                    S[int(p.node), :3] += beitrag
-                    A[int(p.node), :3] += np.abs(beitrag)
-                    Z[int(p.node), :3] += beitrag != 0.0
-        # Heben sich die Beitraege einer Kombination bis auf Rundung auf
-        # (0,1 * (-3 N) + 0,3 * 1 N = -5,55e-17 N), traegt der Knoten nichts.
-        out |= np.any(np.abs(S) > np.minimum(_LAST_REST * Z * A, _LAST_REST_MAX), axis=1)
+                    eingaben.append((int(p.node), (f, float(p.masse)), g))
+        # Vorauswahl in Gleitkomma: S weicht von der exakten Summe hoechstens
+        # um (Z + 2) halbe Stellen der Betragssumme A ab
+        S = np.zeros((nn, 6))
+        A = np.zeros((nn, 6))
+        Z = np.zeros((nn, 6))
+        with np.errstate(over="ignore", invalid="ignore"):
+            for n, vor, w in eingaben:
+                beitrag = math.prod(vor) * w
+                S[n] += beitrag
+                A[n] += np.abs(beitrag)
+                Z[n] += beitrag != 0.0
+            sicher = (Z == 1) | (np.abs(S) > _LAST_REST_MAX + 2.0 * (Z + 2.0) * _LAST_EPS * A) | ~np.isfinite(S)
+        out |= np.any(sicher & (Z > 0), axis=1)
+        # Knoten nahe der Aufhebung: exakt (:func:`_rest_zaehlt`)
+        offen = np.any((Z > 1) & ~sicher, axis=1) & ~out
+        if not offen.any():
+            continue
+        beitraege = {}
+        for n, vor, w in eingaben:
+            if offen[n]:
+                beitraege.setdefault(n, []).append([vor + (float(x),) for x in w])
+        for n, liste in beitraege.items():
+            for c in range(6):
+                if _rest_zaehlt([b[c] for b in liste]):
+                    out[n] = True
+                    break
     return out
+
+
+@functools.lru_cache(maxsize=4096)
+def _darstellung(x: float) -> float:
+    """Gewicht der Darstellungsunsicherheit einer Eingabe ``x`` in Vielfachen
+    von :data:`_LAST_EPS`: 0, wenn ``x`` genau der Dezimalwert ist, den es
+    zeigt (1,0, 0,5, 3e12); 1 fuer eine eingetippte Zahl bis 15 Stellen
+    (0,1, 1,35, 9,81, 0,0009); :data:`_LAST_GEWICHT_LANG` fuer eine
+    errechnete mit 16 oder 17 Stellen (0,30000000000000004)."""
+    r = repr(float(x))
+    if Fraction(float(x)) == Fraction(r):
+        return 0.0
+    stellen = r.lstrip("-").split("e")[0].replace(".", "").strip("0")
+    return 1.0 if len(stellen) <= 15 else _LAST_GEWICHT_LANG
+
+
+def _rest_zaehlt(beitraege: list) -> bool:
+    """Ob die Beitraege einer Komponente an einem Knoten - je ein Tupel von
+    Eingaben, deren Produkt der Beitrag ist - eine Last ergeben, die nicht
+    nur Rundung ist (:data:`_LAST_EPS`, :data:`_LAST_REST_MAX`).
+
+    Die Summe der Produkte wird exakt gebildet. Unsicher ist nur die
+    Darstellung der Eingaben, die nicht genau ihr Dezimalwert sind
+    (:func:`_darstellung`, relativ zum Produkt). Die Schranke ist das
+    Doppelte dieser Unsicherheit, hoechstens 0,001 N bzw. Nm. Dezimal genau
+    aufgehobene Lasten (0,1 * (-3 N) + 0,3 * 1 N) bleiben so aufgehoben; ein
+    Rest von 0,0009 N neben ±1e12 N (Faktor 1,0 oder 1,35) bleibt eine
+    Last."""
+    # ein Beitrag mit einer Eingabe null ist genau null
+    produkte = [(e, math.prod(e)) for e in beitraege if all(x != 0.0 for x in e)]
+    if not produkte:
+        return False
+    if any(not math.isfinite(x) for e, _p in produkte for x in e):
+        return True
+    if len(produkte) == 1:
+        return True
+    rest = Fraction(0)
+    unsicher = 0.0
+    for e, p in produkte:
+        q = Fraction(1)
+        for x in e:
+            q *= Fraction(x)
+        rest += q
+        unsicher += abs(p) * sum(_darstellung(x) for x in e)
+    return abs(rest) > min(2.0 * _LAST_EPS * unsicher, _LAST_REST_MAX)
 
 
 def _ankerknoten(model: Model, nn: int, factors: dict = None) -> np.ndarray:

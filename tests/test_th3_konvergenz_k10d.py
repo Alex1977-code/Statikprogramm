@@ -12,6 +12,11 @@ Runde k10d (16.11.2026), Theorie III. Ordnung: Restschranke und Konvergenz.
     1e10 N erreichte 1e-13 der Betragssumme die Kappung, und 0,0009 N gingen
     wieder still verloren. Jetzt 4 * n * 2,2e-16 der Betragssumme bei n
     Beitraegen, hoechstens 0,001 N.
+    Nachbesserung 2 (Gegenpruefung 2 zu k10d): diese Schranke lag etwa
+    achtfach ueber der Rundung; ab ±2e11 N (einzeln) bzw. ±5e10 N (auf
+    10 + 10 Beitraege verteilt) gingen 0,0009 N wieder still verloren. Jetzt
+    exakte Summe der Produkte und eine Schranke nur aus der Darstellung der
+    nicht exakt darstellbaren Eingaben (Faktor 0,1, Last 0,0009 N, g 9,81).
 (b) Am Kragarm L = 10 m, A = 1e-3 m², I = 1e-6 m⁴ meldete Theorie III.
     Ordnung bei F = 0,1 N „keine Konvergenz“ (Theorie I. Ordnung und Hand
     0,158730 mm), mit Koordinaten um 100 km schon bei 0,001 N. Ursache: die
@@ -642,7 +647,126 @@ def test_e_merkmal():
           mk.betrifft(mit("I", "feder")) is False and mk.betrifft(mit("III", "stummel")) is False)
 
 
-TESTS = [test_a_restschranke, test_a_grosse_betragssumme, test_b_kleine_last, test_c_ipe_vorverformung, test_c_hallenreihe,
+def _weich_verteilt(gross, k, rest, faktor=1.0):
+    """Weicher Kragarm, ±gross an c auf k + k Beitraege verteilt, Faktor je Beitrag."""
+    m, b = weich("III", gross, rest)
+    c = m.load_cases["LF2"].nodal_loads[0].node
+    fak = {"LF1": 1.0, "LF2": faktor, "LF3": faktor, "LF4": 1.0}
+    m.load_cases["LF2"].nodal_loads[0].F = [0.0, 0.0, -gross / k, 0.0, 0.0, 0.0]
+    m.load_cases["LF3"].nodal_loads[0].F = [0.0, 0.0, gross / k, 0.0, 0.0, 0.0]
+    for j in range(1, k):
+        for nm, sg in (("A%d" % j, -1.0), ("B%d" % j, 1.0)):
+            m.add_load_case(nm)
+            m.load_node(c, Fz=sg * gross / k, case=nm)
+            fak[nm] = faktor
+    m.combinations["LK1"].factors = dict(fak)
+    return m, b, fak
+
+
+def test_a_exakte_summe():
+    """Gegenpruefung 2 zu k10d: mit 4 * n * 2,2e-16 der Betragssumme ging ein
+    Rest von 0,0009 N ab ±2e11 N (einzeln) bzw. ±5e10 N (auf 10 + 10
+    Beitraege verteilt) wieder still verloren (Theorie III. Ordnung 1,587302
+    statt 1,588730 mm). Jetzt exakte Summe der Produkte, Schranke nur aus der
+    Darstellung der nicht exakt darstellbaren Eingaben."""
+    from statik3d import rechenverfahren as rv
+    from statik3d.theorie3 import kopplung_sperre
+    mk = rv.merkmal("theorie3_stabende_anschluss")
+    faelle = [(g, 1, 0.0009, 1.0) for g in (2e11, 3e11, 5e11, 1e12, 3e12)]
+    faelle += [(2e11, 1, 0.0007, 1.0), (5e10, 10, 0.0009, 1.0), (1e12, 1, 0.0009, 1.35),
+               (1e11, 10, 0.0009, 1.35)]
+    for gross, k, rest, faktor in faelle:
+        hand = (1.0 + rest) * FLEX_W
+        m, b, fak = _weich_verteilt(gross, k, rest, faktor)
+        m.combinations["LK1"].theorie = "I"
+        r1, _f = _rechne(m)
+        w1 = -np.asarray(r1.u).reshape(-1, 6)[b, 2]
+        txt = f"(a) ±{gross:.0f} N auf {k} + {k} Beitraege, Faktor {faktor}, Rest {rest} N"
+        check(f"{txt}: Theorie I. Ordnung loest den Rest auf (naeher an der Hand als ohne Rest)",
+              abs(w1 - hand) < abs(w1 - FLEX_W), f"{w1 * 1e3:.6f} mm, Hand {hand * 1e3:.6f} mm")
+        m, b, fak = _weich_verteilt(gross, k, rest, faktor)
+        t = kopplung_sperre(m, None, factors=fak)
+        r3, f3 = _rechne(m)
+        w3 = -np.asarray(r3.u).reshape(-1, 6)[b, 2] if r3 is not None else float("nan")
+        check(f"… Theorie III. Ordnung weist ab statt still ohne Rest zu rechnen "
+              f"(stille Abweichung waere {rest * FLEX_W * 1e3:.6f} mm)",
+              TEXT_KP in t and TEXT_KP in f3, f"{t[:40]!r} {f3[:40]!r} {w3 * 1e3:.6f} mm")
+        check("… Merkmal theorie3_stabende_anschluss betrifft",
+              mk.betrifft(_weich_verteilt(gross, k, rest, faktor)[0]) is True)
+    # Gegenproben: Reste aus der Rundung dezimal aufgehobener Summen bleiben
+    # aufgehoben, auch bei grossen Lasten und mit Punktmasse unter g
+    for gross, f2, f3_, last2, last3 in ((1e12, 0.1, 0.3, -3.0, 1.0), (3e12, 0.1, 0.3, -3.0, 1.0),
+                                         (1e11, 1.35, 0.45, -1.0, 3.0), (7e11, 0.7, 0.35, 1.0, -2.0),
+                                         (1e12, 1.35, 1.35, -1.0, 1.0)):
+        m, b = weich("III", 1.0, 0.0)
+        m.load_cases["LF2"].nodal_loads[0].F = [0.0, 0.0, last2 * gross, 0.0, 0.0, 0.0]
+        m.load_cases["LF3"].nodal_loads[0].F = [0.0, 0.0, last3 * gross, 0.0, 0.0, 0.0]
+        faktoren = {"LF1": 1.0, "LF2": f2, "LF3": f3_, "LF4": 1.0}
+        m.combinations["LK1"].factors = dict(faktoren)
+        S = f2 * last2 * gross + f3_ * last3 * gross
+        t = kopplung_sperre(m, None, factors=faktoren)
+        r3, f3 = _rechne(m)
+        w3 = -np.asarray(r3.u).reshape(-1, 6)[b, 2] if r3 is not None else float("nan")
+        check(f"(a) Gegenprobe {f2} * {last2 * gross:.0f} N + {f3_} * {last3 * gross:.0f} N (Rest {S:.3g} N, "
+              "Rundung): nicht abgewiesen, w(b) = Hand", not t and not f3 and abs(w3 - FLEX_W) <= 1e-5 * FLEX_W,
+              f"{t[:40]!r} {f3[:40]!r} {w3 * 1e3:.6f} mm")
+    from decimal import Decimal
+    for masse, f in ((101.94, 1.35), (1234.567, 1.0), (3.3e9, 0.9)):
+        m, b = weich("III", 1.0, 0.0)
+        c = m.load_cases["LF2"].nodal_loads[0].node
+        m.load_cases["LF2"].nodal_loads = []
+        m.load_cases["LF3"].nodal_loads = []
+        m.add_punktmasse(c, masse)
+        m.set_gravity(-9.81, case="LF2")
+        m.load_node(c, Fz=float(Decimal(repr(masse)) * Decimal("9.81")), case="LF3")
+        faktoren = {"LF1": 1.0, "LF2": f, "LF3": f, "LF4": 1.0}
+        m.combinations["LK1"].factors = dict(faktoren)
+        t = kopplung_sperre(m, None, factors=faktoren)
+        r3, f3 = _rechne(m)
+        w3 = -np.asarray(r3.u).reshape(-1, 6)[b, 2] if r3 is not None else float("nan")
+        check(f"(a) Gegenprobe Punktmasse {masse} kg unter g = 9,81, aufgehoben durch {masse} * 9,81 N, "
+              f"Faktor {f}: nicht abgewiesen, w(b) = Hand", not t and not f3 and abs(w3 - FLEX_W) <= 1e-5 * FLEX_W,
+              f"{t[:40]!r} {f3[:40]!r} {w3 * 1e3:.6f} mm")
+    # Zufallskombinationen mit dezimal genau aufgehobenen Lasten (wie die
+    # Gegenpruefung, q_schranke.py): bei Betragssummen unter 1e12 N nie ein
+    # Lastknoten, mit 0,0009 N Rest unter 5e11 N immer einer. Darueber
+    # erreicht die Schranke (bis zu 1,1e-15 der Betragssumme, wenn die
+    # letzte Last 17 Stellen hat) die Kappung 0,001 N bzw. den Rest, und Rest
+    # und Rundung sind nicht mehr zu trennen
+    import random
+    from types import SimpleNamespace as NS
+    from statik3d.theorie3 import _lastknoten
+    D = Decimal
+    random.seed(7)
+    fk = ["0.1", "0.3", "0.7", "1.35", "1.5", "0.9", "0.6", "1.05", "0.8", "0.15", "0.35", "1.1", "1", "1.2"]
+    falsch_auf = falsch_ab = 0
+    for _ in range(3000):
+        n = random.randint(2, 12)
+        fs = [random.choice(fk) for _ in range(n)]
+        ls = [D(random.randint(1, 10 ** 6)) / D(random.choice([1, 10, 100, 1000])) * D(10) ** random.randint(-3, 8)
+              * random.choice([-1, 1]) for _ in range(n - 1)]
+        s = sum(D(f) * x for f, x in zip(fs[:-1], ls))
+        ls.append(-s / D(fs[-1]))
+        for rest in (0.0, 0.0009):
+            lcs, fak = {}, {}
+            for j, (f, x) in enumerate(zip(fs, ls)):
+                lcs["L%d" % j] = NS(nodal_loads=[NS(node=0, F=[0.0, 0.0, float(x), 0.0, 0.0, 0.0])], gravity=None)
+                fak["L%d" % j] = float(f)
+            if rest:
+                lcs["R"] = NS(nodal_loads=[NS(node=0, F=[0.0, 0.0, rest, 0.0, 0.0, 0.0])], gravity=None)
+                fak["R"] = 1.0
+            ist = bool(_lastknoten(NS(load_cases=lcs, punktmassen=[]), 1, fak)[0])
+            summe = sum(abs(float(f) * float(x)) for f, x in zip(fs, ls))
+            if not rest and ist and summe < 1e12:
+                falsch_auf += 1
+            if rest and not ist and summe < 5e11:
+                falsch_ab += 1
+    check("(a) 3000 Zufallskombinationen: dezimal aufgehobene Summen nie Lastknoten, Rest 0,0009 N "
+          "immer (Betragssumme unter 1e12 bzw. 5e11 N)", falsch_auf == 0 and falsch_ab == 0,
+          f"aufgehoben als Last {falsch_auf}, Rest uebersehen {falsch_ab}")
+
+
+TESTS = [test_a_restschranke, test_a_grosse_betragssumme, test_a_exakte_summe, test_b_kleine_last, test_c_ipe_vorverformung, test_c_hallenreihe,
          test_d_kurze_elemente, test_e_torsionsfeder, test_e_torsionsgelenk, test_e_symmetrie, test_e_merkmal,
          test_e_federn_konvergieren]
 
