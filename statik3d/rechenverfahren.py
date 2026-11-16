@@ -2486,6 +2486,12 @@ def _maske_kette_masken(model) -> list:
       Lastfall und je Kombination mit Sollkraft (direkt gerechnet: Kombinationen
       mit mehreren Gruppen). Dort zaehlen nur die Kopplungen; das Kraeftepaar
       rechnet vorspannkraft._stablast mit der Maske der Situation.
+    * je Schwingungsnachweis (Model.schwingungen) die Maske der Situation
+      seines Wasserdruck-Generierers (schwingung.nachweis rechnet die
+      Eigenformen dort, solve_modal mit der Maske), unter dem Namen
+      :func:`schwingung_schluessel`. Dort zaehlen nur die Kopplungen - die
+      Massenmatrix maskiert die Punktmassen nicht (seit Runde k10,
+      15.11.2026; bis dahin erkannte das Merkmal die Schwingung nicht).
 
     Gleiche Masken stehen einmal darin, mit allen ihren Lastfaellen."""
     import numpy as np
@@ -2516,6 +2522,12 @@ def _maske_kette_masken(model) -> list:
     for sit in [""] + list(getattr(model, "situationen", None) or {}):
         dazu(maske_sit(sit), {str(n) for n, lc in lcs.items() if str(getattr(lc, "situation", "") or "") == sit},
              False)
+    # Schwingungsnachweise: Eigenformen in der Situation ihres Wasserdruck-Generierers
+    wds = getattr(model, "wasserdruecke", None) or {}
+    for name, sn in (getattr(model, "schwingungen", None) or {}).items():
+        wd = wds.get(str(getattr(sn, "wasserdruck", "") or ""))
+        if wd is not None:
+            dazu(maske_sit(str(getattr(wd, "situation", "") or "")), {schwingung_schluessel(name)}, True)
     # Spannschritt: Lastfaelle mit Sollkraft, dazu die Kombinationen aus ihnen
     mit_soll = set()
     faelle = []
@@ -2575,14 +2587,61 @@ def _maske_kette_lastfaelle(model) -> set:
     Gegenpruefung vom 15.11.2026 nur die Masken der Situationen, nicht die des
     Spannschritts (Anker mit Sollkraft 100 kN, Ende per Federkopplung an einem
     Knoten ohne Element, der per RBE2 am Koerper haengt: Stand 64 76 775 N
-    statt 100 000 N mit „Mechanismus“, das Merkmal sagte „nicht betroffen“)."""
+    statt 100 000 N mit „Mechanismus“, das Merkmal sagte „nicht betroffen“).
+
+    Seit Runde k10 (15.11.2026) auch die Schwingungsnachweise in einer
+    Situation (unter :func:`schwingung_schluessel`), und verglichen wird mit der
+    Maske bis Stand 66 (situationen.huelle mit ``bis_66``), damit dieses
+    Merkmal nur den Wechsel von Stand 65 meldet; den von Stand 67 meldet
+    :func:`_maske_lager_lastfaelle`."""
+    from .situationen import huelle
+
+    def alt(model_, aktiv, kn):
+        return _wirksame_knoten_bis_64(model_, aktiv, kn)
+
+    def neu(model_, aktiv, kn):
+        return huelle(model_, aktiv, kn, bis_66=True)
+
+    return _maske_vergleich(model, alt, neu)
+
+
+def _maske_lager_lastfaelle(model) -> set:
+    """Lastfaelle und Schwingungsnachweise (:func:`schwingung_schluessel`), deren
+    Ergebnis die Maske des Stands 67 aendern kann (Runde k10, 15.11.2026): ein
+    Lagerknoten, an dem nur abgeschaltete Elemente haengen, traegt mit, und die
+    verteilende Kopplung eines Stabendes mit Slaves ohne Element loest ueber den
+    Master aus (situationen.wirksame_knoten gegen situationen.huelle mit
+    ``bis_66``) - eine Kopplung, die seither bleibt, oder eine Knotenlast bzw.
+    Punktmasse an einem Knoten, der seither mittraegt."""
+    from .situationen import huelle, wirksame_knoten
+
+    def alt(model_, aktiv, kn):
+        h = huelle(model_, aktiv, kn, bis_66=True)
+        return h, h
+
+    def neu(model_, aktiv, kn):
+        return wirksame_knoten(model_, aktiv, kn)
+
+    return _maske_vergleich(model, alt, neu)
+
+
+def _maske_vergleich(model, alt, neu) -> set:
+    """Lastfaelle (und Schwingungsnachweise), deren Ergebnis sich zwischen zwei
+    Knotenmasken unterscheiden kann, unter jeder Maske aus
+    :func:`_maske_kette_masken`. ``alt(model, aktiv, kn)`` gibt (Knotenmaske der
+    Kopplungen, Knotenmaske der Lasten) des alten Stands, ``neu(model, aktiv,
+    kn)`` die heutige Maske (fuer beides); ``kn`` sind die Knoten mit wirksamem
+    Element. Betroffen: eine Kopplung, die heute bleibt und vorher entfiel
+    (assemble.kopplungen) - oder, ausser im Spannschritt und in der Schwingung,
+    eine Knotenlast oder (bei Eigengewicht) eine Punktmasse an einem Knoten,
+    der heute mittraegt und vorher nicht."""
     if not _maske_kette_moeglich(model):
         return set()
     masken = _maske_kette_masken(model)
     if not masken:
         return set()
     import numpy as np
-    from .situationen import wirksame_knoten, kopplung_bleibt
+    from .situationen import kopplung_bleibt
     flach, zahl = _element_knoten(model)
     nn = int(model.nn)
     kopplungen = list(getattr(model, "kopplungen", None) or [])
@@ -2597,14 +2656,15 @@ def _maske_kette_lastfaelle(model) -> set:
             continue
         kn = np.zeros(nn, dtype=bool)
         kn[flach[np.repeat(aktiv, zahl)]] = True
-        kn, alt = _wirksame_knoten_bis_64(model, aktiv, kn)
-        neu = wirksame_knoten(model, aktiv, kn)
-        if any(kopplung_bleibt(model, kp, neu) and not kopplung_bleibt(model, kp, kn) for kp in kopplungen):
+        alt_kopp, alt_last = alt(model, aktiv, kn)
+        jetzt = neu(model, aktiv, kn)
+        if any(kopplung_bleibt(model, kp, jetzt) and not kopplung_bleibt(model, kp, alt_kopp)
+               for kp in kopplungen):
             out |= offen
             continue
         if nur_kopp:
             continue
-        knoten = {int(n) for n in np.flatnonzero(neu & ~alt)}
+        knoten = {int(n) for n in np.flatnonzero(jetzt & ~alt_last)}
         if not knoten:
             continue
         for name in offen:
@@ -2618,24 +2678,58 @@ def _maske_kette_lastfaelle(model) -> set:
     return out
 
 
-def _maske_starrkoerper_betroffen(model) -> bool:
-    """Modellmerkmal maske_starrkoerper_last: ein Lastfall, dessen Last oder
-    Steifigkeit unter seiner Elementmaske seit Stand 65 anders wirkt."""
-    return bool(_maske_kette_lastfaelle(model))
+#: Vorsilbe der Schwingungsnachweise in den Lastfallmengen der Maskenmerkmale
+#: (kein Lastfallname beginnt mit dem Steuerzeichen)
+_SCHWINGUNG = "\x00Schwingung "
 
 
-def _maske_starrkoerper_im_ergebnis(model, an) -> str:
-    """Ergebnisse (Lastfaelle, Kombinationen, Knicken), deren Lastfaelle
-    :func:`_maske_kette_lastfaelle` nennt."""
-    lfs = _maske_kette_lastfaelle(model)
+def schwingung_schluessel(name) -> str:
+    """Der Name eines Schwingungsnachweises in den Mengen von
+    :func:`_maske_kette_masken` (neben den Lastfaellen)."""
+    return _SCHWINGUNG + str(name)
+
+
+def _masken_im_ergebnis(model, an, lfs: set, titel: str) -> str:
+    """Ergebnisse (Lastfaelle, Kombinationen, Knicken, Schwingungsnachweis der
+    Analyse), deren Lastfaelle bzw. Schwingungsnachweis in ``lfs`` stehen."""
     if not lfs:
         return ""
     paare = list(_ergebnis_paare(an))
     if getattr(an, "kind", "") == "buckling":
         paare.append((str(getattr(an, "name", "") or ""), an))
     namen = sorted({str(n) for n, _r in paare if _lastfaelle_von(model, n) & lfs})
-    return ("Knotenlast über Starrkörper oder Kette bei abgeschalteten Elementen: " + ", ".join(namen[:6])
-            + (" …" if len(namen) > 6 else "")) if namen else ""
+    sw = getattr(an, "schwingung", None)
+    if sw is not None and schwingung_schluessel(getattr(sw, "name", "")) in lfs:
+        namen.append(f"Schwingungsnachweis „{getattr(sw, 'name', '')}“")
+    return (titel + ": " + ", ".join(namen[:6]) + (" …" if len(namen) > 6 else "")) if namen else ""
+
+
+def _maske_starrkoerper_betroffen(model) -> bool:
+    """Modellmerkmal maske_starrkoerper_last: ein Lastfall oder
+    Schwingungsnachweis, dessen Last oder Steifigkeit unter seiner Elementmaske
+    seit Stand 65 anders wirkt."""
+    return bool(_maske_kette_lastfaelle(model))
+
+
+def _maske_starrkoerper_im_ergebnis(model, an) -> str:
+    """Ergebnisse (Lastfaelle, Kombinationen, Knicken, Schwingung), deren
+    Lastfaelle :func:`_maske_kette_lastfaelle` nennt."""
+    return _masken_im_ergebnis(model, an, _maske_kette_lastfaelle(model),
+                               "Knotenlast über Starrkörper oder Kette bei abgeschalteten Elementen")
+
+
+def _maske_lager_betroffen(model) -> bool:
+    """Modellmerkmal maske_lager_verteilung (Stand 67): ein Lastfall oder
+    Schwingungsnachweis, dessen Last oder Steifigkeit unter seiner Elementmaske
+    seit Stand 67 anders wirkt."""
+    return bool(_maske_lager_lastfaelle(model))
+
+
+def _maske_lager_im_ergebnis(model, an) -> str:
+    """Ergebnisse, deren Lastfaelle :func:`_maske_lager_lastfaelle` nennt."""
+    return _masken_im_ergebnis(model, an, _maske_lager_lastfaelle(model),
+                               "Last am Lager abgeschalteter Elemente oder an verteilender Kopplung")
+
 
 def _starrkoerper_strafe_betroffen(model) -> bool:
     """Modellmerkmal starrkoerper_strafe_bezug (Stand 68): ein Starrkoerper
@@ -4148,8 +4242,33 @@ MERKMALE: list = [
         modellmerkmal="Elementmaske in einer Situation (oder Stab „aus“) und eine Knotenlast oder Punktmasse "
                       "an einem Knoten ohne Element, der über einen Starrkörper oder eine Kette (Starrkörper, "
                       "Kopplung) an einem wirksamen Element hängt - oder eine Kopplung an einem solchen Knoten, "
-                      "auch im Spannschritt (Anker mit Sollkraft, Weg „spannen und verriegeln“)",
+                      "auch im Spannschritt (Anker mit Sollkraft, Weg „spannen und verriegeln“) und in der "
+                      "Schwingung eines Schwingungsnachweises in der Situation seines Wasserdruck-Generierers",
         betrifft=_maske_starrkoerper_betroffen, im_ergebnis=_maske_starrkoerper_im_ergebnis),
+    # Runde k10 (15.11.2026, vom Anwender freigegeben): bei einer Elementmaske
+    # trug ein Lagerknoten, an dem nur abgeschaltete Elemente haengen, nicht mit
+    # (situationen._lagerknoten_ohne_element), und eine Last, die ueber eine
+    # Kopplung an ihm haengt, entfiel still: toter Arm c-d, Lager an c, Y per
+    # Feder an c, 5 kN an Y - Summe Rz 1 000 statt 6 000 N wie in der
+    # Gegenrechnung mit geloeschtem Element. Die verteilende Kopplung eines
+    # Stabendes loeste nur ueber einen Slave aus; mit einem Slave Q ohne Element
+    # und Master am wirksamen Kragarmende entfiel die Last an Q (w = 0 statt
+    # 0,5357 mm). Beide Male Gleichgewichtskontrolle „ok“. Fehlerkorrektur.
+    Merkmal(
+        name="maske_lager_verteilung",
+        titel="Last am Lager abgeschalteter Elemente und an verteilender Kopplung",
+        texte={"alt": "ein Lagerknoten, an dem nur abgeschaltete Elemente hängen, trug nicht mit (eine Last oder "
+                      "Kopplung an ihm entfiel); die verteilende Kopplung eines Stabendes wirkte nur über einen "
+                      "Slave mit wirksamem Element",
+               "neu": "der Lagerknoten trägt mit wie in der Rechnung mit gelöschten Elementen; die verteilende "
+                      "Kopplung wirkt auch über den Master, wenn kein Slave an einem abgeschalteten Element hängt"},
+        wechsel=(Wechsel(stand=67, datum="15.11.2026", commit="fix/k10-maske", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Elementmaske in einer Situation (oder Stab „aus“, Spannschritt, Schwingungsnachweis) und "
+                      "eine Knotenlast, Punktmasse oder Kopplung an einem Lagerknoten, an dem nur abgeschaltete "
+                      "Elemente hängen (auch über eine Kette), oder an einem Slave ohne Element einer "
+                      "verteilenden Kopplung (Stabende, Scheibe)",
+        betrifft=_maske_lager_betroffen, im_ergebnis=_maske_lager_im_ergebnis),
     # Runde k10 (15.11.2026, vom Anwender freigegeben): der Strafbeiwert der
     # Starrkoerper (RBE2/RBE3) bezog sich auf die groesste Hauptdiagonale samt
     # der Straffedern der starren Knotenkopplungen (selbst 1e4-mal die

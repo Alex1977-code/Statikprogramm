@@ -688,6 +688,16 @@ def wirksame_gewichte(model, sk, bindung=None) -> dict:
         n = vt[-1]
     else:
         n = stabachse(model, m)
+    if not float(np.linalg.norm(n)) > 0.0:
+        # Weniger als drei Slaves und ein Master ohne Stab (Runde k10,
+        # 15.11.2026): die Normale war null, e1 = 0/0 - RuntimeWarning
+        # „invalid value encountered in divide“ und NaN in Lage und Abstand.
+        # Dann die Richtung Master -> Mittel der Slaves, sonst z; die Gewichte
+        # aendert das nicht (mit einem Slave ist M vom Rang 1, der Ausgleich
+        # entfaellt wie bisher)
+        n = c - X[m]
+        if not float(np.linalg.norm(n)) > 0.0:
+            n = np.array([0.0, 0.0, 1.0])
     n = n / (np.linalg.norm(n) or 1.0)
     a = stabachse(model, m)
     P = X[m].copy()
