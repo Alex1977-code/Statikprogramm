@@ -267,13 +267,56 @@ def kraefte_theorie1(model, system, factors: dict) -> dict:
     return normalkraefte_kg(model, u, aktiv, anfangsnormalkraefte(model, factors, aktiv), feq)
 
 
-def teilzahlen(model, aktiv=None, faktor: int = 1, kraefte: dict = None) -> dict:
+#: Theorie III. Ordnung setzt die Vorkruemmung als Knotenkraefte an den
+#: Teilen an (theorie2.ersatzlasten_vorkruemmung ohne ``stablasten``): ein
+#: gedrueckter Stab bekommt darum mindestens TEILUNG_VORGABE mal
+#: FAKTOR_THEORIE3 Teile, auch bei kleinerer Stabteilung der
+#: Netzeinstellungen (:func:`vorkruemmung_mindest`, Verfahrensstand 74).
+#: Gemessen am IPE 300, 6 m, 200 kN, e_0 = L/250 (Runde k10d, 16.11.2026;
+#: Bezug 11,517 kNm, Streckenlast von Hand in 80 Elementen): 1 Teil 0,
+#: 4 Teile 10,77, 10 Teile 11,39, 20 Teile 11,48 kNm.
+TEILUNG_VORKRUEMMUNG = TEILUNG_VORGABE
+
+
+def vorkruemmung_mindest(model, kraefte: dict, aktiv=None, faktor: int = 1) -> dict:
+    """{Element: Mindestzahl der Abschnitte seines Stabs} fuer die Balken der
+    gedrueckten Staebe (Member), die eine Vorkruemmung bekommen koennen:
+    mittlere Normalkraft nach Theorie I. Ordnung (``kraefte``) Druck und an
+    einem Element :func:`relevant`. In einem einzigen Element hob sich die
+    Vorkruemmung als Knotenkraft mit den Endquerkraeften auf und fehlte still
+    (Runde k10d, 16.11.2026); in wenigen Teilen fehlte das Feldmoment
+    zwischen den Knoten. Ob 5.3.2(6) sie verlangt, entscheidet erst die
+    Rechnung - hier zaehlt jeder gedrueckte Stab."""
+    if not kraefte:
+        return {}
+    ne = len(model.elements)
+    soll = TEILUNG_VORKRUEMMUNG * max(1, int(faktor))
+    out = {}
+    for mem in (getattr(model, "members", None) or {}).values():
+        idx = [int(i) for i in (mem.elements or []) if 0 <= int(i) < ne]
+        idx = [i for i in idx if (aktiv is None or aktiv[i]) and teilbar(model, i)]
+        if not idx:
+            continue
+        L = [model.element_length(i) for i in idx]
+        N = sum(float(kraefte.get(i, 0.0)) * l for i, l in zip(idx, L)) / max(sum(L), 1e-300)
+        if N >= 0.0 or not any(relevant(model, i, kraefte.get(i, 0.0)) for i in idx):
+            continue
+        for i in idx:
+            out[i] = soll
+    return out
+
+
+def teilzahlen(model, aktiv=None, faktor: int = 1, kraefte: dict = None,
+               mindest: dict = None) -> dict:
     """{Element: Zahl der Teile > 1} - nach der Laenge des Stabs (Member;
     ohne Stab nach der Laenge der geraden Kette, :func:`_ketten_laengen`).
     ``kraefte`` {Element: Normalkraft nach Theorie I. Ordnung}: dann nur die
-    Balken, an denen sie zaehlt (:func:`relevant`); ohne sie alle."""
+    Balken, an denen sie zaehlt (:func:`relevant`); ohne sie alle.
+    ``mindest`` {Element: Abschnitte seines Stabs}: so viele mindestens
+    (:func:`vorkruemmung_mindest`)."""
+    mindest = mindest or {}
     soll = soll_teilung(model, faktor)
-    if soll <= 1:
+    if soll <= 1 and not mindest:
         return {}
     ne = len(model.elements)
     stab_L: dict = {}
@@ -291,11 +334,13 @@ def teilzahlen(model, aktiv=None, faktor: int = 1, kraefte: dict = None) -> dict
     for i in balken:
         if aktiv is not None and not aktiv[i]:
             continue
-        if kraefte is not None and not relevant(model, i, kraefte.get(i, 0.0)):
+        soll_i = max(soll, int(mindest.get(i, 0)))
+        if (i not in mindest and kraefte is not None
+                and not relevant(model, i, kraefte.get(i, 0.0))):
             continue
         L = model.element_length(i)
         Lm = stab_L.get(i, 0.0) or L
-        n = min(soll, max(1, math.ceil(L * soll / Lm - 1e-9)))
+        n = min(soll_i, max(1, math.ceil(L * soll_i / Lm - 1e-9)))
         # Stab mit Versatz: nur, wenn die Teile seine Achsen treffen
         if n > 1 and _hat_versatz(model.elements[i]) and versatz_teile(model, i, n) is None:
             continue

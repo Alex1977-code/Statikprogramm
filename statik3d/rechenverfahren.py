@@ -2690,6 +2690,40 @@ def _ec3_auftraege_th2_im_ergebnis(model, an) -> str:
     return ("EC3-Nachweis über Arbeitsprozesse nach Theorie II./III. Ordnung: " + ", ".join(namen[:6])
             + (" …" if len(namen) > 6 else "")) if namen else ""
 
+def _vorkruemmung_moeglich(model) -> bool:
+    """Modellmerkmal vorkruemmung_streckenlast: Ersatzimperfektionen an, ein
+    Stab (Member) mit Balken und ein Lastfall oder eine Kombination nach
+    Theorie II. oder III. Ordnung. Bis Stand 73 ging die Vorkruemmung als
+    Knotenkraft an die Elementknoten (in einem Element je Stab hob sie sich
+    auf) - Runde k10d, Stand 74."""
+    try:
+        if not bool(getattr(getattr(model, "design", None), "imperfektionen", True)):
+            return False
+        els = getattr(model, "elements", None) or []
+        ne = len(els)
+        if not any(getattr(els[int(i)], "typ", "") == "beam"
+                   for mem in (getattr(model, "members", None) or {}).values()
+                   for i in (getattr(mem, "elements", None) or []) if 0 <= int(i) < ne):
+            return False
+        return any(model.theorie_von(o) in ("II", "III")
+                   for o in list(model.load_cases.values()) + list(model.combinations.values()))
+    except Exception:                       # noqa: BLE001 - nicht pruefbar: möglicherweise betroffen
+        return True
+
+
+def _vorkruemmung_im_ergebnis(model, an) -> str:
+    """Rechnungen nach Theorie II./III. Ordnung, die eine Vorkruemmung
+    angesetzt haben."""
+    namen = []
+    for th in (getattr(an, "theorie2", None), getattr(an, "theorie3", None)):
+        for n, info in ((getattr(th, "kombinationen", None) or {}).items() if th is not None else []):
+            vk = getattr(info, "vorkruemmung", None) or {}
+            if isinstance(vk, dict) and int(vk.get("anzahl", 0) or 0) > 0:
+                namen.append(str(n))
+    namen = sorted(set(namen))
+    return ("Vorkrümmung nach Theorie II./III. Ordnung: " + ", ".join(namen[:6])
+            + (" …" if len(namen) > 6 else "")) if namen else ""
+
 #: Die Tabelle (Einstufung des Anwenders vom 16.10.2026). Stand 1: Abbruch der
 #: Plastizitaet (a1194ef, 13.10.2026 19:32); Stand 1.5: die Korrekturen dazwischen
 #: (13.10. 23:09 bis 15.10. 12:56) - eine Datei ohne Angabe erkennt sie nur an
@@ -4101,10 +4135,28 @@ MERKMALE: list = [
         modellmerkmal="EC3-Nachweis mit mindestens 24 Stäben (oder über die Rechnerfarm) und ein Lastfall "
                       "oder eine Kombination nach Theorie II. oder III. Ordnung",
         betrifft=_ec3_auftraege_th2_betroffen, im_ergebnis=_ec3_auftraege_th2_im_ergebnis),
+    # Runde k10d (16.11.2026): die Vorkruemmung (5.3.2(7), Bild 5.4) ging je
+    # Element als Knotenkraft halb und halb an die Elementknoten. In einem
+    # Element je Stab hob sie sich mit den Endquerkraeften V auf und fehlte
+    # still: IPE 300, 6 m, N = 200 kN, ein Element, Stabteilung 1: Mz_Ed 0
+    # statt 11,52 kNm, Ausnutzung 1,638 statt 2,484. In wenigen Teilen fehlte
+    # das Feldmoment zwischen den Knoten (3 Teile 10,36, 5 Teile 11,11, 10
+    # Teile 11,47 kNm). Theorie II. Ordnung setzt sie jetzt als Streckenlast
+    # im Element an, Theorie III. Ordnung teilt gedrueckte Staebe mindestens
+    # in 20 Teile. Fehlerkorrektur
+    Merkmal(
+        name="vorkruemmung_streckenlast", titel="Vorkrümmung als Streckenlast im Element",
+        texte={"alt": "Vorkrümmung als Knotenkraft an den Elementknoten (in einem Element je Stab ohne Wirkung)",
+               "neu": "Theorie II. Ordnung: Streckenlast im Element; Theorie III. Ordnung: gedrückte Stäbe "
+                      "mindestens in 20 Teilen"},
+        wechsel=(Wechsel(stand=74, datum="16.11.2026", commit="fix/k10-ec3", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Ersatzimperfektionen an und ein Stab mit Balken nach Theorie II. oder III. Ordnung",
+        betrifft=_vorkruemmung_moeglich, im_ergebnis=_vorkruemmung_im_ergebnis),
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 69
+VERFAHRENSSTAND = 74
 
 
 def merkmal(name: str) -> Optional[Merkmal]:
