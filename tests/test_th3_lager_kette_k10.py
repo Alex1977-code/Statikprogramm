@@ -48,16 +48,22 @@ def _merkmal():
     return rv.merkmal("theorie3_stabende_anschluss")
 
 
-def _abgewiesen(m, name, text=T.TEXT_SK):
-    """(Rechnung abgewiesen ohne Ausnahme, Modellpruefung mit FEHLER, Detail)"""
+def _gerechnet(m, name, knoten, soll, text=T.WIRKT_SK):
+    """Seit Stand 77 (Runde k10e, Fehler Nr. 27; bis Stand 76 hiess die
+    Funktion _abgewiesen): (Rechnung nach Theorie III. Ordnung ohne Ausnahme
+    und Fehler, w der ``knoten`` = ``soll`` (Theorie I. Ordnung derselben
+    Rechnung) auf 0,0001 mm; Wirkung nennt ``name`` und die Modellpruefung
+    meldet keinen FEHLER; Detail)"""
     m.load_cases["LF1"].theorie = "III"
     pr = T.th3_pruefung(m)
+    wk = T.wirkung_pruefung(m)
     an, u, R, f, ex = T.rechne(m, "III")
-    ok_r = not ex and text in f and name in f
-    if not ex and an is not None:
-        ok_r = ok_r and not str(an.cases["LF1"].info.get("theorie", "")).startswith("III")
-    ok_p = any(z.startswith("FEHLER") and text in z and name in z for z in pr)
-    return ok_r, ok_p, ((ex or f)[:150] + f" | {[z[:80] for z in pr]}")
+    ok_r = not ex and not f and T.ist_th3(an)
+    w = [float("nan") if ex else -u[k, 2] for k in knoten]
+    ok_r = ok_r and all(abs(x - y) <= 1e-7 for x, y in zip(w, soll))
+    ok_p = any(text in z and name in z for z in wk) and not any(z.startswith("FEHLER") for z in pr)
+    return ok_r, ok_p, ((ex or f)[:150] + f" | Th III {[round(x * 1e3, 6) for x in w]} mm, Th I "
+                        f"{[round(x * 1e3, 6) for x in soll]} mm | {[z[:80] for z in wk]} {pr}")
 
 
 def _w_th1(m, knoten):
@@ -186,9 +192,10 @@ def test_flaechenlager():
     check("Flächenlager an abgeschalteter Schale: Theorie I. Ordnung w(b) = 0 (Master folgt den gehaltenen "
           "Slaves)", not ex1 and abs(w1) < 1e-3 * HAND, f"{ex1} w {w1 * 1e3:.6f} mm")
     m, b = schale_flaechenlager()
-    ok_r, ok_p, det = _abgewiesen(m, "Stabende 1")
-    check("… Theorie III. Ordnung abgewiesen (Starrkörper Stabende 1) statt still 0,5357 mm", ok_r, det)
-    check("… Modellprüfung: FEHLER", ok_p, det)
+    ok_r, ok_p, det = _gerechnet(m, "Stabende 1", [b], [w1])
+    check("… Theorie III. Ordnung gerechnet (seit Stand 77), w(b) = Theorie I. Ordnung = 0 statt still "
+          "0,5357 mm", ok_r, det)
+    check("… Wirkung „Stabende 1“, Modellprüfung ohne FEHLER", ok_p, det)
 
 
 def test_linienlager():
@@ -200,9 +207,10 @@ def test_linienlager():
           not ex1 and not ex2 and abs(w1 - w2) <= 1e-9 and abs(w1) < 1e-3 * HAND,
           f"w {w1 * 1e3:.6f} mm, Gegenrechnung {w2 * 1e3:.6f} mm")
     m, b = staebe_linienlager()
-    ok_r, ok_p, det = _abgewiesen(m, "Stabende 1")
-    check("… Theorie III. Ordnung abgewiesen statt still 0,5357 mm", ok_r, det)
-    check("… Modellprüfung: FEHLER", ok_p, det)
+    ok_r, ok_p, det = _gerechnet(m, "Stabende 1", [b], [w1])
+    check("… Theorie III. Ordnung gerechnet, w(b) = Theorie I. Ordnung = Gegenrechnung statt still 0,5357 mm",
+          ok_r, det)
+    check("… Wirkung „Stabende 1“, Modellprüfung ohne FEHLER", ok_p, det)
 
 
 def test_kette():
@@ -214,10 +222,10 @@ def test_kette():
           not ex1 and not ex2 and abs(w1 - w2) <= 1e-9 and abs(w1) < 1e-3 * HAND,
           f"w {w1 * 1e3:.6f} mm, Gegenrechnung {w2 * 1e3:.6f} mm")
     m, b = kette_rbe2()
-    ok_r, ok_p, det = _abgewiesen(m, "Stabende 1")
-    check("… Theorie III. Ordnung abgewiesen (Scheibe und Stabende 1) statt still 0,5357 mm",
-          ok_r and "Scheibe" in det, det)
-    check("… Modellprüfung: FEHLER", ok_p, det)
+    ok_r, ok_p, det = _gerechnet(m, "Stabende 1", [b], [w1])
+    check("… Theorie III. Ordnung gerechnet, w(b) = Theorie I. Ordnung = Gegenrechnung statt still 0,5357 mm",
+          ok_r, det)
+    check("… Wirkung „Scheibe“ und „Stabende 1“, Modellprüfung ohne FEHLER", ok_p and "Scheibe" in det, det)
 
 
 def test_zwei_enden():
@@ -235,9 +243,10 @@ def test_zwei_enden():
     check("Zwei Stabenden am selben abgeschalteten Stabzug: Theorie I. Ordnung = Gegenrechnung, der Stabzug "
           "koppelt die Enden", ok, det)
     m, b, b2 = zwei_enden()
-    ok_r, ok_p, det = _abgewiesen(m, "Stabende 2")
-    check("… Theorie III. Ordnung abgewiesen statt still 0,5357 und 0,0000 mm", ok_r and "Stabende 1" in det, det)
-    check("… Modellprüfung: FEHLER", ok_p, det)
+    ok_r, ok_p, det = _gerechnet(m, "Stabende 2", [b, b2], [-u[b, 2], -u[b2, 2]] if not ex else [0.0, 0.0])
+    check("… Theorie III. Ordnung gerechnet, w(b), w(b2) = Theorie I. Ordnung = Gegenrechnung statt still "
+          "0,5357 und 0,0000 mm", ok_r, det)
+    check("… Wirkung „Stabende 1“ und „Stabende 2“, Modellprüfung ohne FEHLER", ok_p and "Stabende 1" in det, det)
 
 
 def test_q_ohne_last():
@@ -259,7 +268,7 @@ def test_q_ohne_last():
 
 def test_merkmal():
     from statik3d import solver
-    from statik3d.theorie3 import kopplung_sperre_modell
+    from statik3d.theorie3 import kopplung_wirkung_modell as kopplung_sperre_modell
     mk = _merkmal()
     if not check("Merkmal theorie3_stabende_anschluss vorhanden", mk is not None):
         return
@@ -280,7 +289,8 @@ def test_merkmal():
     m.load_cases["LF1"].theorie = "III"
     neu = kopplung_sperre_modell(m)
     alt = kopplung_sperre_modell(m, alt=True)
-    check("betrifft: schon nach der alten Regel abgewiesen, nur der Text ändert sich - nein",
+    check("betrifft: schon nach der alten Regel wirksam (bis Stand 76 abgewiesen), nur der Text ändert sich - "
+          "nein",
           alt and neu and set(alt) != set(neu) and not mk.betrifft(m),
           f"alt {list(alt)[:1]} neu {list(neu)[:1]} betrifft {mk.betrifft(m)}")
     m = kette_rbe2()[0]

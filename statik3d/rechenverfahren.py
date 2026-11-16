@@ -2170,7 +2170,8 @@ def _theorie3_starrkoerper(model) -> bool:
     Situation ein Starrkoerper (RBE2/RBE3) oder eine starre Knotenkopplung
     wirkt - Theorie III. Ordnung liess die Starrkoerper bis zum 15.11.2026
     still weg und rechnete starre Kopplungen als Feder von 1e4 N/m (Runde k8).
-    Dieselbe Pruefung wie die Abweisung (theorie3.kopplung_sperre_modell)."""
+    Dieselbe Pruefung wie bis Stand 76 die Abweisung (heute
+    theorie3.kopplung_wirkung_modell)."""
     if not (getattr(model, "starrkoerper", None) or getattr(model, "kopplungen", None)):
         return False
     try:
@@ -2180,10 +2181,55 @@ def _theorie3_starrkoerper(model) -> bool:
     except Exception:                       # noqa: BLE001 - Pruefung, nie Abbruch
         return False
     try:
-        from .theorie3 import kopplung_sperre_modell
-        return bool(kopplung_sperre_modell(model))
+        # seit Runde k10e (16.11.2026) rechnet Theorie III. Ordnung sie mit;
+        # die Wirkung ist dieselbe Pruefung wie bis dahin die Abweisung
+        from .theorie3 import kopplung_wirkung_modell
+        return bool(kopplung_wirkung_modell(model))
     except Exception:                       # noqa: BLE001 - nicht pruefbar: möglicherweise betroffen
         return True
+
+
+def _theorie3_rbe2_angehaengt_neu(model) -> list:
+    """Lastfaelle und Kombinationen nach Theorie III. Ordnung, in deren
+    Rechnung seit Stand 77 (Runde k10e) ein RBE2 mitgefuehrt wird, den die
+    Rechnung bis dahin nicht las: er haengt nur an einem Knoten ohne Element,
+    der ueber eine starre Kopplung am Stab haengt (theorie3.rbe2_angehaengt_modell).
+    Sein anderer Knoten blieb automatisch festgehalten (Verschiebung 0)."""
+    if not getattr(model, "starrkoerper", None):
+        return []
+    from .theorie3 import rbe2_angehaengt_modell
+    return sorted({n for namen in rbe2_angehaengt_modell(model).values() for n in namen})
+
+
+def _theorie3_rbe2_angehaengt(model) -> bool:
+    """Modellmerkmal theorie3_rbe2_angehaengt (Stand 77)."""
+    try:
+        if not any(model.theorie_von(o) == "III"
+                   for o in list(model.load_cases.values()) + list(model.combinations.values())):
+            return False
+        return bool(_theorie3_rbe2_angehaengt_neu(model))
+    except Exception:                       # noqa: BLE001 - nicht pruefbar: möglicherweise betroffen
+        return True
+
+
+def _theorie3_rbe2_angehaengt_im_ergebnis(model, an) -> str:
+    """Ergebnisse nach Theorie III. Ordnung der Lastfaelle und Kombinationen
+    aus :func:`_theorie3_rbe2_angehaengt_neu` (bei einer Ergebniskombination
+    auch ihre Alternativen „EK [k]“)."""
+    try:
+        namen_neu = set(_theorie3_rbe2_angehaengt_neu(model))
+    except Exception:                       # noqa: BLE001
+        return None
+    if not namen_neu:
+        return ""
+    th3 = getattr(an, "theorie3", None)
+    namen = [str(n) for n in (getattr(th3, "kombinationen", None) or {})]
+    for n, r in _ergebnis_paare(an):
+        if str((getattr(r, "info", None) or {}).get("theorie", "")).startswith("III"):
+            namen.append(str(n))
+    namen = sorted({n for n in namen if n in namen_neu or n.split(" [")[0] in namen_neu})
+    return ("Theorie III. Ordnung mit RBE2 an angehängtem Knoten: " + ", ".join(namen[:6])
+            + (" …" if len(namen) > 6 else "")) if namen else ""
 
 
 def _theorie3_gelenk(model) -> bool:
@@ -2220,15 +2266,18 @@ def _theorie3_anschluss_neu(model) -> list:
     Faktoren - theorie3._lastknoten; ohne Situation wirkten diese
     Kopplungen in Theorie I. Ordnung immer, die Starrkoerper immer) oder
     einen mittragenden Knoten (zweites Stabende). Vergleich der Abweisung
-    heute und mit der Regel bis Runde k10 (theorie3.kopplung_sperre_modell,
+    heute und mit der Regel bis Runde k10 (theorie3.kopplung_wirkung_modell,
     ``alt``); nur das Ob zaehlt, nicht der Text."""
     if not (getattr(model, "starrkoerper", None) or getattr(model, "kopplungen", None)):
         return []
-    from .theorie3 import kopplung_sperre_modell
-    neu = {n: t for t, namen in kopplung_sperre_modell(model).items() for n in namen}
+    # Wirkung statt Abweisung: seit Runde k10e (16.11.2026) rechnet Theorie
+    # III. Ordnung diese Kopplungen mit (theorie3.kopplung_wirkung_modell ist
+    # die Pruefung, die bis dahin abwies)
+    from .theorie3 import kopplung_wirkung_modell
+    neu = {n: t for t, namen in kopplung_wirkung_modell(model).items() for n in namen}
     if not neu:
         return []
-    alt = {n: t for t, namen in kopplung_sperre_modell(model, alt=True).items() for n in namen}
+    alt = {n: t for t, namen in kopplung_wirkung_modell(model, alt=True).items() for n in namen}
     # nur, was vorher gar nicht abgewiesen wurde - ein anderer Text der
     # Abweisung (eine zweite Kopplung kommt dazu) aendert kein Ergebnis
     return sorted(n for n in neu if n not in alt)
@@ -4827,6 +4876,27 @@ MERKMALE: list = [
         modellmerkmal="Lastfall oder Kombination nach Theorie III. Ordnung und ein Balken mit Drehgelenk "
                       "oder Drehfedergelenk (alle Gelenke des Stabs Drehungen)",
         betrifft=_theorie3_gelenk, im_ergebnis=_theorie3_im_ergebnis),
+    # Runde k10e (16.11.2026, Fehler Nr. 27): Theorie III. Ordnung rechnet
+    # Starrkoerper und starre Kopplungen seither als Zwangsbedingung im
+    # mitgedrehten System des Masters (theorie3._Zwang), statt sie abzuweisen
+    # (Stand 64 bis 76). Was vorher abgewiesen wurde, rechnet jetzt - dafuer
+    # braucht es kein Merkmal. Ergebnisse aendern sich nur dort, wo vorher
+    # ohne Abweisung gerechnet wurde: ein RBE2, der nur an einem Knoten ohne
+    # Element haengt, den eine starre Kopplung „Stabende“ am Stab haelt
+    # (Kopplung b-Q, RBE2 Q-P, P ohne Last). Die Rechnung las ihn nicht, P
+    # blieb automatisch festgehalten: Kragarm 3 m, 1 kN an b - w(P) 0 statt
+    # 0,5357 mm wie w(b) und Theorie I. Ordnung. Fehlerkorrektur
+    Merkmal(
+        name="theorie3_rbe2_angehaengt",
+        titel="Theorie III. Ordnung: RBE2 an einem angehängten Knoten ohne Element",
+        texte={"alt": "RBE2 nicht gelesen, sein Knoten ohne Element automatisch festgehalten (Verschiebung 0)",
+               "neu": "Starrkörper und starre Kopplungen als Zwangsbedingung mit großen Drehungen gerechnet; "
+                      "der Knoten folgt dem Stab wie in Theorie I. Ordnung"},
+        wechsel=(Wechsel(stand=77, datum="16.11.2026", commit="fix/k10e-th3starr", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Lastfall oder Kombination nach Theorie III. Ordnung mit einem RBE2, der nur an einem "
+                      "Knoten ohne Element hängt, den eine starre Kopplung am Stab hält",
+        betrifft=_theorie3_rbe2_angehaengt, im_ergebnis=_theorie3_rbe2_angehaengt_im_ergebnis),
     # Runde k10e (16.11.2026, Fehlerliste Nr. 26): Eigenpaare des
     # Verzweigungsproblems (Knicken, alpha_cr) werden geprueft - weicht der
     # Rayleigh-Quotient um mehr als 5 % (solver.KNICK_RQ_MAX) vom gemeldeten
