@@ -364,16 +364,32 @@ class _Stab:
         # pinv: ein Stab mit Torsionsgelenk an beiden Enden dreht sich frei
         # (wie asm.condense)
         J_inv = np.linalg.pinv(kl_u[np.ix_(D, D)] + np.diag(kt))
-        # Rundungsniveau der Stabend-Momente: die Summanden von k_l d - f (am
-        # Pendelstab sind die Momente selbst null) und die Rundung der
-        # Drehungen (etwa 2e-16 rad) mal der Drehsteifigkeit
+        # Grobe Schranke: bis zu ihr gilt am Gelenk ein Gleichgewicht (sonst
+        # meldet solve_theorie3 „kein Gleichgewicht am Gelenk“) - die Summanden
+        # von k_l d - f (am Pendelstab sind die Momente selbst null) und die
+        # Rundung der Drehungen (etwa 2e-16 rad) mal der Drehsteifigkeit
         rot = [3, 4, 5, 9, 10, 11]
         k_dreh = float(np.abs(kl_u[rot]).sum(axis=1).max())
 
+        def groesse(dl, phi):
+            return (float((np.abs(kl_u[rot]) @ np.abs(dl)).max()) + float(np.abs(f_u[rot]).max())
+                    + float(np.abs(kt * phi).max()))
+
         def schranke(dl, phi):
-            return (1e-12 * (float((np.abs(kl_u[rot]) @ np.abs(dl)).max()) + float(np.abs(f_u[rot]).max())
-                             + float(np.abs(kt * phi).max())) + 1e3 * 2.2e-16 * k_dreh + 1e-300)
+            return 1e-12 * groesse(dl, phi) + 1e3 * 2.2e-16 * k_dreh + 1e-300
+        # Iteriert wird aber bis auf Rundungsniveau: bis das Moment unter der
+        # Rundung seiner Summanden liegt oder der Newton-Schritt es nicht mehr
+        # verkleinert (die Iteration konvergiert quadratisch). Bis zur ersten
+        # Gegenpruefung zu k10d (16.11.2026) hoerte sie an der groben Schranke
+        # auf: φ blieb um bis zu 4e-7 rad offen, je nach Startwert, und das
+        # Moment k φ der Feder rauschte um etwa 0,001 Nm - ueber der
+        # Konvergenzschranke 1e-6 der Last der Stufe. Der U-Rahmen mit
+        # Torsionsfedern 2 kNm/rad (Rechteck 20 x 400 mm, je 2 m, P = 1 kN,
+        # Stoerlast 20 N) meldete „keine Konvergenz“, obwohl er ein
+        # Gleichgewicht hat (54,561 mm).
         offen = True
+        best = None
+        h_vor = math.inf
         for _it in range(50):
             ph = np.zeros(12)
             ph[D] = phi
@@ -387,10 +403,17 @@ class _Stab:
                 Rk = R1 if ende == 0 else R2
                 m = E @ s[6 * ende + 3:6 * ende + 6]
                 h[k] = float(m @ (Rk @ self.E0T[:, j - 3])) + kt[k] * phi[k]
-            if float(np.abs(h).max()) <= schranke(dl, phi):
-                offen = False
+            hn = float(np.abs(h).max())
+            if best is None or hn < best[0]:
+                best = (hn, phi, E, dl, s)
+            if hn <= 2.2e-16 * groesse(dl, phi):
                 break
+            if hn <= schranke(dl, phi) and hn > 0.5 * h_vor:
+                break
+            h_vor = hn
             phi = phi - J_inv @ h
+        hn, phi, E, dl, s = best
+        offen = hn > schranke(dl, phi)
         g["phi"] = phi
         g["offen"] = offen
         return E, dl, s + g["f_c"]

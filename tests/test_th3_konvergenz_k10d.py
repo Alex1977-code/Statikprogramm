@@ -38,6 +38,11 @@ Runde k10d (16.11.2026), Theorie III. Ordnung: Restschranke und Konvergenz.
     0,03 % bei l0 = 0,001 m); mit Torsionsgelenk bei 3 kN 0,0036 mm neben dem
     Stummel; Traeger mit Gabellagern und Torsionsgelenk in der Mitte
     verdrillte unsymmetrisch. Merkmal theorie3_gelenk_achse, Stand 75.
+    Nachbesserung 1 (Gegenpruefung 1 zu k10d): die Gelenkdrehung φ wurde nur
+    bis zu einer groben Schranke iteriert (etwa 0,0016 Nm); das Federmoment
+    rauschte ueber der Konvergenzschranke, und U-Rahmen mit Torsionsfedern
+    meldeten „keine Konvergenz“ bzw. „Gleichungssystem singulär“, obwohl sie
+    ein Gleichgewicht haben. Jetzt bis auf Rundungsniveau.
 
 Aufruf:  python -m tests.test_th3_konvergenz_k10d
 """
@@ -479,6 +484,100 @@ def test_e_symmetrie():
               not i0.fehler and d <= 1e-12, f"{d:.2e} rad")
 
 
+# --------------------------------------------------------------------------
+# (e), Nachbesserung 1: Federgelenke konvergieren wieder
+# --------------------------------------------------------------------------
+def u_rahmen(art="feder", l0=0.0, kt=2e3, P=1e3, stoer=20.0, n=10, L=2.0):
+    """U-Rahmen (Gegenpruefung k11, v3.u_federn): A(0,0,0)-B(L,0,0)-C(L,L,0)-
+    D(0,L,0), Rechteck 20 x 400 mm hochkant, je n Elemente, A eingespannt,
+    an D -P in y und ``stoer`` in z. An beiden Ecken ``art`` "feder":
+    Torsionsfeder kt am Anfang des folgenden Schenkels (mit l0 > 0 hinter
+    einem Stueck l0 normalen Querschnitts), "stummel": Stueck l0 mit
+    G I_t / l0 = kt ohne Gelenk. Rueckgabe (Modell, D)."""
+    import math
+    from statik3d.model import Model, Material
+    m = Model("U")
+    m.add_material(Material("ST", E=E, nu=0.3, rho=0.0, fy=355e6))
+    m.add_section(_rechteck("P"))
+    st = _rechteck("S")
+    if art == "stummel":
+        st.It = kt * l0 / G_W
+    m.add_section(st)
+    m.design.imperfektionen = False
+    m.netz.stabteilung = 1
+    r = math.radians(90.0)
+
+    def strecke(a_id, b_xyz, nn, sec):
+        a = np.array(m.nodes[a_id], float)
+        b = np.array(b_xyz, float)
+        ids = [a_id] + [m.add_node(*(a + (b - a) * j / nn)) for j in range(1, nn + 1)]
+        for j in range(nn):
+            m.add_element("beam", [ids[j], ids[j + 1]], "ST", sec, roll=r)
+        return ids
+    fuss = m.add_node(0, 0, 0)
+    a = strecke(fuss, (L, 0, 0), n, "P")
+    if l0 > 0:
+        a = strecke(a[-1], (L, l0, 0), 1, "S")
+    e1 = len(m.elements)
+    b = strecke(a[-1], (L, L, 0), n, "P")
+    if l0 > 0:
+        b = strecke(b[-1], (L - l0, L, 0), 1, "S")
+    e2 = len(m.elements)
+    c = strecke(b[-1], (0, L, 0), n, "P")
+    if art == "feder":
+        m.elements[e1].hinge_springs = [(3, kt)]
+        m.elements[e2].hinge_springs = [(3, kt)]
+    m.fix(fuss, "all")
+    m.load_node(c[-1], Fy=-P, Fz=stoer)
+    return m, c[-1]
+
+
+def test_e_federn_konvergieren():
+    """Gegenpruefung 1 zu k10d: _Stab._gelenk_lage hoerte an einer groben
+    Schranke (1e3 * 2,2e-16 * Drehsteifigkeit, hier etwa 0,0016 Nm) auf; φ
+    blieb je nach Startwert um bis zu 4e-7 rad offen, das Federmoment
+    rauschte ueber der Konvergenzschranke, und Modelle mit Torsionsfedern
+    meldeten „keine Konvergenz“ (U-Rahmen 1 kN, 3 kN) oder „Gleichungssystem
+    singulär“, obwohl sie ein Gleichgewicht haben."""
+    for P in (1e3, 3e3):
+        # Bezug: Stummelmodell, linear nach l0 -> 0 (aus l0 = 0,002 und 0,001 m)
+        w = {}
+        for l0 in (0.002, 0.001):
+            m, sp = u_rahmen("stummel", l0, P=P)
+            u, info, _r = _th3_direkt(m, 20)
+            w[l0] = u[sp, :3]
+        ref = 2.0 * w[0.001] - w[0.002]
+        m, sp = u_rahmen("feder", P=P)
+        m.add_combination("LK1", {m.active_case: 1.0}, "ULS", theorie="III")
+        r, f = _rechne(m)
+        th = str((r.info or {}).get("theorie", "")) if r is not None else ""
+        u = np.asarray(r.u).reshape(-1, 6) if r is not None else np.full((sp + 1, 6), np.nan)
+        d = float(np.abs(u[sp, :3] - ref).max()) * 1e3
+        check(f"(e) U-Rahmen, Torsionsfedern 2 kNm/rad, P = {P / 1e3:.0f} kN, Stoerlast 20 N, LK1 ueber "
+              "solve_all: Theorie III. Ordnung konvergiert", not f and th.startswith("III"), f"{f!r} {th}")
+        check("… Spitze = Stummelmodell mit l0 -> 0 (auf 0,001 mm)", d <= 1e-3,
+              f"{d:.6f} mm, Th III uz {u[sp, 2] * 1e3:.6f}, Stummel {ref[2] * 1e3:.6f} mm")
+        u40, i40, _r = _th3_direkt(u_rahmen("feder", P=P)[0], 40)
+        u10, i10, _r = _th3_direkt(u_rahmen("feder", P=P)[0], 10)
+        d = float(np.abs(u10[sp, :3] - u40[sp, :3]).max()) * 1e3
+        check("… 10 und 40 Laststufen konvergieren und ergeben dieselbe Spitze (auf 0,0001 mm)",
+              not i10.fehler and not i40.fehler and d <= 1e-4, f"{i10.fehler!r} {i40.fehler!r} {d:.6f} mm")
+    # Federvariante mit zusaetzlichem Stueck l0 (Gegenpruefung: keine
+    # Konvergenz bzw. singulaer), gegen das Stummelmodell: Abstand linear in l0
+    for P, stoer, l0, s in ((1e3, 2.0, 0.004, 40), (1e3, 2.0, 0.002, 40), (1e3, 2.0, 0.001, 10),
+                            (1e3, 2.0, 0.001, 40), (2e3, 20.0, 0.001, 10), (1e3, 20.0, 0.001, 10)):
+        m, sp = u_rahmen("feder", l0, P=P, stoer=stoer)
+        uf, i_f, _r = _th3_direkt(m, s)
+        us, i_s, _r = _th3_direkt(u_rahmen("stummel", l0, P=P, stoer=stoer)[0], s)
+        d = float(np.abs(uf[:, :3] - us[:, :3]).max()) * 1e3
+        # Abstand Feder/Stummel waechst linear mit l0 und Last (Gegenpruefung:
+        # 0,0176 / 0,0088 / 0,0044 mm bei 1 kN, 20 N); Grenze 20 mm je m l0 und kN
+        grenze = 20.0 * l0 * P / 1e3
+        check(f"(e) U-Rahmen mit Stueck l0 = {l0} m, P = {P / 1e3:.0f} kN, Stoerlast {stoer:g} N, {s} Stufen: "
+              f"Federvariante konvergiert, Abstand zum Stummel unter {grenze:.3f} mm",
+              not i_f.fehler and not i_s.fehler and d <= grenze, f"{i_f.fehler!r} {d:.6f} mm")
+
+
 def test_e_merkmal():
     from statik3d import rechenverfahren as rv
     mk = rv.merkmal("theorie3_gelenk_achse")
@@ -502,7 +601,8 @@ def test_e_merkmal():
 
 
 TESTS = [test_a_restschranke, test_b_kleine_last, test_c_ipe_vorverformung, test_c_hallenreihe,
-         test_d_kurze_elemente, test_e_torsionsfeder, test_e_torsionsgelenk, test_e_symmetrie, test_e_merkmal]
+         test_d_kurze_elemente, test_e_torsionsfeder, test_e_torsionsgelenk, test_e_symmetrie, test_e_merkmal,
+         test_e_federn_konvergieren]
 
 
 def main():
