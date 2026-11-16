@@ -810,6 +810,12 @@ def knotendilatation_je_element(model: Model, u: np.ndarray, aktiv=None) -> dict
     return {int(i): float(v) for i, v in zip(idx, ev_zeile[zeile].mean(axis=1))}
 
 
+#: Nur fuer die Ruecknahmeprobe (tests.test_numerik_k10): True stellt den
+#: Bezug des Strafbeiwerts der Starrkoerper auf den Stand vor Runde k10
+#: zurueck (K samt Straffedern der starren Kopplungen). Im Programm False.
+STARRKOERPER_BEZUG_ALT = False
+
+
 def stiffness(model: Model, workers=None, aktiv=None) -> sparse.csr_matrix:
     """Gesamtsteifigkeit; ``aktiv`` (Maske je Element) laesst abgeschaltete
     Elemente einer Situation weg."""
@@ -850,10 +856,24 @@ def stiffness(model: Model, workers=None, aktiv=None) -> sparse.csr_matrix:
         val = np.array([k for _, k in springs])
         K = (K + sparse.coo_matrix((val, (idx, idx)), shape=K.shape)).tocsr()
     K_bezug = K                 # Elemente und Federn, ohne Straffedern (Stabenden-RBE3)
-    Kk = kopplungen(model, K, aktiv=aktiv)
+    teile: dict = {}
+    Kk = kopplungen(model, K, aktiv=aktiv, teile=teile)
     if Kk is not None:
         K = (K + Kk).tocsr()
-    Ks = starrkoerper(model, K, K_bezug=K_bezug)
+    # Bezug des Strafbeiwerts der Starrkoerper (Runde k10, 15.11.2026):
+    # Elemente, Federlager und die endlichen Federn der Kopplungen, nicht die
+    # Straffedern der starren Kopplungen. Vor Stand 68 stand hier K samt
+    # dieser Straffedern (1e4-mal die groesste Hauptdiagonale): der
+    # Starrkoerper bekam 1e4 * 1e4 = 1e8-mal die Steifigkeit der Elemente,
+    # und eine starre Kopplung an einem RBE2-Knoten lief auf „numerisch
+    # singulaer" (Residuum 0,0000044 gegen 0,000001). Ohne starre Kopplung
+    # ist "endlich" nicht gesetzt und der Bezug wie bisher K (bitgleich).
+    # STARRKOERPER_BEZUG_ALT nur fuer die Ruecknahmeprobe der Pruefdatei.
+    if "endlich" in teile and not STARRKOERPER_BEZUG_ALT:
+        K_ref = K_bezug if teile["endlich"] is None else (K_bezug + teile["endlich"]).tocsr()
+    else:
+        K_ref = K
+    Ks = starrkoerper(model, K_ref, K_bezug=K_bezug)
     return (K + Ks).tocsr() if Ks is not None else K
 
 
@@ -1643,7 +1663,8 @@ def stabende_zwang(X: np.ndarray, master: int, partner, moment: bool):
     return G, np.asarray(_trans_dofs(m) + [NDOF * q + j for q in P for j in range(3)], np.int64)
 
 
-def kopplungen(model: Model, K: sparse.spmatrix = None, aktiv=None) -> sparse.spmatrix:
+def kopplungen(model: Model, K: sparse.spmatrix = None, aktiv=None,
+               teile: dict = None) -> sparse.spmatrix:
     """Steifigkeit der Knotenkopplungen (Kontaktfugen, starr oder federnd).
 
     Fuer jede Richtung n mit der Steifigkeit k gilt zwischen den Knoten a und b
@@ -1678,6 +1699,11 @@ def kopplungen(model: Model, K: sparse.spmatrix = None, aktiv=None) -> sparse.sp
     Alle anderen Kopplungen (Kontaktfugen zwischen deckungsgleichen Knoten,
     von Hand) bleiben wie bisher; ohne Kopplungen der beiden Gruppen ist die
     Matrix bitgleich.
+
+    ``teile`` (ein dict, Runde k10, 15.11.2026): steckt in der Kopplung
+    mindestens eine Straffeder (starre Richtung), kommt unter "endlich" die
+    Matrix der endlichen Federn allein (None, wenn es keine gibt) - der
+    Bezug fuer den Strafbeiwert der Starrkoerper (:func:`stiffness`).
     """
     kopp = getattr(model, "kopplungen", None)
     if not kopp:
@@ -1689,6 +1715,7 @@ def kopplungen(model: Model, K: sparse.spmatrix = None, aktiv=None) -> sparse.sp
     gross = float(diag[diag > 0].max()) if np.any(diag > 0) else 1.0
     starr = 1e4 * gross
     rows, cols, vals = [], [], []
+    endlich: list = []                    # je Tripelblock: endliche Feder?
     kn_aktiv = None
     if aktiv is not None:
         # Die Huelle ueber Ketten (Starrkoerper und Kopplungen, 15.11.2026):
@@ -1723,19 +1750,29 @@ def kopplungen(model: Model, K: sparse.spmatrix = None, aktiv=None) -> sparse.sp
             rows.append(r.ravel())
             cols.append(cc.ravel())
             vals.append(ke.ravel())
+            endlich.append(bool(np.isfinite(wert)))
     if scheiben or enden:
-        _drehanteil_einbauen(model, scheiben, enden, starr, rows, cols, vals)
+        _drehanteil_einbauen(model, scheiben, enden, starr, rows, cols, vals, endlich)
     if not rows:
         return None
+    if teile is not None and not all(endlich):
+        idx = [i for i, e in enumerate(endlich) if e]
+        teile["endlich"] = sparse.coo_matrix(
+            (np.concatenate([vals[i] for i in idx]),
+             (np.concatenate([rows[i] for i in idx]), np.concatenate([cols[i] for i in idx]))),
+            shape=(n, n)) if idx else None
     return sparse.coo_matrix(
         (np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))),
         shape=(n, n))
 
 
 def _drehanteil_einbauen(model: Model, scheiben: dict, enden: dict, starr: float,
-                         rows: list, cols: list, vals: list) -> None:
+                         rows: list, cols: list, vals: list, endlich: list = None) -> None:
     """Die Kopplungen der starren Scheiben (RBE2) und der Stabenden (RBE3)
-    mit Drehanteil in die Tripel (siehe :func:`kopplungen`)."""
+    mit Drehanteil in die Tripel (siehe :func:`kopplungen`); ``endlich``
+    bekommt je Tripelblock, ob er eine endliche Feder ist."""
+    if endlich is None:
+        endlich = []
     X = np.asarray(model.nodes, float)
     bindung: set = set()
     if scheiben and any(EL.ist_quadratisch(e.typ) for e in model.elements if e.typ in SOLID_TYPES):
@@ -1766,6 +1803,7 @@ def _drehanteil_einbauen(model: Model, scheiben: dict, enden: dict, starr: float
                 rows.append(r_.ravel())
                 cols.append(cc.ravel())
                 vals.append((k * np.outer(c, c)).ravel())
+                endlich.append(bool(np.isfinite(wert)))
     if not enden:
         return
     from .elements import verbindung as vb
@@ -1778,6 +1816,7 @@ def _drehanteil_einbauen(model: Model, scheiben: dict, enden: dict, starr: float
         rows.append(r_.ravel())
         cols.append(cc.ravel())
         vals.append(Ke.ravel())
+        endlich.append(False)
 
 
 def mass(model: Model, workers=None, aktiv=None) -> sparse.csr_matrix:

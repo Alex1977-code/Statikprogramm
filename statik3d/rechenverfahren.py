@@ -2637,6 +2637,97 @@ def _maske_starrkoerper_im_ergebnis(model, an) -> str:
     return ("Knotenlast über Starrkörper oder Kette bei abgeschalteten Elementen: " + ", ".join(namen[:6])
             + (" …" if len(namen) > 6 else "")) if namen else ""
 
+def _starrkoerper_strafe_betroffen(model) -> bool:
+    """Modellmerkmal starrkoerper_strafe_bezug (Stand 68): ein Starrkoerper
+    (RBE2/RBE3, nicht die verteilende Kopplung eines Stabendes oder einer
+    Scheibe) und eine starre Knotenkopplung (mindestens eine Richtung
+    unendlich steif) im selben Modell. Nur dann hat sich der Strafbeiwert
+    des Starrkoerpers geaendert (assemble.stiffness)."""
+    try:
+        import numpy as np
+        from .stabeinleitung import ist_verteilkopplung
+        sk = [x for x in (getattr(model, "starrkoerper", None) or []) if not ist_verteilkopplung(x)]
+        if not sk:
+            return False
+        return any(not np.isfinite(w) for kp in (getattr(model, "kopplungen", None) or [])
+                   for _r, w in kp.paare())
+    except Exception:                                   # noqa: BLE001 - lieber betroffen als still
+        return True
+
+
+def _starrkoerper_strafe_im_ergebnis(model, an) -> str:
+    """Jedes Ergebnis eines Modells mit dem Merkmal: die Steifigkeit des
+    Starrkoerpers steckt in jedem Lastfall, jeder Kombination, im Knicken und
+    in den Eigenformen."""
+    if not _starrkoerper_strafe_betroffen(model):
+        return ""
+    paare = list(_ergebnis_paare(an))
+    if getattr(an, "kind", "") in ("buckling", "modal"):
+        paare.append((str(getattr(an, "name", "") or ""), an))
+    namen = sorted({str(n) for n, _r in paare if str(n)})
+    return ("Starrkörper neben starrer Knotenkopplung: " + (", ".join(namen[:6]) if namen else "alle Ergebnisse")
+            + (" …" if len(namen) > 6 else ""))
+
+
+def _modal_masselos_betroffen(model) -> bool:
+    """Modellmerkmal modal_massenrang (Stand 68, Runde k10b): ein Teil ohne
+    Masse - ein Element mit gewichtslosem Werkstoff (rho = 0) oder ein Knoten
+    ohne Element, den ein RBE3 oder eine Kopplung nicht voll haelt. Nur dann kann die
+    Massenmatrix weniger Richtungen haben als Freiheitsgrade mit Masse
+    (Zusatzmasse auf masselosen Teilen) oder K - sigma M singulaer sein
+    (frei beweglicher Teil ohne Masse: seither numerisch gehalten, Eigenformen
+    dort ohne die freie Bewegung, Teil im Hinweis genannt); beides hat sich in
+    solve_modal geaendert."""
+    try:
+        mats = getattr(model, "materials", None) or {}
+        im_element = set()
+        for e in getattr(model, "elements", None) or []:
+            im_element.update(int(n) for n in (getattr(e, "nodes", None) or []))
+            mat = mats.get(getattr(e, "mat", None))
+            if mat is not None and not float(getattr(mat, "rho", 0.0) or 0.0) > 0.0:
+                return True
+        # Ein RBE3 haelt seine Slaves nicht, und mit weniger als drei Slaves
+        # ist auch die Drehung des Masters nicht bestimmt; eine Kopplung in
+        # weniger als drei Richtungen laesst den Knoten in den uebrigen frei.
+        # RBE2-Slaves und voll gekoppelte Knoten sind gehalten.
+        lose = set()
+        for sk in getattr(model, "starrkoerper", None) or []:
+            if str(getattr(sk, "art", "")).upper() == "RBE3":
+                lose.update(int(n) for n in (sk.slaves or []))
+                if len(sk.slaves or []) < 3:
+                    lose.add(int(sk.master))
+        for kp in getattr(model, "kopplungen", None) or []:
+            if len(list(kp.paare())) < 3:
+                lose.update((int(kp.node_a), int(kp.node_b)))
+        return bool(lose - im_element)
+    except Exception:                                   # noqa: BLE001 - lieber betroffen als still
+        return True
+
+
+def _modal_masselos_im_ergebnis(model, an) -> str:
+    """Nur Eigenformen: die Statik, das Knicken und Theorie II/III rechnen
+    unveraendert.
+
+    Eigenformen stehen in einer Modalanalyse (Results der Art „modal“, nur in
+    der Sitzung) und im Schwingungsnachweis einer Analysis (Analysis.schwingung
+    mit res_luft und res_wasser; nur er steht in der Ergebnisdatei). Bis zur
+    Gegenpruefung k10b, Runde 2, sah diese Funktion nur die Art „modal“: beim
+    Oeffnen einer alten Datei war der Text leer, bewerten() wertete das als
+    „sicher nicht beruehrt“, und ein alter Schwingungsnachweis eines Modells mit
+    Teilen ohne Masse galt still als gueltig. Der Nachweis zaehlt ganz - auch
+    sein Lastfall der Druckschwankung haengt von den Eigenformen ab."""
+    if not _modal_masselos_betroffen(model):
+        return ""
+    if getattr(an, "kind", "") == "modal":
+        return "Eigenformen eines Modells mit Teilen ohne Masse: " + (str(getattr(an, "name", "") or "")
+                                                                      or "Modalanalyse")
+    sw = getattr(an, "schwingung", None)
+    if sw is not None:
+        return "Schwingungsnachweis eines Modells mit Teilen ohne Masse: " + (
+            str(getattr(sw, "name", "") or "") or "Schwingung")
+    return ""
+
+
 #: Die Tabelle (Einstufung des Anwenders vom 16.10.2026). Stand 1: Abbruch der
 #: Plastizitaet (a1194ef, 13.10.2026 19:32); Stand 1.5: die Korrekturen dazwischen
 #: (13.10. 23:09 bis 15.10. 12:56) - eine Datei ohne Angabe erkennt sie nur an
@@ -4031,10 +4122,48 @@ MERKMALE: list = [
                       "Kopplung) an einem wirksamen Element hängt - oder eine Kopplung an einem solchen Knoten, "
                       "auch im Spannschritt (Anker mit Sollkraft, Weg „spannen und verriegeln“)",
         betrifft=_maske_starrkoerper_betroffen, im_ergebnis=_maske_starrkoerper_im_ergebnis),
+    # Runde k10 (15.11.2026, vom Anwender freigegeben): der Strafbeiwert der
+    # Starrkoerper (RBE2/RBE3) bezog sich auf die groesste Hauptdiagonale samt
+    # der Straffedern der starren Knotenkopplungen (selbst 1e4-mal die
+    # Elementsteifigkeit) - der Starrkoerper wurde 1e8-mal so steif wie die
+    # Elemente. Eine starre Kopplung an einem RBE2-Knoten (Kragarm 3 m, 1 kN)
+    # brach mit „numerisch singulär" (Residuum 0,0000044) ab; Modelle, die
+    # rechneten, hatten eine schlechter konditionierte Matrix. Seither ohne
+    # diese Straffedern, also 1e4-mal wie bei der starren Kopplung.
+    # Fehlerkorrektur
+    Merkmal(
+        name="starrkoerper_strafe_bezug", titel="Strafbeiwert der Starrkörper neben starren Kopplungen",
+        texte={"alt": "Starrkörper 1e4-mal die größte Hauptdiagonale samt den Straffedern der starren "
+                      "Kopplungen (rund 1e8-mal die Elementsteifigkeit)",
+               "neu": "Starrkörper 1e4-mal die größte Hauptdiagonale der Elemente, Federlager und endlichen "
+                      "Kopplungsfedern - wie die starre Kopplung"},
+        wechsel=(Wechsel(stand=68, datum="15.11.2026", commit="fix/k10-num", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Starrkörper (RBE2/RBE3) und starre Knotenkopplung im selben Modell",
+        betrifft=_starrkoerper_strafe_betroffen, im_ergebnis=_starrkoerper_strafe_im_ergebnis),
+    # Runde k10b (15.11.2026): die Modalanalyse nahm so viele Eigenformen an,
+    # wie es Freiheitsgrade mit Masse gibt. Eine Zusatzmasse m n n^T auf
+    # masselosen Teilen hat je Knoten aber nur eine Richtung: an einer
+    # schraegen Wand mit 8 Knoten (24 Massen-FHG, Rang 8) kamen bei 10
+    # angeforderten Formen eine Scheinform mit 0 Hz und Formen ohne Bedeutung
+    # heraus. Ein masseloser Mechanismus (loser RBE3-Slave) lieferte Formen, in
+    # denen der lose Teil beliebig mitlief. Seither so viele Formen, wie M
+    # Richtungen hat, und Klartext beim masselosen Mechanismus.
+    # Fehlerkorrektur. Am Ergebnis: die Modalanalyse und der Schwingungsnachweis
+    # einer Analysis (nur er steht in der Ergebnisdatei).
+    Merkmal(
+        name="modal_massenrang", titel="Eigenformen bei Teilen ohne Masse",
+        texte={"alt": "so viele Eigenformen wie Freiheitsgrade mit Masse; masseloser Mechanismus ungeprüft",
+               "neu": "so viele Eigenformen, wie die Massenmatrix Richtungen hat; frei bewegliche Teile ohne "
+                      "Masse numerisch gehalten und genannt"},
+        wechsel=(Wechsel(stand=68, datum="15.11.2026", commit="fix/k10-num", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Teile ohne Masse (gewichtsloser Werkstoff, Knoten ohne Element an einem RBE3 oder an einer Kopplung in weniger als drei Richtungen)",
+        betrifft=_modal_masselos_betroffen, im_ergebnis=_modal_masselos_im_ergebnis),
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 65
+VERFAHRENSSTAND = 68
 
 
 def merkmal(name: str) -> Optional[Merkmal]:
