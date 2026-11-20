@@ -5207,6 +5207,14 @@ def _bewegungsbefund(model) -> list:
     for s in zeigen[:6]:
         wo = ", ".join(s.koerper[:3]) + (" …" if len(s.koerper) > 3 else "")
         satz = f"FEHLER: {s.text or (wo + ' ist beweglich')}"
+        # die Knoten des Teils (15.11.2026), Nummern wie in den Tabellen
+        try:
+            from .singular import knotenliste_text
+            kn = knotenliste_text(sorted(int(k) for k in (s.knoten or [])))
+        except Exception:                 # noqa: BLE001
+            kn = ""
+        if kn:
+            satz += f" ({kn})"
         if s.ursache:
             satz += f" - {s.ursache}"
         if abs(s.kraft) > 1e-6 or abs(s.moment) > 1e-6:
@@ -5235,8 +5243,12 @@ def _matrixbefund(model, system) -> tuple:
         # Der Fortschrittsempfaenger des Systems, falls es einen hat: diese
         # Diagnose faktorisiert ein zweites Mal und darf nicht stumm laufen.
         melden = getattr(system, "_progress", None)
+        # Die Elementmaske des Systems (Situation, Stab „aus“): ein
+        # abgeschaltetes Element ist nie der Traeger der Bewegung (15.11.2026)
         moden = weichster_modus(getattr(system, "K", None), model,
-                                getattr(system, "fi", None), melden=melden)
+                                getattr(system, "fi", None), melden=melden,
+                                aktiv=getattr(system, "aktiv", None),
+                                workers=getattr(system, "workers", None))
     except MatrixdiagnoseUnmoeglich as ex:
         return [], str(ex)
     except Exception as ex:               # noqa: BLE001

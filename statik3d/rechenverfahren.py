@@ -734,8 +734,8 @@ def _versatz_achsen_arm(model) -> bool:
             return True
         # das Eigengewicht eines Stabs mit Versatz (asm.element_equivalent_loads)
         try:
-            schwer = any(np.any(np.asarray(getattr(lc, "gravity", None) or [0.0, 0.0, 0.0], float))
-                         for lc in faelle.values())
+            from .model import hat_erdbeschleunigung
+            schwer = any(hat_erdbeschleunigung(lc) for lc in faelle.values())
             if not schwer:
                 return False
             mats = getattr(model, "materials", None) or {}
@@ -1931,9 +1931,9 @@ def _fachwerk_mit_querlast(model) -> bool:
     if _staebe_mit_last(model, ("truss", "seil")):
         return True
     import numpy as np
-    g = [np.asarray(getattr(lc, "gravity", None) or [0, 0, 0], float)
-         for lc in (getattr(model, "load_cases", None) or {}).values()]
-    g = [x for x in g if x.size == 3 and np.linalg.norm(x) > 0]
+    from .model import erdbeschleunigung
+    g = [erdbeschleunigung(lc) for lc in (getattr(model, "load_cases", None) or {}).values()]
+    g = [x for x in g if np.linalg.norm(x) > 0]
     if not g:
         return False
     X = np.asarray(getattr(model, "nodes", None), float).reshape(-1, 3)
@@ -2017,6 +2017,7 @@ def _querlast_lastfaelle(model) -> set:
     """Lastfaelle mit einer Querlast auf einem Fachwerkstab oder Seil: Stablast oder
     Eigengewicht quer zur Stabachse."""
     import numpy as np
+    from .model import erdbeschleunigung
     st = _staebe(model)
     stset = set(st)
     X = np.asarray(getattr(model, "nodes", None), float).reshape(-1, 3)
@@ -2025,8 +2026,8 @@ def _querlast_lastfaelle(model) -> set:
         if any(int(getattr(b, "elem", -1)) in stset for b in getattr(lc, "beam_loads", None) or []):
             out.add(n)
             continue
-        g = np.asarray(getattr(lc, "gravity", None) or [0, 0, 0], float)
-        if g.size != 3 or np.linalg.norm(g) <= 0:
+        g = erdbeschleunigung(lc)
+        if np.linalg.norm(g) <= 0:
             continue
         for i in st:
             e = model.elements[i]
@@ -2169,7 +2170,8 @@ def _theorie3_starrkoerper(model) -> bool:
     Situation ein Starrkoerper (RBE2/RBE3) oder eine starre Knotenkopplung
     wirkt - Theorie III. Ordnung liess die Starrkoerper bis zum 15.11.2026
     still weg und rechnete starre Kopplungen als Feder von 1e4 N/m (Runde k8).
-    Dieselbe Pruefung wie die Abweisung (theorie3.kopplung_sperre_modell)."""
+    Dieselbe Pruefung wie bis Stand 76 die Abweisung (heute
+    theorie3.kopplung_wirkung_modell)."""
     if not (getattr(model, "starrkoerper", None) or getattr(model, "kopplungen", None)):
         return False
     try:
@@ -2179,10 +2181,156 @@ def _theorie3_starrkoerper(model) -> bool:
     except Exception:                       # noqa: BLE001 - Pruefung, nie Abbruch
         return False
     try:
-        from .theorie3 import kopplung_sperre_modell
-        return bool(kopplung_sperre_modell(model))
+        # seit Runde k10e (16.11.2026) rechnet Theorie III. Ordnung sie mit;
+        # die Wirkung ist dieselbe Pruefung wie bis dahin die Abweisung
+        from .theorie3 import kopplung_wirkung_modell
+        return bool(kopplung_wirkung_modell(model))
     except Exception:                       # noqa: BLE001 - nicht pruefbar: möglicherweise betroffen
         return True
+
+
+def _theorie3_rbe2_angehaengt_neu(model) -> list:
+    """Lastfaelle und Kombinationen nach Theorie III. Ordnung, in deren
+    Rechnung seit Stand 77 (Runde k10e) ein RBE2 mitgefuehrt wird, den die
+    Rechnung bis dahin nicht las: er haengt nur an einem Knoten ohne Element,
+    der ueber eine starre Kopplung am Stab haengt (theorie3.rbe2_angehaengt_modell).
+    Sein anderer Knoten blieb automatisch festgehalten (Verschiebung 0)."""
+    if not getattr(model, "starrkoerper", None):
+        return []
+    from .theorie3 import rbe2_angehaengt_modell
+    return sorted({n for namen in rbe2_angehaengt_modell(model).values() for n in namen})
+
+
+def _theorie3_rbe2_angehaengt(model) -> bool:
+    """Modellmerkmal theorie3_rbe2_angehaengt (Stand 77)."""
+    try:
+        if not any(model.theorie_von(o) == "III"
+                   for o in list(model.load_cases.values()) + list(model.combinations.values())):
+            return False
+        return bool(_theorie3_rbe2_angehaengt_neu(model))
+    except Exception:                       # noqa: BLE001 - nicht pruefbar: möglicherweise betroffen
+        return True
+
+
+def _theorie3_rbe2_angehaengt_im_ergebnis(model, an) -> str:
+    """Ergebnisse nach Theorie III. Ordnung der Lastfaelle und Kombinationen
+    aus :func:`_theorie3_rbe2_angehaengt_neu` (bei einer Ergebniskombination
+    auch ihre Alternativen „EK [k]“)."""
+    try:
+        namen_neu = set(_theorie3_rbe2_angehaengt_neu(model))
+    except Exception:                       # noqa: BLE001
+        return None
+    if not namen_neu:
+        return ""
+    th3 = getattr(an, "theorie3", None)
+    namen = [str(n) for n in (getattr(th3, "kombinationen", None) or {})]
+    for n, r in _ergebnis_paare(an):
+        if str((getattr(r, "info", None) or {}).get("theorie", "")).startswith("III"):
+            namen.append(str(n))
+    namen = sorted({n for n in namen if n in namen_neu or n.split(" [")[0] in namen_neu})
+    return ("Theorie III. Ordnung mit RBE2 an angehängtem Knoten: " + ", ".join(namen[:6])
+            + (" …" if len(namen) > 6 else "")) if namen else ""
+
+
+def _theorie3_gelenk(model) -> bool:
+    """Ein Lastfall oder eine Kombination nach Theorie III. Ordnung und ein
+    Stab (Balken) mit Drehgelenk oder Drehfedergelenk, dessen Gelenke und
+    Federgelenke alle Drehungen sind - dort bildet Theorie III. Ordnung seit
+    Stand 75 (Runde k10d) das Gleichgewicht am Gelenk um die mitgedrehte
+    Gelenkachse (theorie3._Stab._gelenk_lage) statt kondensiert um die Sehne."""
+    try:
+        if not any(model.theorie_von(o) == "III"
+                   for o in list(model.load_cases.values()) + list(model.combinations.values())):
+            return False
+    except Exception:                       # noqa: BLE001 - Pruefung, nie Abbruch
+        return False
+    dreh = (3, 4, 5, 9, 10, 11)
+    for e in getattr(model, "elements", None) or []:
+        if getattr(e, "typ", "") != "beam":
+            continue
+        federn = [int(d) for d, k in (getattr(e, "hinge_springs", None) or []) if k and k > 0]
+        gelenke = [int(d) for d in (getattr(e, "hinges", None) or [])]
+        if (federn or gelenke) and all(d in dreh for d in federn + gelenke):
+            return True
+    return False
+
+
+def _th2_mindestteilung(model) -> bool:
+    """Modellmerkmal th2_mindestteilung: Stabteilung der Netzeinstellungen
+    unter 10 und ein Balken, den die interne Stabteilung teilen kann - seit
+    Stand 76 (Runde k10e, Nr. 29) teilen Theorie II. Ordnung, alpha_cr und
+    Knicken jeden Stab mit wirksamer Normalkraft mindestens in 10 Teile, auch
+    ohne Ersatzimperfektionen (stabteilung.th2_mindest)."""
+    try:
+        from .stabteilung import _th2_mindest_moeglich
+        return bool(_th2_mindest_moeglich(model))
+    except Exception:                       # noqa: BLE001 - nicht pruefbar: möglicherweise betroffen
+        return True
+
+
+def _th2_mindestteilung_im_ergebnis(model, an) -> str:
+    """alpha_cr, Theorie II. Ordnung oder Knicken im Ergebnis - Merkmal
+    th2_mindestteilung (Theorie III. Ordnung unveraendert)."""
+    t = _alpha_cr_im_ergebnis(model, an)
+    if not t and getattr(an, "kind", "") == "buckling":
+        t = "Knicken: " + str(getattr(an, "name", "") or "Knicken")
+    return t
+
+
+def _theorie3_anschluss_neu(model) -> list:
+    """Lastfaelle und Kombinationen nach Theorie III. Ordnung, die seit Stand
+    66 (Runde k10) abgewiesen werden und davor gerechnet wurden: der Anschluss
+    eines Stabendes an einen Koerper (Kopplung „Stabende“ oder verteilende
+    Kopplung) wirkt, obwohl kein Koerperknoten mittraegt - die Koerperseite
+    erreicht ueber Starrkoerper und Kopplungen einen Lager- oder Lastknoten
+    (Knoten-, Linien-, Flaechenlager; Knotenlast oder Punktmasse unter
+    Eigengewicht, je Lastfall bzw. Kombination mit deren Lastfaellen und
+    Faktoren - theorie3._lastknoten; ohne Situation wirkten diese
+    Kopplungen in Theorie I. Ordnung immer, die Starrkoerper immer) oder
+    einen mittragenden Knoten (zweites Stabende). Vergleich der Abweisung
+    heute und mit der Regel bis Runde k10 (theorie3.kopplung_wirkung_modell,
+    ``alt``); nur das Ob zaehlt, nicht der Text."""
+    if not (getattr(model, "starrkoerper", None) or getattr(model, "kopplungen", None)):
+        return []
+    # Wirkung statt Abweisung: seit Runde k10e (16.11.2026) rechnet Theorie
+    # III. Ordnung diese Kopplungen mit (theorie3.kopplung_wirkung_modell ist
+    # die Pruefung, die bis dahin abwies)
+    from .theorie3 import kopplung_wirkung_modell
+    neu = {n: t for t, namen in kopplung_wirkung_modell(model).items() for n in namen}
+    if not neu:
+        return []
+    alt = {n: t for t, namen in kopplung_wirkung_modell(model, alt=True).items() for n in namen}
+    # nur, was vorher gar nicht abgewiesen wurde - ein anderer Text der
+    # Abweisung (eine zweite Kopplung kommt dazu) aendert kein Ergebnis
+    return sorted(n for n in neu if n not in alt)
+
+
+def _theorie3_anschluss_betrifft(model) -> bool:
+    """Modellmerkmal theorie3_stabende_anschluss (Stand 66)."""
+    try:
+        return bool(_theorie3_anschluss_neu(model))
+    except Exception:                       # noqa: BLE001 - nicht pruefbar: möglicherweise betroffen
+        return True
+
+
+def _theorie3_anschluss_im_ergebnis(model, an) -> str:
+    """Ergebnisse nach Theorie III. Ordnung der Lastfaelle und Kombinationen
+    aus :func:`_theorie3_anschluss_neu` (bei einer Ergebniskombination auch
+    ihre Alternativen „EK [k]“)."""
+    try:
+        namen_neu = set(_theorie3_anschluss_neu(model))
+    except Exception:                       # noqa: BLE001
+        return ""
+    if not namen_neu:
+        return ""
+    th3 = getattr(an, "theorie3", None)
+    namen = [str(n) for n in (getattr(th3, "kombinationen", None) or {})]
+    for n, r in _ergebnis_paare(an):
+        if str((getattr(r, "info", None) or {}).get("theorie", "")).startswith("III"):
+            namen.append(str(n))
+    namen = sorted({n for n in namen if n in namen_neu or n.split(" [")[0] in namen_neu})
+    return ("Theorie III. Ordnung mit Anschluss eines Stabendes: " + ", ".join(namen[:6])
+            + (" …" if len(namen) > 6 else "")) if namen else ""
 
 
 def _ergebnis_paare(an) -> list:
@@ -2473,7 +2621,7 @@ def _maske_kette_moeglich(model) -> bool:
                for l in (getattr(lc, "nodal_loads", None) or []))
 
 
-def _maske_kette_masken(model) -> list:
+def _maske_kette_masken(model, einser: bool = False) -> list:
     """[(Maske, Lastfaelle, nur_kopplungen)] - die Elementmasken, unter denen die
     Lastfaelle gerechnet werden:
 
@@ -2486,14 +2634,25 @@ def _maske_kette_masken(model) -> list:
       Lastfall und je Kombination mit Sollkraft (direkt gerechnet: Kombinationen
       mit mehreren Gruppen). Dort zaehlen nur die Kopplungen; das Kraeftepaar
       rechnet vorspannkraft._stablast mit der Maske der Situation.
+    * je Schwingungsnachweis (Model.schwingungen) die Maske der Situation
+      seines Wasserdruck-Generierers (schwingung.nachweis rechnet die
+      Eigenformen dort, solve_modal mit der Maske), unter dem Namen
+      :func:`schwingung_schluessel`. Dort zaehlen nur die Kopplungen - die
+      Massenmatrix maskiert die Punktmassen nicht (seit Runde k10,
+      15.11.2026; bis dahin erkannte das Merkmal die Schwingung nicht).
+
+    ``einser`` (Merkmal maske_stabende_kopplung, Stand 71): auch die
+    Einsermaske einer Situation, die nichts abschaltet, wenn das Modell einen
+    Stab „aus“ ohne Elemente hat (Model.grundmaske ist dann eine Einsermaske,
+    solver.StaticSystem rechnet mit ihr).
 
     Gleiche Masken stehen einmal darin, mit allen ihren Lastfaellen."""
     import numpy as np
     from . import vorspannkraft as vk
     je: dict = {}
 
-    def dazu(aktiv, lfs, nur_kopp):
-        if aktiv is None or not lfs or bool(aktiv.all()):
+    def dazu(aktiv, lfs, nur_kopp, einser_ok=False):
+        if aktiv is None or not lfs or (bool(aktiv.all()) and not einser_ok):
             return
         key = (aktiv.tobytes(), bool(nur_kopp))
         if key in je:
@@ -2513,9 +2672,19 @@ def _maske_kette_masken(model) -> list:
             masken_sit[sit] = None if m is None else np.asarray(m, dtype=bool)
         return masken_sit[sit]
 
+    try:
+        einser = bool(einser) and model.grundmaske() is not None
+    except Exception:                                   # noqa: BLE001
+        einser = False
     for sit in [""] + list(getattr(model, "situationen", None) or {}):
         dazu(maske_sit(sit), {str(n) for n, lc in lcs.items() if str(getattr(lc, "situation", "") or "") == sit},
-             False)
+             False, einser)
+    # Schwingungsnachweise: Eigenformen in der Situation ihres Wasserdruck-Generierers
+    wds = getattr(model, "wasserdruecke", None) or {}
+    for name, sn in (getattr(model, "schwingungen", None) or {}).items():
+        wd = wds.get(str(getattr(sn, "wasserdruck", "") or ""))
+        if wd is not None:
+            dazu(maske_sit(str(getattr(wd, "situation", "") or "")), {schwingung_schluessel(name)}, True)
     # Spannschritt: Lastfaelle mit Sollkraft, dazu die Kombinationen aus ihnen
     mit_soll = set()
     faelle = []
@@ -2575,14 +2744,161 @@ def _maske_kette_lastfaelle(model) -> set:
     Gegenpruefung vom 15.11.2026 nur die Masken der Situationen, nicht die des
     Spannschritts (Anker mit Sollkraft 100 kN, Ende per Federkopplung an einem
     Knoten ohne Element, der per RBE2 am Koerper haengt: Stand 64 76 775 N
-    statt 100 000 N mit „Mechanismus“, das Merkmal sagte „nicht betroffen“)."""
-    if not _maske_kette_moeglich(model):
+    statt 100 000 N mit „Mechanismus“, das Merkmal sagte „nicht betroffen“).
+
+    Seit Runde k10 (15.11.2026) auch die Schwingungsnachweise in einer
+    Situation (unter :func:`schwingung_schluessel`), und verglichen wird mit der
+    Maske bis Stand 66 (situationen.huelle mit ``bis_66``), damit dieses
+    Merkmal nur den Wechsel von Stand 65 meldet; den von Stand 67 meldet
+    :func:`_maske_lager_lastfaelle`."""
+    from .situationen import huelle
+
+    def alt(model_, aktiv, kn):
+        return _wirksame_knoten_bis_64(model_, aktiv, kn)
+
+    def neu(model_, aktiv, kn):
+        return huelle(model_, aktiv, kn, bis_66=True)
+
+    return _maske_vergleich(model, alt, neu)
+
+
+def _maske_lager_lastfaelle(model) -> set:
+    """Lastfaelle und Schwingungsnachweise (:func:`schwingung_schluessel`), deren
+    Ergebnis die Maske des Stands 67 aendern kann (Runde k10, 15.11.2026): ein
+    Lagerknoten, an dem nur abgeschaltete Elemente haengen, traegt mit, und die
+    verteilende Kopplung eines Stabendes mit Slaves ohne Element loest ueber den
+    Master aus (situationen.wirksame_knoten gegen situationen.huelle mit
+    ``bis_66``) - eine Kopplung, die seither bleibt, oder eine Knotenlast bzw.
+    Punktmasse an einem Knoten, der seither mittraegt."""
+    from .situationen import huelle, wirksame_knoten
+
+    def alt(model_, aktiv, kn):
+        h = huelle(model_, aktiv, kn, bis_66=True)
+        return h, h
+
+    def neu(model_, aktiv, kn):
+        # bis Stand 70: den Wechsel von Stand 71 meldet _maske_stabende_lastfaelle
+        return huelle(model_, aktiv, kn, bis_70=True)
+
+    return _maske_vergleich(model, alt, neu)
+
+
+def _stabende_kopplungen(model) -> list:
+    """Die Kopplungen der Stabenden (fugen.STABENDE_GRUPPE)."""
+    from .situationen import _stabende_gruppe
+    g = _stabende_gruppe()
+    return [kp for kp in (getattr(model, "kopplungen", None) or [])
+            if str(getattr(kp, "gruppe", "") or "").startswith(g)]
+
+
+def _maske_stabende_lastfaelle(model) -> set:
+    """Lastfaelle (auch die Lastfaelle der Kombinationen nach Theorie III.
+    Ordnung) und Schwingungsnachweise, deren Ergebnis die Regel des Stands 71
+    aendern kann (Runde k10c, 15.11.2026): die Kopplung eines Stabendes an
+    einem Koerperknoten ohne jedes Element bleibt auch ueber den wirksamen
+    Stabknoten (situationen.kopplung_bleibt mit ``tot``).
+
+    * Unter jeder Maske aus :func:`_maske_kette_masken` (auch der Einsermaske
+      eines Stabs „aus“ ohne Elemente): eine Kopplung, die seither bleibt, oder
+      eine Knotenlast bzw. Punktmasse an einem Knoten, der seither mittraegt
+      (situationen.wirksame_knoten gegen situationen.huelle mit ``bis_70``).
+    * Nach Theorie III. Ordnung auch ohne Maske: eine starre Kopplung eines
+      Stabendes, die die Abweisung (theorie3.starre_kopplung_sperre) seither
+      zaehlt - bis Stand 70 rechnete Theorie III. Ordnung sie still als Feder
+      von 1e4 N/m (Last 1 kN am Koerperknoten Q ohne Element: w(Q) 100,54 statt
+      0,54 mm)."""
+    kopp = _stabende_kopplungen(model)
+    if not kopp:
         return set()
-    masken = _maske_kette_masken(model)
+    from .situationen import huelle, wirksame_knoten
+
+    def alt(model_, aktiv, kn):
+        h = huelle(model_, aktiv, kn, bis_70=True)
+        return h, h
+
+    def neu(model_, aktiv, kn):
+        return wirksame_knoten(model_, aktiv, kn)
+
+    out = _maske_vergleich(model, alt, neu, stabende_neu=True, einser=True)
+    return out | _th3_stabende_lastfaelle(model, kopp)
+
+
+def _th3_stabende_lastfaelle(model, kopp: list) -> set:
+    """Die Lastfaelle der Lastfaelle und Kombinationen nach Theorie III.
+    Ordnung, in deren Situation eine starre Kopplung eines Stabendes seit
+    Stand 71 zur Abweisung zaehlt und vorher nicht
+    (:func:`_maske_stabende_lastfaelle`)."""
+    import numpy as np
+    starr = [kp for kp in kopp if any(not np.isfinite(w) for _r, w in kp.paare())]
+    if not starr:
+        return set()
+    try:
+        objekte = [o for o in list(model.load_cases.values()) + list(model.combinations.values())
+                   if model.theorie_von(o) == "III"]
+    except Exception:                                   # noqa: BLE001 - Pruefung, nie Abbruch
+        return set()
+    if not objekte:
+        return set()
+    # Zusammenfuehrung k10 (16.11.2026): Theorie III. Ordnung entscheidet
+    # ueber den Anschluss eines Stabendes mit theorie3._th3_wirkung (fix/k10-th3,
+    # Stand 66) - der Anschluss zaehlt ueber das Stabende, wenn die
+    # Koerperseite einen Lager-, Last- oder mittragenden Knoten erreicht. Die
+    # Regel des Stands 71 (Koerperknoten ohne jedes Element) ist darin
+    # enthalten, ausser bei einem Koerperknoten, der nichts haelt und nichts
+    # traegt (dort weist Theorie III. Ordnung nicht ab, sie rechnet richtig).
+    # Verglichen wird darum die Wirkung heute mit der Regel davor (``alt``,
+    # nur ueber einen mittragenden Koerperknoten wie situationen.kopplung_bleibt
+    # bis Stand 70); ohne Faktoren zaehlen die Lasten aller Lastfaelle.
+    from .theorie3 import _th3_wirkung, _nur_staebe
+    idx = [i for i, kp in enumerate(getattr(model, "kopplungen", None) or [])
+           if any(kp is s for s in starr)]
+    out: set = set()
+    je: dict = {}
+    for o in objekte:
+        sit = str(getattr(o, "situation", "") or "")
+        if sit not in je:
+            try:
+                aktiv = model.aktive_elemente(sit)
+            except KeyError:
+                aktiv = None
+            if aktiv is not None and bool(np.asarray(aktiv).all()):
+                aktiv = None
+            neu_ = alt_ = False
+            if _nur_staebe(model, aktiv):
+                kp_neu = _th3_wirkung(model, aktiv)[2]
+                kp_alt = _th3_wirkung(model, aktiv, alt=True)[2]
+                neu_ = any(kp_neu[i] for i in idx)
+                alt_ = any(kp_alt[i] for i in idx)
+            je[sit] = neu_ and not alt_
+        if je[sit]:
+            name = str(o.name)
+            out |= _lastfaelle_von(model, name) or {name}
+    return out
+
+
+def _maske_vergleich(model, alt, neu, stabende_neu: bool = False, einser: bool = False) -> set:
+    """Lastfaelle (und Schwingungsnachweise), deren Ergebnis sich zwischen zwei
+    Knotenmasken unterscheiden kann, unter jeder Maske aus
+    :func:`_maske_kette_masken`. ``alt(model, aktiv, kn)`` gibt (Knotenmaske der
+    Kopplungen, Knotenmaske der Lasten) des alten Stands, ``neu(model, aktiv,
+    kn)`` die heutige Maske (fuer beides); ``kn`` sind die Knoten mit wirksamem
+    Element. Betroffen: eine Kopplung, die heute bleibt und vorher entfiel
+    (assemble.kopplungen) - oder, ausser im Spannschritt und in der Schwingung,
+    eine Knotenlast oder (bei Eigengewicht) eine Punktmasse an einem Knoten,
+    der heute mittraegt und vorher nicht.
+
+    ``stabende_neu``: heute bleibt die Kopplung eines Stabendes auch ueber den
+    Stabknoten (situationen.kopplung_bleibt mit den Knoten abgeschalteter
+    Elemente, Stand 71); ``einser``: auch Einsermasken
+    (:func:`_maske_kette_masken`)."""
+    if not stabende_neu and not _maske_kette_moeglich(model):
+        return set()
+    masken = _maske_kette_masken(model, einser=einser)
     if not masken:
         return set()
     import numpy as np
-    from .situationen import wirksame_knoten, kopplung_bleibt
+    from .model import hat_erdbeschleunigung
+    from .situationen import kopplung_bleibt
     flach, zahl = _element_knoten(model)
     nn = int(model.nn)
     kopplungen = list(getattr(model, "kopplungen", None) or [])
@@ -2597,44 +2913,349 @@ def _maske_kette_lastfaelle(model) -> set:
             continue
         kn = np.zeros(nn, dtype=bool)
         kn[flach[np.repeat(aktiv, zahl)]] = True
-        kn, alt = _wirksame_knoten_bis_64(model, aktiv, kn)
-        neu = wirksame_knoten(model, aktiv, kn)
-        if any(kopplung_bleibt(model, kp, neu) and not kopplung_bleibt(model, kp, kn) for kp in kopplungen):
+        alt_kopp, alt_last = alt(model, aktiv, kn)
+        jetzt = neu(model, aktiv, kn)
+        tot = None
+        if stabende_neu:
+            tot = np.zeros(nn, dtype=bool)
+            tot[flach[np.repeat(~np.asarray(aktiv, dtype=bool), zahl)]] = True
+        if any(kopplung_bleibt(model, kp, jetzt, tot) and not kopplung_bleibt(model, kp, alt_kopp)
+               for kp in kopplungen):
             out |= offen
             continue
         if nur_kopp:
             continue
-        knoten = {int(n) for n in np.flatnonzero(neu & ~alt)}
+        knoten = {int(n) for n in np.flatnonzero(jetzt & ~alt_last)}
         if not knoten:
             continue
         for name in offen:
             lc = lcs.get(name)
             last = {int(l.node) for l in getattr(lc, "nodal_loads", None) or []
                     if any(float(x) for x in (l.F or []))}
-            if any(float(x) for x in (getattr(lc, "gravity", None) or [])):
+            if hat_erdbeschleunigung(lc):
                 last |= {n for n, m in pm.items() if m > 0}
             if last & knoten:
                 out.add(name)
     return out
 
 
-def _maske_starrkoerper_betroffen(model) -> bool:
-    """Modellmerkmal maske_starrkoerper_last: ein Lastfall, dessen Last oder
-    Steifigkeit unter seiner Elementmaske seit Stand 65 anders wirkt."""
-    return bool(_maske_kette_lastfaelle(model))
+#: Vorsilbe der Schwingungsnachweise in den Lastfallmengen der Maskenmerkmale
+#: (kein Lastfallname beginnt mit dem Steuerzeichen)
+_SCHWINGUNG = "\x00Schwingung "
 
 
-def _maske_starrkoerper_im_ergebnis(model, an) -> str:
-    """Ergebnisse (Lastfaelle, Kombinationen, Knicken), deren Lastfaelle
-    :func:`_maske_kette_lastfaelle` nennt."""
-    lfs = _maske_kette_lastfaelle(model)
+def schwingung_schluessel(name) -> str:
+    """Der Name eines Schwingungsnachweises in den Mengen von
+    :func:`_maske_kette_masken` (neben den Lastfaellen)."""
+    return _SCHWINGUNG + str(name)
+
+
+def _masken_im_ergebnis(model, an, lfs: set, titel: str) -> str:
+    """Ergebnisse (Lastfaelle, Kombinationen, Knicken, Schwingungsnachweis der
+    Analyse), deren Lastfaelle bzw. Schwingungsnachweis in ``lfs`` stehen."""
     if not lfs:
         return ""
     paare = list(_ergebnis_paare(an))
     if getattr(an, "kind", "") == "buckling":
         paare.append((str(getattr(an, "name", "") or ""), an))
     namen = sorted({str(n) for n, _r in paare if _lastfaelle_von(model, n) & lfs})
-    return ("Knotenlast über Starrkörper oder Kette bei abgeschalteten Elementen: " + ", ".join(namen[:6])
+    sw = getattr(an, "schwingung", None)
+    if sw is not None and schwingung_schluessel(getattr(sw, "name", "")) in lfs:
+        namen.append(f"Schwingungsnachweis „{getattr(sw, 'name', '')}“")
+    return (titel + ": " + ", ".join(namen[:6]) + (" …" if len(namen) > 6 else "")) if namen else ""
+
+
+def _maske_starrkoerper_betroffen(model) -> bool:
+    """Modellmerkmal maske_starrkoerper_last: ein Lastfall oder
+    Schwingungsnachweis, dessen Last oder Steifigkeit unter seiner Elementmaske
+    seit Stand 65 anders wirkt."""
+    return bool(_maske_kette_lastfaelle(model))
+
+
+def _maske_starrkoerper_im_ergebnis(model, an) -> str:
+    """Ergebnisse (Lastfaelle, Kombinationen, Knicken, Schwingung), deren
+    Lastfaelle :func:`_maske_kette_lastfaelle` nennt."""
+    return _masken_im_ergebnis(model, an, _maske_kette_lastfaelle(model),
+                               "Knotenlast über Starrkörper oder Kette bei abgeschalteten Elementen")
+
+
+def _maske_lager_betroffen(model) -> bool:
+    """Modellmerkmal maske_lager_verteilung (Stand 67): ein Lastfall oder
+    Schwingungsnachweis, dessen Last oder Steifigkeit unter seiner Elementmaske
+    seit Stand 67 anders wirkt."""
+    return bool(_maske_lager_lastfaelle(model))
+
+
+def _maske_stabende_betroffen(model) -> bool:
+    """Modellmerkmal maske_stabende_kopplung (Stand 71): ein Lastfall,
+    Schwingungsnachweis oder eine Rechnung nach Theorie III. Ordnung, deren
+    Last, Steifigkeit oder Abweisung seit Stand 71 anders wirkt."""
+    return bool(_maske_stabende_lastfaelle(model))
+
+
+def _maske_stabende_im_ergebnis(model, an) -> str:
+    """Ergebnisse, deren Lastfaelle :func:`_maske_stabende_lastfaelle` nennt."""
+    return _masken_im_ergebnis(model, an, _maske_stabende_lastfaelle(model),
+                               "Kopplung eines Stabendes an einem Knoten ohne Element")
+
+
+def _maske_lager_im_ergebnis(model, an) -> str:
+    """Ergebnisse, deren Lastfaelle :func:`_maske_lager_lastfaelle` nennt."""
+    return _masken_im_ergebnis(model, an, _maske_lager_lastfaelle(model),
+                               "Last am Lager abgeschalteter Elemente oder an verteilender Kopplung")
+
+
+def _starrkoerper_strafe_betroffen(model) -> bool:
+    """Modellmerkmal starrkoerper_strafe_bezug (Stand 68): ein Starrkoerper
+    (RBE2/RBE3, nicht die verteilende Kopplung eines Stabendes oder einer
+    Scheibe) und eine starre Knotenkopplung (mindestens eine Richtung
+    unendlich steif) im selben Modell. Nur dann hat sich der Strafbeiwert
+    des Starrkoerpers geaendert (assemble.stiffness)."""
+    try:
+        import numpy as np
+        from .stabeinleitung import ist_verteilkopplung
+        sk = [x for x in (getattr(model, "starrkoerper", None) or []) if not ist_verteilkopplung(x)]
+        if not sk:
+            return False
+        return any(not np.isfinite(w) for kp in (getattr(model, "kopplungen", None) or [])
+                   for _r, w in kp.paare())
+    except Exception:                                   # noqa: BLE001 - lieber betroffen als still
+        return True
+
+
+def _starrkoerper_strafe_im_ergebnis(model, an) -> str:
+    """Jedes Ergebnis eines Modells mit dem Merkmal: die Steifigkeit des
+    Starrkoerpers steckt in jedem Lastfall, jeder Kombination, im Knicken und
+    in den Eigenformen."""
+    if not _starrkoerper_strafe_betroffen(model):
+        return ""
+    paare = list(_ergebnis_paare(an))
+    if getattr(an, "kind", "") in ("buckling", "modal"):
+        paare.append((str(getattr(an, "name", "") or ""), an))
+    namen = sorted({str(n) for n, _r in paare if str(n)})
+    return ("Starrkörper neben starrer Knotenkopplung: " + (", ".join(namen[:6]) if namen else "alle Ergebnisse")
+            + (" …" if len(namen) > 6 else ""))
+
+
+def _modal_masselos_betroffen(model) -> bool:
+    """Modellmerkmal modal_massenrang (Stand 68, Runde k10b): ein Teil ohne
+    Masse - ein Element mit gewichtslosem Werkstoff (rho = 0) oder ein Knoten
+    ohne Element, den ein RBE3 oder eine Kopplung nicht voll haelt. Nur dann kann die
+    Massenmatrix weniger Richtungen haben als Freiheitsgrade mit Masse
+    (Zusatzmasse auf masselosen Teilen) oder K - sigma M singulaer sein
+    (frei beweglicher Teil ohne Masse: seither numerisch gehalten, Eigenformen
+    dort ohne die freie Bewegung, Teil im Hinweis genannt); beides hat sich in
+    solve_modal geaendert."""
+    try:
+        mats = getattr(model, "materials", None) or {}
+        im_element = set()
+        for e in getattr(model, "elements", None) or []:
+            im_element.update(int(n) for n in (getattr(e, "nodes", None) or []))
+            mat = mats.get(getattr(e, "mat", None))
+            if mat is not None and not float(getattr(mat, "rho", 0.0) or 0.0) > 0.0:
+                return True
+        # Ein RBE3 haelt seine Slaves nicht, und mit weniger als drei Slaves
+        # ist auch die Drehung des Masters nicht bestimmt; eine Kopplung in
+        # weniger als drei Richtungen laesst den Knoten in den uebrigen frei.
+        # RBE2-Slaves und voll gekoppelte Knoten sind gehalten.
+        lose = set()
+        for sk in getattr(model, "starrkoerper", None) or []:
+            if str(getattr(sk, "art", "")).upper() == "RBE3":
+                lose.update(int(n) for n in (sk.slaves or []))
+                if len(sk.slaves or []) < 3:
+                    lose.add(int(sk.master))
+        for kp in getattr(model, "kopplungen", None) or []:
+            if len(list(kp.paare())) < 3:
+                lose.update((int(kp.node_a), int(kp.node_b)))
+        return bool(lose - im_element)
+    except Exception:                                   # noqa: BLE001 - lieber betroffen als still
+        return True
+
+
+def _rbe3_fesselung_betroffen(model) -> bool:
+    """Modellmerkmal rbe3_fesselung_bezug (Stand 70): ein frei definierter
+    RBE3 (nicht die verteilende Kopplung eines Stabendes oder einer Scheibe)
+    mit mindestens einem Slave. Nur seine Straffeder (k mal die Gewichtssumme
+    im Quadrat) hob den Bezug der automatischen Fesselung."""
+    try:
+        from .stabeinleitung import ist_verteilkopplung
+        return any(str(getattr(x, "art", "")).upper() == "RBE3" and not ist_verteilkopplung(x)
+                   and len(getattr(x, "slaves", None) or []) > 0
+                   for x in (getattr(model, "starrkoerper", None) or []))
+    except Exception:                                   # noqa: BLE001 - lieber betroffen als still
+        return True
+
+
+def _modal_masselos_im_ergebnis(model, an) -> str:
+    """Nur Eigenformen: die Statik, das Knicken und Theorie II/III rechnen
+    unveraendert.
+
+    Eigenformen stehen in einer Modalanalyse (Results der Art „modal“, nur in
+    der Sitzung) und im Schwingungsnachweis einer Analysis (Analysis.schwingung
+    mit res_luft und res_wasser; nur er steht in der Ergebnisdatei). Bis zur
+    Gegenpruefung k10b, Runde 2, sah diese Funktion nur die Art „modal“: beim
+    Oeffnen einer alten Datei war der Text leer, bewerten() wertete das als
+    „sicher nicht beruehrt“, und ein alter Schwingungsnachweis eines Modells mit
+    Teilen ohne Masse galt still als gueltig. Der Nachweis zaehlt ganz - auch
+    sein Lastfall der Druckschwankung haengt von den Eigenformen ab."""
+    if not _modal_masselos_betroffen(model):
+        return ""
+    if getattr(an, "kind", "") == "modal":
+        return "Eigenformen eines Modells mit Teilen ohne Masse: " + (str(getattr(an, "name", "") or "")
+                                                                      or "Modalanalyse")
+    sw = getattr(an, "schwingung", None)
+    if sw is not None:
+        return "Schwingungsnachweis eines Modells mit Teilen ohne Masse: " + (
+            str(getattr(sw, "name", "") or "") or "Schwingung")
+    return ""
+
+
+def _rbe3_fesselung_im_ergebnis(model, an) -> str:
+    """Jedes Ergebnis eines Modells mit dem Merkmal: die automatische Fesselung
+    gilt fuer jeden Lastfall, jede Kombination, das Knicken und die
+    Eigenformen."""
+    if not _rbe3_fesselung_betroffen(model):
+        return ""
+    paare = list(_ergebnis_paare(an))
+    if getattr(an, "kind", "") in ("buckling", "modal"):
+        paare.append((str(getattr(an, "name", "") or ""), an))
+    namen = sorted({str(n) for n, _r in paare if str(n)})
+    return ("frei definierter RBE3: " + (", ".join(namen[:6]) if namen else "alle Ergebnisse")
+            + (" …" if len(namen) > 6 else ""))
+
+
+def _eigenpaare_im_ergebnis(model, an) -> str:
+    """Merkmal eigenpaare_geprueft (Stand 78): Knicken, alpha_cr oder Theorie
+    II. Ordnung (alpha_cr „auto“) in einem Modell mit frei definiertem RBE3."""
+    if not _rbe3_fesselung_betroffen(model):
+        return ""
+    teile = [t for t in (_alpha_cr_im_ergebnis(model, an),) if t]
+    if getattr(an, "kind", "") == "buckling" and not teile:
+        teile.append("Knicken: " + str(getattr(an, "name", "") or "Knicken"))
+    return "; ".join(teile)
+
+
+#: Ab so vielen Staeben mit Nachweis lief der EC3-Nachweis bei mehreren
+#: Arbeitern von selbst ueber Arbeitsprozesse (ec3.design.check_members)
+EC3_AUFTRAEGE_AB = 24
+
+
+def _ec3_staebe_mit_nachweis(model) -> int:
+    ne = len(getattr(model, "elements", None) or [])
+    return sum(1 for mem in (getattr(model, "members", None) or {}).values()
+               if getattr(mem, "design", False)
+               and any(0 <= int(e) < ne for e in (getattr(mem, "elements", None) or [])))
+
+
+def _ec3_auftraege_moeglich(model) -> bool:
+    """Ob der EC3-Nachweis dieses Modells ueber Arbeitsprozesse gelaufen sein
+    kann: ab 24 Staeben mit Nachweis (bei mehreren Arbeitern) oder ueber die
+    Rechnerfarm (jede Stabzahl)."""
+    n = _ec3_staebe_mit_nachweis(model)
+    if n >= EC3_AUFTRAEGE_AB:
+        return True
+    if not n:
+        return False
+    try:
+        from . import parallel
+        return parallel.settings().backend == "farm"
+    except Exception:                       # noqa: BLE001 - nicht pruefbar: möglicherweise betroffen
+        return True
+
+
+def _ec3_auftraege_th2_betroffen(model) -> bool:
+    """Modellmerkmal ec3_auftraege_th2: ein EC3-Nachweis, der ueber
+    Arbeitsprozesse laufen kann, und ein Lastfall oder eine Kombination nach
+    Theorie II. oder III. Ordnung. Bis Stand 68 liess ec3.design._strip beim
+    Versand an die Arbeitsprozesse die Felder beam_th2 und beam_teile weg
+    (Runde k10, Stand 69)."""
+    if not _ec3_auftraege_moeglich(model):
+        return False
+    try:
+        return any(model.theorie_von(o) in ("II", "III")
+                   for o in list(model.load_cases.values()) + list(model.combinations.values()))
+    except Exception:                       # noqa: BLE001 - nicht pruefbar: möglicherweise betroffen
+        return True
+
+
+def _ec3_auftraege_th2_im_ergebnis(model, an) -> str:
+    """Ergebnisse nach Theorie II./III. Ordnung, gegen die ein EC3-Nachweis
+    im Ergebnis steht - nur, wenn er ueber Arbeitsprozesse gelaufen sein kann."""
+    if getattr(an, "design", None) is None or not _ec3_auftraege_moeglich(model):
+        return ""
+    namen = sorted({str(n) for n, r in _ergebnis_paare(an)
+                    if str((getattr(r, "info", None) or {}).get("theorie", "")).startswith("II")})
+    return ("EC3-Nachweis über Arbeitsprozesse nach Theorie II./III. Ordnung: " + ", ".join(namen[:6])
+            + (" …" if len(namen) > 6 else "")) if namen else ""
+
+def _vorkruemmung_moeglich(model) -> bool:
+    """Modellmerkmal vorkruemmung_streckenlast: Ersatzimperfektionen an, ein
+    Stab (Member) mit Balken und ein Lastfall oder eine Kombination nach
+    Theorie II. oder III. Ordnung. Bis Stand 73 ging die Vorkruemmung als
+    Knotenkraft an die Elementknoten (in einem Element je Stab hob sie sich
+    auf) - Runde k10d, Stand 74."""
+    try:
+        if not bool(getattr(getattr(model, "design", None), "imperfektionen", True)):
+            return False
+        els = getattr(model, "elements", None) or []
+        ne = len(els)
+        if not any(getattr(els[int(i)], "typ", "") == "beam"
+                   for mem in (getattr(model, "members", None) or {}).values()
+                   for i in (getattr(mem, "elements", None) or []) if 0 <= int(i) < ne):
+            return False
+        return any(model.theorie_von(o) in ("II", "III")
+                   for o in list(model.load_cases.values()) + list(model.combinations.values()))
+    except Exception:                       # noqa: BLE001 - nicht pruefbar: möglicherweise betroffen
+        return True
+
+
+def _biegegelenke_beidseitig(model) -> bool:
+    """Modellmerkmal stabteilung_biegegelenke: ein teilbarer Balken mit
+    Biegegelenk an beiden Enden um dieselbe Achse, dessen Querverschiebung
+    an keinem Ende frei ist (stabteilung._endgelenk_bleibt) - bis Stand 73
+    strich die interne Stabteilung das Gelenk am Ende."""
+    try:
+        from .stabteilung import BIEGEGELENKE, teilbar
+        for i, e in enumerate(getattr(model, "elements", None) or []):
+            frei = {int(d) for d in (getattr(e, "hinges", None) or [])}
+            if not frei or getattr(e, "typ", "") != "beam":
+                continue
+            if any(b in frei and b + 6 in frei and q not in frei and q + 6 not in frei
+                   for b, q in BIEGEGELENKE.items()) and teilbar(model, i):
+                return True
+        return False
+    except Exception:                       # noqa: BLE001 - Pruefung, nie Abbruch
+        return False
+
+
+def _versatz_verteilt(model) -> bool:
+    """Modellmerkmal versatz_verteilt: ein Balken mit Versatz, den die interne
+    Stabteilung (Stabteilung, doppelt fuer Theorie III. Ordnung, mindestens
+    20 Teile) nur verteilt teilen kann - bis Stand 73 blieb er ungeteilt."""
+    try:
+        from .stabteilung import (_hat_versatz, versatz_nur_verteilt, soll_teilung, FAKTOR_THEORIE3,
+                                  TEILUNG_VORKRUEMMUNG)
+        # die feinste Teilung: kuerzere Teile scheitern eher (Arm laenger als ein Teil)
+        n = max(soll_teilung(model, FAKTOR_THEORIE3), TEILUNG_VORKRUEMMUNG * FAKTOR_THEORIE3)
+        for i, e in enumerate(getattr(model, "elements", None) or []):
+            if getattr(e, "typ", "") == "beam" and _hat_versatz(e) and versatz_nur_verteilt(model, i, n):
+                return True
+        return False
+    except Exception:                       # noqa: BLE001 - Pruefung, nie Abbruch
+        return False
+
+
+def _vorkruemmung_im_ergebnis(model, an) -> str:
+    """Rechnungen nach Theorie II./III. Ordnung, die eine Vorkruemmung
+    angesetzt haben."""
+    namen = []
+    for th in (getattr(an, "theorie2", None), getattr(an, "theorie3", None)):
+        for n, info in ((getattr(th, "kombinationen", None) or {}).items() if th is not None else []):
+            vk = getattr(info, "vorkruemmung", None) or {}
+            if isinstance(vk, dict) and int(vk.get("anzahl", 0) or 0) > 0:
+                namen.append(str(n))
+    namen = sorted(set(namen))
+    return ("Vorkrümmung nach Theorie II./III. Ordnung: " + ", ".join(namen[:6])
             + (" …" if len(namen) > 6 else "")) if namen else ""
 
 #: Die Tabelle (Einstufung des Anwenders vom 16.10.2026). Stand 1: Abbruch der
@@ -4029,12 +4650,326 @@ MERKMALE: list = [
         modellmerkmal="Elementmaske in einer Situation (oder Stab „aus“) und eine Knotenlast oder Punktmasse "
                       "an einem Knoten ohne Element, der über einen Starrkörper oder eine Kette (Starrkörper, "
                       "Kopplung) an einem wirksamen Element hängt - oder eine Kopplung an einem solchen Knoten, "
-                      "auch im Spannschritt (Anker mit Sollkraft, Weg „spannen und verriegeln“)",
+                      "auch im Spannschritt (Anker mit Sollkraft, Weg „spannen und verriegeln“) und in der "
+                      "Schwingung eines Schwingungsnachweises in der Situation seines Wasserdruck-Generierers",
         betrifft=_maske_starrkoerper_betroffen, im_ergebnis=_maske_starrkoerper_im_ergebnis),
+    # Runde k10 (15.11.2026, Fehlerkorrektur): die Abweisung nach Theorie III.
+    # Ordnung (Stand 64) liess den Anschluss eines Stabendes an einen Koerper
+    # (Kopplung „Stabende“, verteilende Kopplung) nur mit mittragendem
+    # Koerperknoten gelten. Kopplung „Stabende“ an einem Knoten Q ohne Element,
+    # daran per RBE2 der Lastknoten: Theorie I. Ordnung 0,5357 mm, Theorie III.
+    # Ordnung still 0,0000 mm (Summe Rz 0); Last direkt an Q: 100,5357 statt
+    # 0,5357 mm; RBE3 „Stabende“ an einem gelagerten, abgeschalteten Koerper:
+    # Theorie I. Ordnung und Gegenrechnung 0,0000 mm, Theorie III. Ordnung
+    # 0,5357 mm (theorie3._th3_wirkung); ebenso mit Linien- oder Flaechenlager,
+    # ueber einen RBE2 an einem gelagerten Knoten (Kette) und mit zwei
+    # Stabenden am selben abgeschalteten Koerper (Theorie I. Ordnung und
+    # Gegenrechnung 0,4377/0,0980 mm, Theorie III. Ordnung 0,5357/0,0000 mm)
+    # und mit einer Punktmasse unter Eigengewicht an der Koerperseite
+    # (Theorie I. Ordnung 0,5357 mm, Theorie III. Ordnung still 100,5357 mm
+    # bzw. 0 mm). Seither mit Klartext abgewiesen - je Lastfall bzw.
+    # Kombination mit deren Lasten (eine Last nur in einem anderen Lastfall
+    # zaehlt nicht).
+    Merkmal(
+        name="theorie3_stabende_anschluss", titel="Anschluss eines Stabendes nach Theorie III. Ordnung",
+        texte={"alt": "Anschluss eines Stabendes (Kopplung „Stabende“, RBE3) nur mit mittragendem "
+                      "Körperknoten erkannt: hielt oder belastete die Körperseite über Lager, Last, weitere "
+                      "Starrkörper oder ein zweites Stabende, still als weiche Feder oder weggelassen",
+               "neu": "auch dort erkannt und mit Klartext abgewiesen"},
+        wechsel=(Wechsel(stand=66, datum="15.11.2026", commit="fix/k10-th3", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Lastfall oder Kombination nach Theorie III. Ordnung mit einer Kopplung „Stabende“ "
+                      "oder einer verteilenden Kopplung eines Stabendes, deren Körperseite nicht mitträgt, "
+                      "aber über Starrkörper oder Kopplungen einen Lagerknoten (Knoten-, Linien-, "
+                      "Flächenlager), einen in diesem Lastfall bzw. dieser Kombination belasteten Knoten "
+                      "(Knotenlast oder Punktmasse unter Eigengewicht) oder ein zweites Stabende erreicht",
+        betrifft=_theorie3_anschluss_betrifft, im_ergebnis=_theorie3_anschluss_im_ergebnis),
+    # Runde k10 (15.11.2026, vom Anwender freigegeben): bei einer Elementmaske
+    # trug ein Lagerknoten, an dem nur abgeschaltete Elemente haengen, nicht mit
+    # (situationen._lagerknoten_ohne_element), und eine Last, die ueber eine
+    # Kopplung an ihm haengt, entfiel still: toter Arm c-d, Lager an c, Y per
+    # Feder an c, 5 kN an Y - Summe Rz 1 000 statt 6 000 N wie in der
+    # Gegenrechnung mit geloeschtem Element. Die verteilende Kopplung eines
+    # Stabendes loeste nur ueber einen Slave aus; mit einem Slave Q ohne Element
+    # und Master am wirksamen Kragarmende entfiel die Last an Q (w = 0 statt
+    # 0,5357 mm). Beide Male Gleichgewichtskontrolle „ok“. Fehlerkorrektur.
+    Merkmal(
+        name="maske_lager_verteilung",
+        titel="Last am Lager abgeschalteter Elemente und an verteilender Kopplung",
+        texte={"alt": "ein Lagerknoten, an dem nur abgeschaltete Elemente hängen, trug nicht mit (eine Last oder "
+                      "Kopplung an ihm entfiel); die verteilende Kopplung eines Stabendes wirkte nur über einen "
+                      "Slave mit wirksamem Element",
+               "neu": "der Lagerknoten trägt mit wie in der Rechnung mit gelöschten Elementen; die verteilende "
+                      "Kopplung wirkt auch über den Master, wenn kein Slave an einem abgeschalteten Element hängt"},
+        wechsel=(Wechsel(stand=67, datum="15.11.2026", commit="fix/k10-maske", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Elementmaske in einer Situation (oder Stab „aus“, Spannschritt, Schwingungsnachweis) und "
+                      "eine Knotenlast, Punktmasse oder Kopplung an einem Lagerknoten, an dem nur abgeschaltete "
+                      "Elemente hängen (auch über eine Kette), oder an einem Slave ohne Element einer "
+                      "verteilenden Kopplung (Stabende, Scheibe)",
+        betrifft=_maske_lager_betroffen, im_ergebnis=_maske_lager_im_ergebnis),
+    # Runde k10 (15.11.2026, vom Anwender freigegeben): der Strafbeiwert der
+    # Starrkoerper (RBE2/RBE3) bezog sich auf die groesste Hauptdiagonale samt
+    # der Straffedern der starren Knotenkopplungen (selbst 1e4-mal die
+    # Elementsteifigkeit) - der Starrkoerper wurde 1e8-mal so steif wie die
+    # Elemente. Eine starre Kopplung an einem RBE2-Knoten (Kragarm 3 m, 1 kN)
+    # brach mit „numerisch singulär" (Residuum 0,0000044) ab; Modelle, die
+    # rechneten, hatten eine schlechter konditionierte Matrix. Seither ohne
+    # diese Straffedern, also 1e4-mal wie bei der starren Kopplung.
+    # Fehlerkorrektur
+    Merkmal(
+        name="starrkoerper_strafe_bezug", titel="Strafbeiwert der Starrkörper neben starren Kopplungen",
+        texte={"alt": "Starrkörper 1e4-mal die größte Hauptdiagonale samt den Straffedern der starren "
+                      "Kopplungen (rund 1e8-mal die Elementsteifigkeit)",
+               "neu": "Starrkörper 1e4-mal die größte Hauptdiagonale der Elemente, Federlager und endlichen "
+                      "Kopplungsfedern - wie die starre Kopplung"},
+        wechsel=(Wechsel(stand=68, datum="15.11.2026", commit="fix/k10-num", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Starrkörper (RBE2/RBE3) und starre Knotenkopplung im selben Modell",
+        betrifft=_starrkoerper_strafe_betroffen, im_ergebnis=_starrkoerper_strafe_im_ergebnis),
+    # Runde k10b (15.11.2026): die Modalanalyse nahm so viele Eigenformen an,
+    # wie es Freiheitsgrade mit Masse gibt. Eine Zusatzmasse m n n^T auf
+    # masselosen Teilen hat je Knoten aber nur eine Richtung: an einer
+    # schraegen Wand mit 8 Knoten (24 Massen-FHG, Rang 8) kamen bei 10
+    # angeforderten Formen eine Scheinform mit 0 Hz und Formen ohne Bedeutung
+    # heraus. Ein masseloser Mechanismus (loser RBE3-Slave) lieferte Formen, in
+    # denen der lose Teil beliebig mitlief. Seither so viele Formen, wie M
+    # Richtungen hat, und Klartext beim masselosen Mechanismus.
+    # Fehlerkorrektur. Am Ergebnis: die Modalanalyse und der Schwingungsnachweis
+    # einer Analysis (nur er steht in der Ergebnisdatei).
+    Merkmal(
+        name="modal_massenrang", titel="Eigenformen bei Teilen ohne Masse",
+        texte={"alt": "so viele Eigenformen wie Freiheitsgrade mit Masse; masseloser Mechanismus ungeprüft",
+               "neu": "so viele Eigenformen, wie die Massenmatrix Richtungen hat; frei bewegliche Teile ohne "
+                      "Masse numerisch gehalten und genannt"},
+        wechsel=(Wechsel(stand=68, datum="15.11.2026", commit="fix/k10-num", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Teile ohne Masse (gewichtsloser Werkstoff, Knoten ohne Element an einem RBE3 oder an einer Kopplung in weniger als drei Richtungen)",
+        betrifft=_modal_masselos_betroffen, im_ergebnis=_modal_masselos_im_ergebnis),
+    # Runde k10 (15.11.2026, vom Anwender freigegeben): der EC3-Nachweis ueber
+    # Arbeitsprozesse (ab 24 Staeben bei mehreren Arbeitern, oder Farm) bekam
+    # die Ergebnisse ohne beam_th2 und beam_teile (ec3.design._strip) und wies
+    # nach Theorie II. Ordnung das Moment ohne den Anteil N·w im Feld nach:
+    # IPE 300, ein Element, M_Ed 60,0 statt 63,2 kNm (Handrechnung 63,21),
+    # Ausnutzung 2,399 statt 2,480; Geschossrahmen mit 87 Staeben 0,8590 statt
+    # 0,8666. Seriell war richtig. Fehlerkorrektur
+    Merkmal(
+        name="ec3_auftraege_th2", titel="EC3-Nachweis über Arbeitsprozesse nach Theorie II. Ordnung",
+        texte={"alt": "Arbeitsprozesse bekamen die Ergebnisse ohne beam_th2 und beam_teile: Feldmomente "
+                      "nach Theorie II. Ordnung ohne den Anteil der Stabkraft an der Durchbiegung",
+               "neu": "Arbeitsprozesse bekommen jedes Feld, das der Stabnachweis liest: gleich wie seriell"},
+        wechsel=(Wechsel(stand=69, datum="15.11.2026", commit="fix/k10-ec3", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="EC3-Nachweis mit mindestens 24 Stäben (oder über die Rechnerfarm) und ein Lastfall "
+                      "oder eine Kombination nach Theorie II. oder III. Ordnung",
+        betrifft=_ec3_auftraege_th2_betroffen, im_ergebnis=_ec3_auftraege_th2_im_ergebnis),
+    # Runde k10c (16.11.2026): die automatische Fesselung (FHG ohne
+    # Steifigkeit, Diagonale unter 1e-12 der groessten) bezog sich auf die
+    # groesste Hauptdiagonale samt der Straffeder eines frei definierten RBE3 -
+    # k mal die Gewichtssumme im Quadrat, bei 441 Slaves rund das
+    # 2 000 000 000-fache der Elemente. Drehungen und Verschiebungen mit
+    # echter Steifigkeit galten als „ohne Steifigkeit" und wurden still
+    # festgehalten: ein gelenkig gelagerter Stab (L = 2 m, I = 1 000 000 mm⁴,
+    # 1 kN) neben einer Stahlschicht mit RBE3 auf 441 Slaves bog sich um
+    # 0,000 statt 0,794 mm. Seither ohne diese Straffeder. Fehlerkorrektur.
+    Merkmal(
+        name="rbe3_fesselung_bezug", titel="Automatische Fesselung neben frei definiertem RBE3",
+        texte={"alt": "FHG unter 1e-12 der größten Hauptdiagonale samt der Straffeder des RBE3 "
+                      "(k mal Gewichtssumme im Quadrat) still festgehalten",
+               "neu": "Bezug ohne die Straffeder der frei definierten RBE3 - nur FHG ohne Steifigkeit "
+                      "werden festgehalten"},
+        wechsel=(Wechsel(stand=70, datum="15.11.2026", commit="fix/k10-ring", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="frei definierter RBE3 (Verteilkopplung mit Slaves, nicht Stabende oder Scheibe)",
+        betrifft=_rbe3_fesselung_betroffen, im_ergebnis=_rbe3_fesselung_im_ergebnis),
+    # Runde k10c (15.11.2026, vom Anwender freigegeben): die Kopplung eines
+    # Stabendes (fugen.STABENDE_GRUPPE) brauchte unter jeder Elementmaske einen
+    # wirksamen Koerperknoten, auch wenn an ihm gar kein Element haengt - die
+    # Last dahinter entfiel still: Kragarm 3 m, Kopplung „Stabende“ vom Ende b
+    # an Q ohne Element, 1 kN an Q - mit Maske (Situation, Stab „aus“,
+    # Einsermaske) w(b) = 0 mm und Summe Rz 0 N, ohne Maske und in der
+    # Gegenrechnung 0,5357 mm und 1 000 N; Schwingung 441,41 statt 21,72 Hz,
+    # Knicken abgebrochen. Theorie III. Ordnung zaehlte die starre Kopplung
+    # ohne Maske nicht zur Abweisung und rechnete sie als Feder 1e4 N/m
+    # (w(Q) 100,54 statt 0,54 mm). Fehlerkorrektur.
+    Merkmal(
+        name="maske_stabende_kopplung",
+        titel="Kopplung eines Stabendes an einem Knoten ohne Element",
+        texte={"alt": "die Kopplung eines Stabendes wirkte unter einer Elementmaske nur über einen Körperknoten "
+                      "mit wirksamem Element (eine Last dahinter entfiel); Theorie III. Ordnung rechnete sie "
+                      "starr als weiche Feder",
+               "neu": "die Kopplung wirkt auch über den Stabknoten, wenn ihr Körperknoten nicht zu einem "
+                      "abgeschalteten Element gehört, wie in der Rechnung mit gelöschten Elementen; Theorie III. "
+                      "Ordnung weist sie ab"},
+        wechsel=(Wechsel(stand=71, datum="15.11.2026", commit="fix/k10-maske2", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Kopplung eines Stabendes an einem Knoten ohne Element mit einer Knotenlast, Punktmasse "
+                      "oder weiteren Kopplung dahinter, in einer Rechnung mit Elementmaske (Situation, Stab „aus“, "
+                      "auch ein Stab „aus“ ohne Elemente) - oder starr nach Theorie III. Ordnung",
+        betrifft=_maske_stabende_betroffen, im_ergebnis=_maske_stabende_im_ergebnis),
+    # Runde k10d (16.11.2026): die Vorkruemmung (5.3.2(7), Bild 5.4) ging je
+    # Element als Knotenkraft halb und halb an die Elementknoten. In einem
+    # Element je Stab hob sie sich mit den Endquerkraeften V auf und fehlte
+    # still: IPE 300, 6 m, N = 200 kN, ein Element, Stabteilung 1: Mz_Ed 0
+    # statt 11,52 kNm, Ausnutzung 1,638 statt 2,484. In wenigen Teilen fehlte
+    # das Feldmoment zwischen den Knoten (3 Teile 10,36, 5 Teile 11,11, 10
+    # Teile 11,47 kNm). Theorie II. Ordnung setzt sie jetzt als Streckenlast
+    # im Element an, Theorie III. Ordnung teilt gedrueckte Staebe mindestens
+    # in 20 Teile. Mit derselben Korrektur (Nachbesserung 1): eine Richtung
+    # je Stab (ein umgedrehtes Element bekam q gegen die anderen), V an den
+    # wirklichen Stabenden und am versetzten Stabende mit dem Moment des Arms
+    # (Stab 6,5 m, Arm 0,5 m in Stabrichtung: Th II 10,53 statt 12,67 kNm).
+    # Fehlerkorrektur
+    Merkmal(
+        name="vorkruemmung_streckenlast", titel="Vorkrümmung als Streckenlast im Element",
+        texte={"alt": "Vorkrümmung als Knotenkraft an den Elementknoten (in einem Element je Stab ohne Wirkung), "
+                      "Richtung je Element, V am Knoten ohne Versatz",
+               "neu": "Theorie II. Ordnung: Streckenlast im Element, gedrückte Stäbe mindestens in 10 Teilen; "
+                      "Theorie III. Ordnung: gedrückte Stäbe mindestens in 20 Teilen; eine Richtung je Stab, "
+                      "V am versetzten Stabende"},
+        wechsel=(Wechsel(stand=74, datum="16.11.2026", commit="fix/k10-ec3", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Ersatzimperfektionen an und ein Stab mit Balken nach Theorie II. oder III. Ordnung",
+        betrifft=_vorkruemmung_moeglich, im_ergebnis=_vorkruemmung_im_ergebnis),
+    # Runde k10d, Nachbesserung 1 (16.11.2026): die interne Stabteilung
+    # strich das Biegegelenk am Ende eines Balkens, der an beiden Enden ein
+    # Biegegelenk hat - der Gelenkstab war am Ende eingespannt. IPE 300, 6 m,
+    # q 5 kN/m, Theorie II. Ordnung, Stabteilung 10: 28,33 statt 54,00 kNm
+    # im Feld; mit 200 kN Druck und Vorkruemmung nach Theorie III. Ordnung
+    # 6,03 statt 11,48 kNm. Fehlerkorrektur
+    Merkmal(
+        name="stabteilung_biegegelenke", titel="Interne Stabteilung: Biegegelenke an beiden Enden",
+        texte={"alt": "Biegegelenk am Stabende entfiel beim Teilen, wenn auch der Stabanfang eines hatte",
+               "neu": "Biegegelenke bleiben an beiden Enden des geteilten Stabs"},
+        wechsel=(Wechsel(stand=74, datum="16.11.2026", commit="fix/k10-ec3", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Balken mit Biegegelenk an beiden Enden (gleiche Achse) mit α_cr, Knicken oder Theorie "
+                      "II./III. Ordnung",
+        betrifft=_biegegelenke_beidseitig, im_ergebnis=_versatz_stabteilung_im_ergebnis),
+    # Runde k10d, Nachbesserung 1 (16.11.2026): ein Stab mit Versatz, dessen
+    # Arm laenger als ein Teil gegen die Stabrichtung ist, blieb ungeteilt;
+    # nach Theorie III. Ordnung (20 Teile) fehlte die Vorkruemmung in einem
+    # Element still (Stab 6,5 m, Arm 0,5 m: Mz 0 statt 12,67 kNm). Seither
+    # verteilt geteilt (stabteilung.versatz_teile). Fehlerkorrektur
+    Merkmal(
+        name="versatz_verteilt", titel="Interne Stabteilung: Versatz auf alle Teile verteilt",
+        texte={"alt": "Stab mit Versatz, dessen Arm länger als ein Teil ist, ungeteilt",
+               "neu": "Stab verteilt geteilt: Zwischenknoten auf der Knotenlinie, Arm linear auf alle Teile"},
+        wechsel=(Wechsel(stand=74, datum="16.11.2026", commit="fix/k10-ec3", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Stab mit Versatz, den die interne Stabteilung nur verteilt teilen kann, mit α_cr, "
+                      "Knicken oder Theorie II./III. Ordnung",
+        betrifft=_versatz_verteilt, im_ergebnis=_versatz_stabteilung_im_ergebnis),
+    # Runde k10d, Nachbesserung 3 (16.11.2026): der Armanteil des Versatzes
+    # nahm nach Theorie II. Ordnung die Stabendkraft ohne k_G (Theorie I.
+    # Ordnung) - an Zwischenknoten eines geteilten Stabs mit Versatz quer
+    # summierte sie sich nicht zu 0, und V der Vorkruemmung am Arm zaehlte
+    # als Kraft im Arm. IPE 300, 6 m, 200 kN, Versatz y 0,1 m an beiden Enden:
+    # Mz 53,57 statt 54,07 kNm (10 Teile), mit Vorkruemmung 64,80 statt
+    # 65,59 kNm (9,85 N/mm2). Seither die Stabendkraft mit k + k_G des
+    # vorigen Schritts, ohne V. alpha_cr und Knicken unveraendert.
+    # Fehlerkorrektur
+    Merkmal(
+        name="versatz_arm_endkraft_th2", titel="Versatz-Arm nach Theorie II. Ordnung: Stabendkraft mit k_G",
+        texte={"alt": "Armanteil mit der Stabendkraft nach Theorie I. Ordnung, V der Vorkrümmung im Arm",
+               "neu": "Armanteil mit der Stabendkraft am verformten System (k + k_G), ohne V der Vorkrümmung"},
+        wechsel=(Wechsel(stand=74, datum="16.11.2026", commit="fix/k10-ec3", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Stab mit Versatz der Stabenden, nach Theorie II. Ordnung gerechnet",
+        betrifft=_stab_mit_versatz, im_ergebnis=_theorie2_gerechnet_im_ergebnis),
+    # Runde k10d (16.11.2026, Fehlerkorrektur): Theorie III. Ordnung
+    # kondensierte Drehgelenke und Drehfedergelenke wie die lineare Rechnung
+    # und bildete das Gleichgewicht am Gelenk um die Sehne des Stabs statt um
+    # die mit dem Knoten mitgedrehte Gelenkachse; das Moment M mal
+    # Biegedrehung des Stabendes fehlte. L-Rahmen (Rechteck 20 x 400, je 2 m,
+    # 1 kN, Torsionsfeder 2 kNm/rad an der Ecke): Verdrehung der Spitze 6 %
+    # unter dem gleichwertigen Stummelmodell (Theorie II. Ordnung mit
+    # Momentenglied 0,6 %); mit Torsionsgelenk bei 3 kN 0,0036 mm Verschiebung
+    # neben dem Stummelmodell; ein Traeger mit Gabellagern, Randmomenten und
+    # Torsionsgelenk in der Mitte verdrillte unsymmetrisch (0,635 gegen 0,486
+    # µrad an den Spiegelknoten). Seither am Gelenk mit der Gelenkdrehung
+    # (theorie3._Stab._gelenk_lage).
+    Merkmal(
+        name="theorie3_gelenk_achse", titel="Dreh- und Drehfedergelenke nach Theorie III. Ordnung",
+        texte={"alt": "Gelenk kondensiert, Gleichgewicht am Gelenk um die Sehne des Stabs",
+               "neu": "Gelenkdrehung am Stabende, Gleichgewicht um die mitgedrehte Gelenkachse"},
+        wechsel=(Wechsel(stand=75, datum="16.11.2026", commit="fix/k10-th3", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Lastfall oder Kombination nach Theorie III. Ordnung und ein Balken mit Drehgelenk "
+                      "oder Drehfedergelenk (alle Gelenke des Stabs Drehungen)",
+        betrifft=_theorie3_gelenk, im_ergebnis=_theorie3_im_ergebnis),
+    # Runde k10e, Nr. 29 der Fehlerliste (16.11.2026, Fehlerkorrektur): mit
+    # Stabteilung unter 10 rechneten Theorie II. Ordnung, alpha_cr und
+    # Knicken einen Stab ohne Ersatzimperfektionen in seinen Elementen (seit
+    # Stand 74 nur mit Vorkruemmung mindestens in 10 Teilen). IPE 300, 6 m,
+    # 300 kN Druck, Endmomente 6 kNm, ein Element, Stabteilung 1: 54,2074
+    # statt 54,2940 kNm (1,08 N/mm²); Versatz y 0,1 m, Federgelenke
+    # 2000 kNm/rad, qy 5 kN/m: 107,4283 statt 107,2971 kNm; beidseits
+    # eingespannt mit q 5 kN/m 15,00 statt 16,66 kNm; zwei Elemente 52,33
+    # kNm; alpha_cr und Knicken 21,7 % zu hoch, beidseits eingespannt
+    # „Keine Normalkräfte“. Seither jeder Stab mit wirksamer Normalkraft
+    # (Druck oder Zug) mindestens in 10 Teilen (stabteilung.th2_mindest).
+    Merkmal(
+        name="th2_mindestteilung", titel="Mindestteilung nach Theorie II. Ordnung, α_cr und Knicken",
+        texte={"alt": "Stäbe ohne Ersatzimperfektion in die Stabteilung der Netzeinstellungen geteilt "
+                      "(Stabteilung 1: in ihren Elementen gerechnet)",
+               "neu": "jeder Stab mit wirksamer Normalkraft mindestens in 10 Teilen, auch bei kleinerer "
+                      "Stabteilung und ohne Ersatzimperfektionen"},
+        wechsel=(Wechsel(stand=76, datum="16.11.2026", commit="fix/k10e-th2teil", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Stabteilung der Netzeinstellungen unter 10 und ein Balken, mit α_cr, Knicken oder "
+                      "Theorie II. Ordnung",
+        betrifft=_th2_mindestteilung, im_ergebnis=_th2_mindestteilung_im_ergebnis),
+    # Runde k10e (16.11.2026, Fehler Nr. 27): Theorie III. Ordnung rechnet
+    # Starrkoerper und starre Kopplungen seither als Zwangsbedingung im
+    # mitgedrehten System des Masters (theorie3._Zwang), statt sie abzuweisen
+    # (Stand 64 bis 76). Was vorher abgewiesen wurde, rechnet jetzt - dafuer
+    # braucht es kein Merkmal. Ergebnisse aendern sich nur dort, wo vorher
+    # ohne Abweisung gerechnet wurde: ein RBE2, der nur an einem Knoten ohne
+    # Element haengt, den eine starre Kopplung „Stabende“ am Stab haelt
+    # (Kopplung b-Q, RBE2 Q-P, P ohne Last). Die Rechnung las ihn nicht, P
+    # blieb automatisch festgehalten: Kragarm 3 m, 1 kN an b - w(P) 0 statt
+    # 0,5357 mm wie w(b) und Theorie I. Ordnung. Fehlerkorrektur
+    Merkmal(
+        name="theorie3_rbe2_angehaengt",
+        titel="Theorie III. Ordnung: RBE2 an einem angehängten Knoten ohne Element",
+        texte={"alt": "RBE2 nicht gelesen, sein Knoten ohne Element automatisch festgehalten (Verschiebung 0)",
+               "neu": "Starrkörper und starre Kopplungen als Zwangsbedingung mit großen Drehungen gerechnet; "
+                      "der Knoten folgt dem Stab wie in Theorie I. Ordnung"},
+        wechsel=(Wechsel(stand=77, datum="16.11.2026", commit="fix/k10e-th3starr", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="Lastfall oder Kombination nach Theorie III. Ordnung mit einem RBE2, der nur an einem "
+                      "Knoten ohne Element hängt, den eine starre Kopplung am Stab hält",
+        betrifft=_theorie3_rbe2_angehaengt, im_ergebnis=_theorie3_rbe2_angehaengt_im_ergebnis),
+    # Runde k10e (16.11.2026, Fehlerliste Nr. 26): Eigenpaare des
+    # Verzweigungsproblems (Knicken, alpha_cr) werden geprueft - weicht der
+    # Rayleigh-Quotient um mehr als 5 % (solver.KNICK_RQ_MAX) vom gemeldeten
+    # Eigenwert ab, ist es keine Loesung; dann rechnet ein zweiter Weg (dicht
+    # ueber dem Traeger von K_g) oder es kommt Klartext. Bis dahin gingen
+    # solche Paare still ins Ergebnis: Kragarm mit Kreisring aus 32 Speichen
+    # von 2 mm (RBE3, Befund Nr. 25) Faktoren -1,40 / -0,90 / 0,76 / 1,58
+    # statt 46,06 (Gegenrechnung mit Elimination der Masterfreiheitsgrade).
+    # Beobachtet nur an frei definierten RBE3 mit sehr kurzen Speichen und an
+    # der Ruecknahmeprobe mit den unbearbeiteten RBE3-Zeilen
+    # (tests/test_rbe3_ring_k10.py); an allen anderen Pruefungen des Knickens
+    # und von alpha_cr lag die Abweichung unter 0,00012. Ein
+    # ARPACK-Abbruch (vorher roh gemeldet, alpha_cr „unendlich“) rechnet
+    # jetzt - dafuer braucht es kein Merkmal. Fehlerkorrektur
+    Merkmal(
+        name="eigenpaare_geprueft", titel="Verzweigungsproblem: Eigenpaare geprüft, zweiter Lösungsweg",
+        texte={"alt": "Eigenpaare von ARPACK ungeprüft übernommen; bei einem Abbruch Fehlermeldung von ARPACK, "
+                      "α_cr unendlich",
+               "neu": "Paare mit mehr als 5 % Abweichung zwischen Eigenwert und Rayleigh-Quotient verworfen; "
+                      "zweiter Lösungsweg (dicht), sonst Klartext"},
+        wechsel=(Wechsel(stand=78, datum="16.11.2026", commit="fix/k10e-modal", alt="alt", neu="neu",
+                         art=FEHLERKORREKTUR),),
+        modellmerkmal="frei definierter RBE3 (Verteilkopplung mit Slaves) mit Knicken, α_cr oder Theorie II. "
+                      "Ordnung",
+        betrifft=_rbe3_fesselung_betroffen, im_ergebnis=_eigenpaare_im_ergebnis),
 ]
 
 #: Verfahrensstand dieses Programms: der hoechste Stand der Tabelle
-VERFAHRENSSTAND = 65
+VERFAHRENSSTAND = 78
 
 
 def merkmal(name: str) -> Optional[Merkmal]:

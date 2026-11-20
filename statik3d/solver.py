@@ -1512,6 +1512,41 @@ class LinearSolver:
                     if not r2 < r:
                         break
                     x, r = x2, r2
+                # Strafanteil der Starrkoerper (Runde k10c, 16.11.2026,
+                # statik3d.strafanteil): Scheitert die Pruefung an einem Modell
+                # mit Starrkoerpern, kann allein der Rundungsrest der
+                # Straffedern darueber liegen (k Gᵀ G δu mit |δu| = eps |u|;
+                # Kreisring mit 64 Slaves am Kragarm: 0,039). Dann noch einmal
+                # mit dem getrennt gerechneten Strafanteil: geprueft wird der
+                # Rest ausserhalb der Zeilenraeume gegen dieselbe Schranke und
+                # die Verletzung der Zwangsbedingungen gegen grenze * max|u|.
+                # Ein Modell, das die bisherige Pruefung besteht, kommt hier
+                # nicht vorbei - an ihm aendert sich nichts.
+                #
+                # Nur ohne angehobene Pivots (PARDISO iparm(14), ama): hat die
+                # Zerlegung Pivots angehoben, ist K singulaer, und ein
+                # widerspruchsfreies singulaeres System haette auch ausserhalb
+                # der Zeilenraeume einen kleinen Rest - die Knoten im Nullraum
+                # stuenden dann ohne Meldung irgendwo (Kreisring mit
+                # abgeschalteten Speichen: 186 angehobene Pivots, Ringknoten
+                # 20 mm weit). Dort bleibt es bei der Abweisung samt Diagnose.
+                # Loeser ohne Pivotzahl (SuperLU, CHOLMOD, MUMPS) pruefen wie
+                # bisher.
+                self.strafanteil_genutzt = False
+                self.strafanteil_rest = None
+                pruef = getattr(self, "strafe", None)
+                angehoben = getattr(self, "gestoerte_pivots", None)
+                if angehoben is None:
+                    angehoben = getattr(self, "gestoert", None)
+                from . import strafanteil as _sa
+                if r > grenze and pruef is not None and angehoben == 0 and _sa.PRUEFUNG:
+                    erg = pruef.nachiterieren(self._solve, self._K, b, x, grenze)
+                    if erg["ok"]:
+                        x, r = erg["x"], erg["rest"]
+                        schritte += erg["schritte"]
+                        self.strafanteil_genutzt = True
+                        self.strafanteil_verletzung = erg["verletzung"]
+                        self.strafanteil_rest = erg.get("rest_kopplung")
                 self.nachiterationen = schritte
                 self.residuum = float(r)
                 if self._nachweis is not None and self._vorgabe is not None:
@@ -1960,6 +1995,10 @@ class Results:
                 s.append(f"Kontakt                 : {self.info['kontakt']}, "
                          f"{self.info.get('kontakt_aktiv', 0)} "
                          f"{'Bedingung' if self.info.get('kontakt_aktiv', 0) == 1 else 'Bedingungen'} aktiv")
+            if self.info.get("moden_hinweis"):
+                s.append(f"Eigenformen             : {self.info['moden_hinweis']}")
+            if self.info.get("frei_hinweis"):
+                s.append(f"Freie Teile             : {self.info['frei_hinweis']}")
             if self.info.get("loeser"):
                 s.append(f"Löser                   : {NAMEN.get(self.info['loeser'], self.info['loeser'])}")
         pz = self.info.get("plastizitaet")
@@ -2862,6 +2901,7 @@ class StaticSystem:
             t0 = time.time()
             try:
                 self._solver = LinearSolver(self.gerandet(self.Kff), progress=self._progress)
+                self._solver.strafe = self._strafe_pruefung()
                 self._loeser_merken(self._solver)
             except (RuntimeError, ValueError) as ex:
                 # "Factor is exactly singular" sagt niemandem, was fehlt
@@ -2874,6 +2914,16 @@ class StaticSystem:
                        f"Faktorisiert ({self._solver.beschreibung()}, "
                        f"{time.time() - t0:.2f} s)", 0.32)
         return self._solver
+
+    def _strafe_pruefung(self, zusatz=()):
+        """Die Pruefung des Residuums mit getrenntem Strafanteil der
+        Starrkoerper fuer die Matrix Kff (bzw. Kff + ``zusatz`` auf den freien
+        FHG, mit Lagrange-Rand) - None ohne Starrkoerper. Gebaut wird erst,
+        wenn die bisherige Pruefung scheitert (statik3d.strafanteil)."""
+        sa = getattr(self.K, "_strafanteil", None)
+        if sa is None or not sa.kopplungen:
+            return None
+        return sa.lokal(self.fi, zusatz)
 
     def _loeser_merken(self, ls: LinearSolver):
         """Zeit und Groessen einer Faktorisierung mitschreiben.
@@ -2915,6 +2965,10 @@ class StaticSystem:
         Ein Buch, das ein abgebrochener Lastfall offen liess, wird ersetzt -
         seine Zahlen gehoeren nicht zum naechsten."""
         self._nachweis_buch = _LoeserBuch(self.zeit_faktorisierung)
+        #: Rest der Kopplungskraefte je Kopplung aus der Pruefung mit getrenntem
+        #: Strafanteil (Runde k10c), groesster Wert ueber die Loesungen des
+        #: Lastfalls - fuer stabeinleitung.pruefen
+        self.strafanteil_rest = {}
 
     def nachweis_abschliessen(self) -> Optional[dict]:
         """Den Loeser-Nachweis des Lastfalls als Woerterbuch; None, wenn keiner
@@ -3275,6 +3329,7 @@ class StaticSystem:
                     Ktff = Kt[self.fi][:, self.fi].tocsc()
                     self.kontakt_loeser_freigeben()
                     neu_ls = LinearSolver(self.gerandet(Ktff, C_f, D_ff), progress=self._progress)
+                    neu_ls.strafe = self._strafe_pruefung((K_extra, A_aug))
                     self._loeser_merken(neu_ls)
                     self.faktorisierungen = getattr(self, "faktorisierungen", 0) + 1
                     return neu_ls
@@ -3365,6 +3420,12 @@ class StaticSystem:
             raise
         if buch is not None:
             buch.loesung(ls)
+        rest = getattr(ls, "strafanteil_rest", None)
+        if rest:
+            sammel = self.__dict__.setdefault("strafanteil_rest", {})
+            for name, (f_, m_) in rest.items():
+                alt = sammel.get(name, (0.0, 0.0))
+                sammel[name] = (max(alt[0], f_), max(alt[1], m_))
         # Fuer die Suche nach frei beweglichen Teilen (freie_teile): der Faktor,
         # der zuletzt geloest hat. Nur ein schwacher Verweis - den Speicher des
         # Faktors gibt weiter frei, wem er gehoert.
@@ -4400,6 +4461,25 @@ def rand_projizieren(model: Model, sk: dict, aktiv=None, faelle=None, merker: di
     return sk
 
 
+def inaktive_nullen(model: Model, res: Results, inaktiv) -> None:
+    """Abgeschaltete Elemente (Situation, Stab „aus“) bekommen Nullen - je
+    Elementart in ihr Ergebnisfeld. Gemeinsam fuer postprocess und Theorie
+    III. Ordnung (theorie3.solve_theorie3, seit 15.11.2026)."""
+    for i in inaktiv:
+        e = model.elements[i]
+        if e.typ in asm.LINE_TYPES:
+            res.beam_end[i] = np.zeros(12)
+        elif e.typ in asm.SHELL_TYPES:
+            res.shell_res[i] = np.zeros(6)
+        elif e.typ == "feder":
+            res.feder_res[i] = np.zeros(6)
+        elif e.typ in asm.GRENZSCHICHT_TYPES:
+            res.grenzschicht_res[i] = np.zeros(3)
+        else:
+            res.solid_res[i] = np.zeros(6)
+            res.solid_mittel[i] = np.zeros(6)
+
+
 def postprocess(model: Model, u: np.ndarray, res: Results, feq: dict = None,
                 q: dict = None, temp: dict = None, workers: int = None, aktiv=None,
                 system=None, n_geo: dict = None):
@@ -4424,19 +4504,7 @@ def postprocess(model: Model, u: np.ndarray, res: Results, feq: dict = None,
     if aktiv is not None:
         inaktiv = [i for i in range(len(model.elements)) if not aktiv[i]]
         res.info["inaktiv"] = inaktiv
-        for i in inaktiv:
-            e = model.elements[i]
-            if e.typ in asm.LINE_TYPES:
-                res.beam_end[i] = np.zeros(12)
-            elif e.typ in asm.SHELL_TYPES:
-                res.shell_res[i] = np.zeros(6)
-            elif e.typ == "feder":
-                res.feder_res[i] = np.zeros(6)
-            elif e.typ in asm.GRENZSCHICHT_TYPES:
-                res.grenzschicht_res[i] = np.zeros(3)
-            else:
-                res.solid_res[i] = np.zeros(6)
-                res.solid_mittel[i] = np.zeros(6)
+        inaktive_nullen(model, res, inaktiv)
     seile_quer = []
     for i, kind, val in items:
         if kind == "beam":
@@ -6633,6 +6701,11 @@ def _solve_loads(model: Model, system: StaticSystem, factors: dict, name: str,
     if n0_ausfall is not None:
         # Stabstatus nach Abschluss: kein aktiver Zugstab mit Druck (13.10.2026)
         zugstaebe_pruefen(model, res, F, aktiv, progress=progress)
+    rest = getattr(system, "strafanteil_rest", None)
+    if rest:
+        # Pruefung mit getrenntem Strafanteil (Runde k10c): wie weit die aus u
+        # gerechneten Kopplungskraefte am Master neben dem Gleichgewicht liegen
+        res.info["strafanteil_rest"] = {k: [float(v[0]), float(v[1])] for k, v in rest.items()}
     _stabenden_pruefen(model, res, F)
     _gleichgewicht_pruefen(model, res, F)
     _starrkoerper_pruefen(model, res, progress)
@@ -11229,17 +11302,66 @@ def _laengslast_hinweise_sammeln(an, progress=None) -> None:
     und Kombinationen nach Theorie II./III. Ordnung und alpha_cr: je Text
     einmal ins Protokoll, nach an.info["laengslast_teilung"] und damit in die
     Zusammenfassung."""
-    from .stabteilung import LAENGSLAST_KENNUNG
+    from .stabteilung import LAENGSLAST_KENNUNG, VORKRUEMMUNG_KENNUNG, VORKRUEMMUNG_KENNUNG_II
     texte = []
     for th in (an.theorie2, an.theorie3):
         for info in (getattr(th, "kombinationen", None) or {}).values():
             for h in getattr(info, "hinweise", None) or []:
-                if LAENGSLAST_KENNUNG in h and h not in texte:
+                # dazu die Vorkruemmung an einem nicht teilbaren Stab (Runde k10d)
+                if (LAENGSLAST_KENNUNG in h or VORKRUEMMUNG_KENNUNG in h
+                        or VORKRUEMMUNG_KENNUNG_II in h) and h not in texte:
                     texte.append(h)
     if texte:
         an.info["laengslast_teilung"] = texte
         for t in texte:
             _melde(progress, "Hinweis: " + t)
+
+
+def _bdk_chi_lt_gefuehrt(design) -> dict:
+    """{Stab: {Kombination, Lastfall oder Alternative}}, deren Ergebnis der
+    Stabilitaetsnachweis des Stabs gefuehrt hat (MemberCheck.stability, je
+    Eintrag ``combo``; am I-Stab mit Haken Biegedrillknicken samt chi_LT,
+    ec3.stability.member_stability). Ein zusammengefasster Eintrag „EK1 [1] =
+    EK2 [1]“ gilt fuer alle seine Namen (DesignResults.gleiche). Ein Stab mit
+    „nicht gefuehrt“ (MemberCheck.fehler) fehlt. Ohne Nachweise: leer.
+
+    Es zaehlt nur ein Eintrag, an dem chi_LT tatsaechlich gelaufen ist
+    (:func:`_bdk_chi_lt_gelaufen`: endliches positives details["M_cr"]).
+    ec3.design.check_member legt einen Stabilitaetseintrag schon bei N_Ed > 0
+    an, auch ohne Haken Biegedrillknicken oder ohne Biegemoment; dort steht
+    M_cr = inf und chi_LT = 1 ohne Rechnung. Bis zur Nachbesserung der Runde
+    k10b (15.11.2026) zaehlte jeder Eintrag, der Hinweis fehlte dann still
+    (Web: Knicken bzw. Theorie II. Ordnung, set_member lt_check aus,
+    start_design)."""
+    if design is None:
+        return {}
+    gleiche = getattr(design, "gleiche", None) or {}
+    out: dict = {}
+    for k, mc in (getattr(design, "members", None) or {}).items():
+        if getattr(mc, "fehler", ""):
+            continue
+        namen = set()
+        for st in getattr(mc, "stability", None) or []:
+            c = st.get("combo") if isinstance(st, dict) else None
+            if c and _bdk_chi_lt_gelaufen(st):
+                namen.update(gleiche.get(c) or [c])
+        out[k] = namen
+    return out
+
+
+def _bdk_chi_lt_gelaufen(st) -> bool:
+    """True, wenn am Stabilitaetseintrag ``st`` (ec3.stability.member_stability)
+    chi_LT nach 6.3.2 gerechnet wurde: details["M_cr"] endlich und positiv
+    (dann auch details["curve_LT"]). Ohne Haken oder ohne Moment steht dort
+    M_cr = inf, bei M_cr <= 0 setzt lateral_torsional chi_LT = 1 ohne Linie."""
+    d = st.get("details") if isinstance(st, dict) else None
+    if not isinstance(d, dict) or "curve_LT" not in d:
+        return False
+    try:
+        mcr = float(d.get("M_cr"))
+    except (TypeError, ValueError):
+        return False
+    return bool(np.isfinite(mcr) and mcr > 0)
 
 
 def _bdk_hinweise_sammeln(an, progress=None) -> None:
@@ -11255,23 +11377,33 @@ def _bdk_hinweise_sammeln(an, progress=None) -> None:
     in den Hinweis der Kombination (Th2Info.hinweise, Theoriekapitel) und in
     die Zeile (Gegenpruefung k8, 15.11.2026).
 
+    Erfasst gilt ein Haken-Stab nur **je Kombination**: in der Kombination,
+    dem Lastfall oder der Alternative, deren Ergebnis sein Stabilitaets-
+    nachweis (chi_LT) gefuehrt hat (:func:`_bdk_chi_lt_gefuehrt`). Bis zur
+    Runde k10 (15.11.2026) galt er fuer jede Kombination nach Theorie II.
+    Ordnung als erfasst, sobald sein Nachweis ohne Fehler stand - auch in
+    einer GZG-Kombination, einem Lastfall neben Kombinationen oder einer nicht
+    ausgewaehlten Kombination, die der EC3-Nachweis (nur GZT,
+    ec3.design._uls_results) gar nicht fuehrt.
+
     Wiederholbar: auch nach einem Abbruch (_teilanalyse) und nach
     nachtraeglich gestarteten Nachweisen (Oberflaeche _design_done, Web
     start_design) - die Staebe ohne Haken stehen fest in
     ``bdk_staebe_direkt``, die Haken-Staebe kommen je nach an.design dazu
     oder fallen wieder weg."""
     from .bdk_hinweis import BDK_KENNUNG, bdk_text
-    gefuehrt = set()
-    if getattr(an, "design", None) is not None:
-        gefuehrt = {k for k, mc in an.design.members.items() if not getattr(mc, "fehler", "")}
-    for info in (getattr(an.theorie2, "kombinationen", None) or {}).values():
+    gefuehrt = _bdk_chi_lt_gefuehrt(getattr(an, "design", None))
+    for zeile, info in (getattr(an.theorie2, "kombinationen", None) or {}).items():
         ec3 = list(getattr(info, "bdk_ec3_staebe", None) or [])
         if not ec3:
             continue
         if getattr(info, "bdk_staebe_direkt", None) is None:
             info.bdk_staebe_direkt = list(getattr(info, "bdk_staebe", None) or [])
         direkt = list(info.bdk_staebe_direkt)
-        info.bdk_staebe = direkt + [n for n in ec3 if n not in gefuehrt and n not in direkt]
+        # erfasst nur, wenn der Nachweis des Stabs genau diese Kombination
+        # (bzw. diesen Lastfall, diese Alternative) gefuehrt hat (Runde k10)
+        info.bdk_staebe = direkt + [n for n in ec3
+                                    if zeile not in gefuehrt.get(n, ()) and n not in direkt]
         info.hinweise[:] = ([h for h in info.hinweise if BDK_KENNUNG not in h]
                             + ([bdk_text(info.bdk_staebe)] if info.bdk_staebe else []))
     namen, texte = [], []
@@ -11288,6 +11420,55 @@ def _bdk_hinweise_sammeln(an, progress=None) -> None:
         _melde(progress, "Hinweis: " + zeile)
     else:
         an.info.pop("bdk_hinweis", None)
+
+
+def _bdk_knick_hinweis_bilden(res, design=None) -> None:
+    """Der Hinweis „Die Knickfaktoren enthalten kein Biegedrillknicken“ eines
+    Knickergebnisses (solve_buckling) nach derselben Regel wie nach Theorie
+    II. Ordnung (:func:`_bdk_hinweise_sammeln`, Runden k8 und k10): ein Stab
+    mit den Haken EC3 und Biegedrillknicken gilt nur als erfasst, wenn ein
+    Nachweis (``design``, DesignResults) seinen chi_LT-Nachweis genau am
+    Grundzustand des Knickens gefuehrt hat - der Kombination bzw. dem
+    Lastfall; „alle Lastfaelle“ fuehrt kein Nachweis. solve_buckling selbst
+    fuehrt keinen Nachweis (``design`` None): dort nennt der Hinweis die
+    Haken-Staebe immer. Bis zur Runde k10b (15.11.2026) zaehlten die Haken
+    allein als erfasst (bdk_hinweis.hinweis mit ec3=True), der Hinweis
+    fehlte dann still.
+
+    Wiederholbar: nach nachtraeglich gestarteten Nachweisen oder einem
+    Knicken nach den Nachweisen (Oberflaeche, Web, :func:`_bdk_nach_nachweisen`)
+    bildet sich die Zeile aus ``res.info["bdk_knick"]`` neu. Ohne diesen
+    Eintrag (kein Knickergebnis, Ergebnis von vor k10b): nichts."""
+    d = (getattr(res, "info", None) or {}).get("bdk_knick") if res is not None else None
+    if not isinstance(d, dict):
+        return
+    zeile = _bdk_knick_text(d, design)
+    if zeile:
+        res.info["bdk_hinweis"] = [zeile]
+    else:
+        res.info.pop("bdk_hinweis", None)
+
+
+def _bdk_knick_text(d: dict, design=None) -> str:
+    """Die Zeile zu ``d`` = {"alle", "ec3", "grund"} aus solve_buckling (siehe
+    :func:`_bdk_knick_hinweis_bilden`), "" ohne Stab."""
+    from .bdk_hinweis import bdk_text, KNICK_WO
+    grund = d.get("grund")
+    ec3 = set(d.get("ec3") or [])
+    gefuehrt = _bdk_chi_lt_gefuehrt(design) if grund else {}
+    namen = [n for n in d.get("alle") or []
+             if n not in ec3 or grund not in gefuehrt.get(n, ())]
+    return bdk_text(namen, KNICK_WO) if namen else ""
+
+
+def _bdk_nach_nachweisen(an, res=None) -> None:
+    """Nach nachtraeglich gestarteten Nachweisen (Oberflaeche _design_done,
+    Web start_design): die Hinweise Biegedrillknicken der Analyse
+    (:func:`_bdk_hinweise_sammeln`) und eines daneben stehenden
+    Knickergebnisses ``res`` (:func:`_bdk_knick_hinweis_bilden`) neu bilden."""
+    if an is not None:
+        _bdk_hinweise_sammeln(an)
+    _bdk_knick_hinweis_bilden(res, getattr(an, "design", None) if an is not None else None)
 
 
 def _solve_all_rumpf(model: Model, an: Analysis, systeme: dict, workers, progress, combinations,
@@ -11529,13 +11710,23 @@ def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = Non
     als Eigenwerte nahe null heraus (``info["starrkoerper"]``, in der
     Zusammenfassung benannt) statt als Fehler. Die Faktorisierung uebernimmt
     :class:`LinearSolver` (MKL PARDISO, wenn vorhanden) statt SuperLU.
+
+    Bricht ARPACK ab oder meldet es Paare, deren Rayleigh-Quotient vom
+    Eigenwert abweicht, rechnet ein zweiter Loesungsweg
+    (:func:`_modal_zweiter_weg`, Runde k10e, 16.11.2026); erst wenn auch er
+    nichts liefert, kommt Klartext („Eigenschwingungen nicht berechenbar“).
     """
-    from scipy.sparse.linalg import LinearOperator
     t0 = time.time()
     schalenlage = _schalen_ausrichten(model, progress)
     with parallel.arbeiter(model, workers):
         K = asm.stiffness(model, workers, aktiv)
         M = asm.mass(model, workers, aktiv)
+    # Strafanteil der Starrkoerper getrennt (statik3d.strafanteil), bevor der
+    # Kontakt K ersetzt; die Kontaktfedern kommen als Zusatz dazu.
+    strafanteil = getattr(K, "_strafanteil", None)
+    if strafanteil is not None and not strafanteil.kopplungen:
+        strafanteil = None
+    strafe_zusatz = []
     if zusatzmasse is not None:
         M = (M + zusatzmasse).tocsr()
     kontakt_text, n_kontakt = "", 0
@@ -11553,6 +11744,7 @@ def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = Non
         n_kontakt = int(cs.n_active)
         if Kc is not None and getattr(Kc, "nnz", 0):
             K = (K + Kc).tocsr()
+            strafe_zusatz.append(Kc)
         if progress:
             _melde(progress, f"Kontakt: {kontakt_text}", 0.3)
     # Gesperrt sind Lager und Freiheitsgrade ohne Steifigkeit, nicht die ohne
@@ -11581,17 +11773,115 @@ def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = Non
     mdf = np.asarray(Mff.diagonal()).ravel()
     sigma = -1e-6 * float(kd.mean() / max(float(mdf.mean()), 1e-300))
     A = (Kff - sigma * Mff).tocsc()
-    loeser = LinearSolver(A)
-    # Die Modalanalyse faktorisiert selbst, ohne StaticSystem - das Ausweichen
-    # meldete hier bis zum 22.09.2026 nur warnings.warn (Befund K2).
-    if loeser.ausweichgrund:
-        _melde(progress, f"Gleichungslöser ausgewichen - {loeser.ausweichgrund}")
+    # Rang der Massenmatrix (Runde k10b, 15.11.2026): eine Zusatzmasse
+    # m n n^T wirkt je Knoten nur in Normalenrichtung, zaehlt bei schraeger
+    # Normale aber drei Freiheitsgrade mit Masse. Es gibt nur so viele
+    # Eigenformen, wie M unabhaengige Richtungen hat. Bis k10 nahm der
+    # Eigenloeser n_masse an: an einer schraegen Wand mit 8 Knoten (24
+    # Massen-FHG, Rang 8) lieferte ARPACK bei 10 angeforderten Formen eine
+    # Scheinform mit 0 Hz und weitere ohne Bedeutung, der dichte Weg brach
+    # bei 20 mit IndexError ab.
+    rang = _massenrang(Mff, fi, model.nn)
+    # Wenige Freiheitsgrade mit Masse (Runde k10, 15.11.2026): ARPACK baut im
+    # Shift-Invert-Modus einen Krylov-Raum aus Vektoren M x - mit nur
+    # n_masse Freiheitsgraden mit Masse hat er hoechstens n_masse Richtungen.
+    # Verlangt ARPACK mehr Lanczos-Vektoren (ncv = max(2 k + 1, 20)), brach es
+    # mit "ARPACK error -9999: Could not build an Arnoldi factorization" ab -
+    # gemessen an einer Punktmasse am masselosen Kragarm (3 FHG mit Masse).
+    # Dann statisch kondensiert und dicht geloest: die masselosen FHG sind
+    # exakt herausgerechnet, es gibt genau n_masse Eigenformen.
+    #
+    # Grenze des dichten Wegs (k10b): er haelt nur die kondensierte Matrix
+    # (n_masse x n_masse, hoechstens MODAL_DICHT_MAX = 2000 Zeilen, je Kopie
+    # 32 MB) und je Loesung einen Vektor der Laenge n; die Eigenformen
+    # entstehen einzeln aus einer Loesung je Form. Bis k10b legte er eine
+    # volle Matrix n x n_masse an (1 Mio. FHG, 201 Massen-FHG: 1,6 GB).
+    ncv = max(2 * nmodes + 1, 20)
+    dicht = rang <= ncv and n_masse <= MODAL_DICHT_MAX
+    grenz_hinweis = ""
+    if dicht:
+        k = min(nmodes, rang)
+    elif rang <= ncv:
+        # Viele Massen-FHG, aber wenige Richtungen und sehr viele Formen
+        # angefordert: ARPACK braucht mehr Lanczos-Vektoren als Formen und
+        # darf nicht mehr halten, als M Richtungen hat - sonst Scheinformen.
+        k = max(1, (rang - 1) // 2)
+        ncv = 2 * k + 1
+        grenz_hinweis = (f"{k} von {nmodes} angeforderten Eigenformen: Das System hat {rang} Eigenformen mit "
+                         f"Masse; bei mehr als {MODAL_DICHT_MAX} Freiheitsgraden mit Masse rechnet der "
+                         f"Eigenlöser in einem Lauf höchstens die unteren {k}. Weniger Formen anfordern "
+                         f"oder die Massen vereinfachen.")
+    # Regulaer? K - sigma M mit sigma < 0 ist nur dann singulaer, wenn sich
+    # ein Teil ohne Masse ohne Steifigkeit bewegen kann (A z = 0 heisst
+    # K z = 0 und M z = 0). Geprueft wird wie in der Statik: eine Loesung mit
+    # Residuumspruefung, mit einer rechten Seite, die jede Richtung enthaelt.
+    # Ist A singulaer, haelt _MasselosFrei die freien Richtungen numerisch fest
+    # (wie die Statik den freien Teil haelt): die Eigenfrequenzen haengen von
+    # ihnen nicht ab, weil sie keine Masse tragen; der Teil wird genannt.
+    # Bis k10b kam dort „ARPACK error -9999" oder eine Form, in der der lose
+    # Teil beliebig mitlief, am Stand f537ead4 eine Abweisung des rechenbaren
+    # Modells (Gegenpruefung k10b, Befund 1).
+    #
+    # Pruefung mit getrenntem Strafanteil (Zusammenfuehrung k10, 16.11.2026):
+    # wie in der Statik (StaticSystem._strafe_pruefung). Der frei definierte
+    # RBE3 traegt seit fix/k10-ring je Masterbewegung eine eigene Straffeder;
+    # allein ihr Rundungsrest hob das Residuum der Probe ueber die Schranke
+    # (Kragarm mit Kreisring aus 64 Speichen, RBE3 und weichem Arm: 0,000014
+    # gegen 0,000001), obwohl A regulaer ist. Dann ging die Rechnung an
+    # _MasselosFrei, und das nahm die Verdrehung des Kragarms als „frei" aus
+    # jeder Loesung: f1 = 2,816645 statt 1,910132 Hz (Hand und Modell ohne
+    # RBE3). Die Pruefung mit Strafanteil laeuft nur ohne angehobene Pivots
+    # (LinearSolver.solve) - ein wirklich singulaeres A geht weiter an
+    # _MasselosFrei.
     try:
-        op = LinearOperator(A.shape, dtype=float,
-                            matvec=lambda x: loeser.solve(np.asarray(x, float).ravel(), check=False))
-        vals_, vecs = eigsh(Kff, k=k, M=Mff, sigma=sigma, which="LM", OPinv=op)
+        loeser, frei = _modal_zerlegen(A, Mff, fi, M, sigma, strafanteil, strafe_zusatz, progress)
+    except _ModalSingulaer as ex:
+        raise RuntimeError(_modal_singulaer_text(model, K, fi, ex.ursache, progress, ex.grund)) from None
+    weg, weg_grund = "", ""
+    ncv_kw = {"ncv": ncv} if grenz_hinweis else {}
+    try:
+        try:
+            if dicht:
+                vals_, vecs = _modal_kondensiert(loeser, Mff, mdf, sigma, k, rang, lform=frei is not None)
+            else:
+                from scipy.sparse.linalg import ArpackError
+                try:
+                    vals_, vecs = _modal_arpack(Kff, Mff, sigma, k, loeser, ncv_kw)
+                except ArpackError as ex:
+                    # Zweiter Loesungsweg (Runde k10e, 16.11.2026): bis dahin
+                    # brach die Rechnung hier ab, auch bei rechenbaren Modellen
+                    # (siehe _modal_zweiter_weg)
+                    weg_grund = eigen_grund(ex)
+                    vals_, vecs, loeser, frei, sigma, weg = _modal_zweiter_weg(
+                        Kff, Mff, fi, M, sigma, k, rang, n_masse, mdf, loeser, frei, ncv_kw,
+                        strafanteil, strafe_zusatz, progress, weg_grund)
+        except _ModalNichtLoesbar as ex:
+            raise RuntimeError(_modal_abbruch_text(k, n_masse, rang, Kff, str(ex))) from None
+        except RuntimeError as ex:
+            # Eine Loesung von A haelt die Schranke der Statik nicht (frei
+            # bewegliche Teile ohne Masse, _MasselosFrei.solve): Klartext mit
+            # der Diagnose der Statik statt der rohen Meldung des Loesers
+            if str(ex).startswith("Gleichungssystem numerisch singulär"):
+                raise RuntimeError(_modal_singulaer_text(model, K, fi, ex, progress)) from None
+            raise
+        if frei is not None:
+            # ARPACK beginnt mit einem Zufallsvektor - die Formen ohne Anteil der
+            # freien Bewegung (die Loesungen selbst liefern keinen)
+            vecs = frei.ohne_frei(vecs)
+            # Eigenwert als Rayleigh-Quotient v^T K v / v^T M v (Fehler quadratisch
+            # im Fehler der Form) statt sigma + 1/nu: bei angehobenen Pivots sind
+            # die Loesungen nur auf etwa 0,00000002 genau, und sigma + 1/nu traegt
+            # das mit |sigma| in den Eigenwert - am losen RBE3-Slave mit Zusatzmasse
+            # kam die Starrkoerperform mit 0,063 statt 0 Hz heraus.
+            den = np.einsum("ij,ij->j", vecs, Mff @ vecs)
+            num = np.einsum("ij,ij->j", vecs, Kff @ vecs)
+            vals_ = np.where(den > 0, num / np.where(den > 0, den, 1.0), vals_)
     finally:
         loeser.freigeben()
+    # Der dichte Weg liefert nur die Formen, die es gibt (Rang von M) und die
+    # rechnerisch aufloesbar sind - k folgt der Zahl der Paare (bis k10b
+    # IndexError, wenn es weniger waren).
+    k = len(vals_)
     order = np.argsort(vals_)
     vals_ = np.maximum(vals_[order], 0.0)
     vecs = vecs[:, order]
@@ -11611,12 +11901,665 @@ def solve_modal(model: Model, nmodes: int = 8, progress=None, workers: int = Non
     res.modes = modes[:, :model.nn * NDOF].reshape(k, model.nn, NDOF)
     res.info = {"ndof": model.ndof, "nfree": len(fi), "time": time.time() - t0,
                 "zusatzmasse": zusatzmasse is not None,
+                "n_masse": n_masse, "moden_angefordert": int(nmodes),
+                "eigenloeser": weg or ("dicht, auf die Freiheitsgrade mit Masse kondensiert" if dicht else "ARPACK"),
                 "starrkoerper": int(np.sum(freqs < STARR_HZ)),
                 "kontakt": kontakt_text, "kontakt_aktiv": n_kontakt,
                 "loeser": loeser.backend}
+    if rang < n_masse:
+        res.info["massenrang"] = int(rang)
+    if weg:
+        res.info["eigenloeser_hinweis"] = _modal_weg_hinweis(weg, weg_grund, Kff)
+        _melde(progress, res.info["eigenloeser_hinweis"])
+    if frei is not None and frei.richtungen:
+        res.info["frei_ohne_masse"] = {"richtungen": int(frei.richtungen), "knoten": frei.knoten(model, fi),
+                                       **({"mindestens": True} if frei.mehr else {})}
+        res.info["frei_hinweis"] = frei_hinweis(res.info["frei_ohne_masse"])
+        _melde(progress, res.info["frei_hinweis"])
+    if k < nmodes:
+        res.info["moden_hinweis"] = grenz_hinweis or moden_hinweis(k, nmodes, n_masse, rang)
+        _melde(progress, res.info["moden_hinweis"])
     res.info.update(_ausweich_eintraege([(loeser.ausweichgrund, loeser.backend)]))
     _schalenlage_eintragen(res, schalenlage)
     return res
+
+
+def moden_hinweis(k: int, angefordert: int, n_masse: int, rang: int = None) -> str:
+    """Klartext, wenn die Modalanalyse weniger Eigenformen liefert als
+    angefordert (Runde k10, 15.11.2026; Rang und Aufloesung k10b)."""
+    rang = n_masse if rang is None else int(rang)
+    fhg = "einen Freiheitsgrad" if n_masse == 1 else f"{n_masse} Freiheitsgrade"
+    if rang >= n_masse and k >= n_masse:
+        return (f"{k} von {angefordert} angeforderten Eigenformen: Das System hat nur {fhg} mit Masse "
+                f"(Punktmassen, Werkstoffe mit Dichte) und damit nicht mehr Eigenformen; "
+                f"masselose Teile schwingen nur mit.")
+    satz = f"{k} von {angefordert} angeforderten Eigenformen: Das System hat {fhg} mit Masse"
+    if rang < n_masse:
+        wo = "einer Richtung" if rang == 1 else f"{rang} unabhängigen Richtungen"
+        satz += (f", die Massen wirken aber nur in {wo} (etwa eine Zusatzmasse "
+                 f"nur senkrecht zur benetzten Fläche) – mehr Eigenformen gibt es nicht")
+    if k < rang:
+        rest = rang - k
+        satz += ("; " if rang < n_masse else ". ") + (
+            f"{'Eine weitere Eigenform liegt' if rest == 1 else f'Weitere {rest} Eigenformen liegen'} über "
+            f"dem Millionenfachen der Grundfrequenz (sehr kleine Massen neben großen, etwa an starren "
+            f"Kopplungen) und {'ist' if rest == 1 else 'sind'} rechnerisch nicht auflösbar")
+    return satz + "; masselose Teile schwingen nur mit."
+
+
+#: Hoechstzahl der Freiheitsgrade mit Masse fuer den dichten Eigenweg (k10b):
+#: die kondensierte Matrix hat dann hoechstens 2000 x 2000 Eintraege (32 MB je
+#: Kopie, mit eigh rund 160 MB).
+MODAL_DICHT_MAX = 2000
+
+#: Eigenwerte nu = 1/(lambda - sigma) unter diesem Bruchteil des groessten
+#: sind Rundungsrauschen (eigh rechnet nu absolut auf etwa 1e-16 · nu_max
+#: genau). Was bleibt, hat lambda - sigma hoechstens 1e12-mal so gross wie die
+#: Grundform und ist auf etwa 0,01 % genau; was wegfaellt, liegt ueber dem
+#: Millionenfachen der Grundfrequenz (sigma < 0).
+MODAL_NU_REL = 1e-12
+
+#: Freie Teile ohne Masse in der Modalanalyse (k10b, Befund 1 der Gegenpruefung).
+#: Hilfszerlegung nur, wenn sich A selbst nicht zerlegen liess: A + eps ·
+#: max|diag A| · I (ein gleichmaessiger Shift dreht die Eigenvektoren nicht).
+MODAL_FREI_EPS = 1e-12
+#: Eine Ritz-Richtung z gilt als frei, wenn A z bis auf Rundung null ist
+#: (‖A z‖ hoechstens dieser Bruchteil von ‖|A| |z|‖ - komponentenweise).
+#: Mit Starrkoerpern (Straffedern) wird A z getrennt gerechnet
+#: (_MasselosFrei._frei_mass_strafe, Zusammenfuehrung k10, 16.11.2026): der
+#: Rest ausserhalb der Zeilenraeume der Straffedern hoechstens dieser
+#: Bruchteil von ‖|A₀| |z|‖ (A₀ ohne Straffedern) plus MODAL_FREI_RUND mal
+#: die Rundung der Straffedern, die Verletzung der Zwangsbedingung hoechstens
+#: dieser Bruchteil von max|z|. Gegen |A| |z| mit Straffedern lag eine von
+#: den Elementen gehaltene Richtung unter der Schranke (Verdrehung eines
+#: Kragarms mit Kreisring-RBE3 ueber G It: 0,0000000000016) und wurde aus
+#: jeder Loesung genommen ...
+MODAL_FREI_A = 1e-10
+#: Rundung der Straffedern im Rest der freien Richtung, in Vielfachen von
+#: eps ‖|A| |z|‖: gemessen bis 7,8 an wirklich freien Richtungen (loser
+#: RBE3-Slave), ab 7 200 an gehaltenen (Kreisring-RBE3, Verdrehung ueber G It)
+MODAL_FREI_RUND = 100.0
+_EPS = float(np.finfo(float).eps)
+#: ... und sie keine Masse traegt (z^T M z hoechstens dieser Bruchteil der
+#: groessten Hauptdiagonale von M, z Einheitsvektor). Weiche Formen mit Masse
+#: haben unter starren Kopplungen Ritz-Werte bis 1e-11 · max diag A (gemessen am
+#: Kragarm mit 300 Staeben und RBE3) - am Ritz-Wert allein sind sie nicht von
+#: freien Richtungen zu trennen, an der Masse schon.
+MODAL_FREI_M = 1e-12
+#: Hoechstens so viele freie Richtungen sucht _MasselosFrei (Speicher n mal
+#: diese Zahl); gibt es mehr, rechnet es mit den gefundenen und sagt „mindestens“.
+MODAL_FREI_MAX = 512
+#: Ziel-Residuum der Nachiteration von _MasselosFrei (relativ); die Schranke
+#: der Statik (genauigkeit) muss in jedem Fall halten.
+MODAL_FREI_RES = 1e-13
+
+
+class _MasselosFrei:
+    """Loeser fuer A = K - sigma M, wenn ein Teil ohne Masse ohne Steifigkeit
+    beweglich ist (A z = 0 heisst K z = 0 und M z = 0, weil sigma < 0 und M
+    positiv semidefinit). Gegenpruefung k10b, Befund 1: solche Modelle sind
+    rechenbar - die Statik haelt den Teil numerisch, und keine Eigenfrequenz
+    haengt von ihm ab, weil er keine Masse traegt.
+
+    ``loeser``: die Zerlegung von A (PARDISO hebt die Pivots der freien
+    Richtungen an, wie in der Statik); ohne sie eine Hilfszerlegung von
+    A + eps · max|diag A| · I. Sie dient als Vorkonditionierer: jede Loesung
+    wird gegen A selbst nachiteriert und muss die Schranke der Statik halten.
+    Die rechten Seiten des Eigenloesers (M x) liegen im Bild von A, weil M die
+    freien Richtungen nicht beruehrt.
+
+    Der Nullraum Z (orthonormal) kommt aus inverser Iteration mit der Zerlegung
+    und Rayleigh-Ritz; frei ist eine Ritz-Richtung nur, wenn A z bis auf Rundung
+    null ist und z keine Masse traegt. Z wird aus jeder Loesung genommen: die
+    Eigenformen zeigen den losen Teil ohne seine (unbestimmte) freie Bewegung,
+    und der Hinweis nennt seine Knoten."""
+
+    def __init__(self, A, M, loeser: "LinearSolver" = None, progress=None, strafe=None):
+        #: Pruefung mit getrenntem Strafanteil (statik3d.strafanteil) fuer A,
+        #: None ohne Starrkoerper
+        self.strafe = strafe
+        try:
+            self.A = sparse.csr_matrix(A)
+            self.M = sparse.csr_matrix(M)
+            n = self.A.shape[0]
+            if loeser is None:
+                d = np.abs(np.asarray(self.A.diagonal(), float).ravel())
+                dmax = float(d.max()) if d.size else 0.0
+                if not dmax > 0:
+                    raise ValueError("die Matrix hat keine Steifigkeit")
+                shift = sparse.identity(n, format="csr") * (MODAL_FREI_EPS * dmax)
+                loeser = LinearSolver((self.A + shift).tocsc(), progress=progress)
+        except BaseException:
+            if loeser is not None:
+                loeser.freigeben()
+            raise
+        self._ls = loeser
+        self.backend = loeser.backend
+        self.ausweichgrund = loeser.ausweichgrund
+        self.grenze = float(LinearSolver.genauigkeit()[0])
+        self.residuum = float("nan")
+        self.mehr = False
+        self.Z = np.zeros((n, 0))
+        try:
+            self.Z = self._nullraum(n)
+            # Pruefung: eine rechte Seite aus dem Bild von M, wie sie der
+            # Eigenloeser stellt, mit jeder Richtung mit Masse
+            self.solve(self.M @ np.random.default_rng(0).standard_normal(n))
+        except BaseException:
+            self.freigeben()
+            raise
+        self.richtungen = int(self.Z.shape[1])
+
+    def _nullraum(self, n: int) -> np.ndarray:
+        absA = abs(self.A)
+        mmax = float(np.abs(self.M.diagonal()).max()) if n else 0.0
+        rng = np.random.default_rng(20261115)
+        p = min(n, 8, MODAL_FREI_MAX)
+        while True:
+            X = rng.standard_normal((n, p))
+            for _ in range(4):
+                X = np.column_stack([self._ls.solve(X[:, j], check=False) for j in range(p)])
+                if not np.all(np.isfinite(X)):
+                    raise RuntimeError("die Zerlegung lieferte keine endliche Lösung")
+                X, _r = np.linalg.qr(X)
+            H = X.T @ (self.A @ X)
+            _th, W = np.linalg.eigh(0.5 * (H + H.T))
+            V = X @ W
+            a_rel = (np.linalg.norm(self.A @ V, axis=0)
+                     / np.maximum(np.linalg.norm(absA @ np.abs(V), axis=0), 1e-300))
+            m_rel = np.abs(np.einsum("ij,ij->j", V, self.M @ V)) / max(mmax, 1e-300)
+            if self.strafe is not None:
+                ohne_a = self._frei_mass_strafe(V) <= 1.0
+            else:
+                ohne_a = a_rel <= MODAL_FREI_A
+            frei = ohne_a & (m_rel <= MODAL_FREI_M)
+            c = int(frei.sum())
+            if c < p or p >= n:
+                break
+            if p >= MODAL_FREI_MAX:
+                # Mehr freie Richtungen, als die Suche haelt: die gefundenen
+                # werden herausgenommen; die uebrigen beruehren die Frequenzen
+                # nicht (die Nachiteration prueft jede Loesung), der Hinweis
+                # sagt „mindestens“.
+                self.mehr = True
+                break
+            p = min(n, 2 * p, MODAL_FREI_MAX)
+        if not c:
+            return np.zeros((n, 0))
+        Z, _r = np.linalg.qr(V[:, frei])
+        return Z
+
+    def _frei_mass_strafe(self, V: np.ndarray) -> np.ndarray:
+        """Je Spalte z von V, wie weit „A z bis auf Rundung null" mit
+        getrenntem Strafanteil erfuellt ist (frei bei hoechstens 1): Rest
+        ausserhalb der Zeilenraeume der Straffedern gegen MODAL_FREI_A
+        ‖|A₀| |z|‖ + MODAL_FREI_RUND eps ‖|A| |z|‖ und Verletzung der
+        Zwangsbedingung gegen MODAL_FREI_A max|z|. Frei heisst A z = 0, mit
+        A = A₀ + Σ k Gᵀ G (beide positiv semidefinit) also A₀ z = 0 und
+        G z = 0 - genau das pruefen beide Masse, ohne dass die Straffedern
+        den Massstab der Elemente setzen."""
+        pr = self.strafe
+        n = V.shape[0]
+        null = np.zeros(n)
+        pr.residuum(V[:, 0], null, self.A)          # baut A0R
+        absA, absA0R = abs(self.A), abs(pr.A0R)
+        out = np.empty(V.shape[1])
+        for j in range(V.shape[1]):
+            z = V[:, j]
+            rest, verl = pr.zerlegen(pr.residuum(z, null, self.A))
+            az = np.abs(z)
+            voll = absA @ az
+            comp = voll.copy()
+            if pr.R.size:
+                comp[pr.R] = absA0R @ az
+            # Schranke: die Elemente (|A₀| |z|) und die Rundung der
+            # Straffedern (eps |A| |z|) - an einem Knoten nur an Kopplungen
+            # (loser RBE3-Slave) ist |A₀| |z| fast null, der Rest dort Rundung
+            schranke = (MODAL_FREI_A * float(np.linalg.norm(comp))
+                        + MODAL_FREI_RUND * _EPS * float(np.linalg.norm(voll)))
+            q = float(np.linalg.norm(rest)) / max(schranke, 1e-300)
+            v = verl / max(MODAL_FREI_A * float(az.max()), 1e-300)
+            out[j] = max(q, v)
+        return out
+
+    def ohne_frei(self, x: np.ndarray) -> np.ndarray:
+        """``x`` (Vektor oder Spalten) ohne Anteil im Nullraum."""
+        if not self.Z.shape[1]:
+            return x
+        return x - self.Z @ (self.Z.T @ x)
+
+    def solve(self, b: np.ndarray, check: bool = False) -> np.ndarray:
+        """A^+ b mit Nachiteration gegen A; haelt sie die Schranke der Statik
+        nicht, RuntimeError. ``check`` nur der Form halber: geprueft wird immer."""
+        b = self.ohne_frei(np.asarray(b, float).ravel())
+        nb = float(np.linalg.norm(b))
+        if nb == 0.0:
+            return np.zeros_like(b)
+        x = self._ls.solve(b, check=False)
+        r = b - self.A @ x
+        rn = float(np.linalg.norm(r)) / nb
+        # Nachiteration, solange sie hilft (hoechstens 3 Schritte): unter
+        # Straffedern liegt die erreichbare Genauigkeit bei etwa 0,00000001 -
+        # genauer rechnet auch der regulaere Weg nicht. Mehr Aufwand (GMRES bis
+        # 0,0000000000001) kostete am Kragarm mit 300 Staeben je Loesung bis zu
+        # 160 Zerlegungsloesungen ohne Gewinn; die Eigenwerte kommen ohnehin
+        # aus dem Rayleigh-Quotienten (solve_modal).
+        for _ in range(3):
+            if not rn > MODAL_FREI_RES:
+                break
+            x2 = x + self._ls.solve(r, check=False)
+            r2 = b - self.A @ x2
+            rn2 = float(np.linalg.norm(r2)) / nb
+            if not rn2 < 0.5 * rn:
+                if rn2 < rn:
+                    x, r, rn = x2, r2, rn2
+                break
+            x, r, rn = x2, r2, rn2
+        self.residuum = rn
+        if not (np.isfinite(rn) and rn <= self.grenze):
+            raise RuntimeError(f"Gleichungssystem numerisch singulär (Residuum {_zt(rn, 2)}, "
+                               f"Schranke {_zt(self.grenze, 2)}) auch ohne die freien Richtungen")
+        return self.ohne_frei(x)
+
+    def knoten(self, model, fi: np.ndarray) -> list:
+        """Die Knoten, an denen sich die freien Richtungen bewegen."""
+        if not self.Z.shape[1]:
+            return []
+        a = np.abs(self.Z).max(axis=1)
+        sel = np.asarray(fi)[a > 1e-6 * float(a.max())]
+        sel = sel[sel < NDOF * int(model.nn)]
+        return sorted(int(k) for k in np.unique(sel // NDOF))
+
+    def freigeben(self) -> None:
+        self._ls.freigeben()
+
+
+def frei_hinweis(info: dict) -> str:
+    """Klartext zu frei beweglichen Teilen ohne Masse in der Modalanalyse
+    (Gegenpruefung k10b, Befund 1)."""
+    c = int(info.get("richtungen", 0) or 0)
+    kn = list(info.get("knoten") or [])
+    wo = ", ".join(f"K{k}" for k in kn[:8]) + (f" … ({len(kn)} Knoten)" if len(kn) > 8 else "")
+    return (f"Frei beweglich ohne Masse: {'mindestens ' if info.get('mindestens') else ''}"
+            f"{'eine Richtung' if c == 1 else f'{c} Richtungen'}"
+            + (f" an {'Knoten' if len(kn) == 1 else 'den Knoten'} {wo}" if kn else "")
+            + " (etwa ein loser Knoten an einem RBE3 oder ein gewichtsloser Körper ohne Halt). Wie in der "
+              "statischen Rechnung numerisch gehalten; die Eigenfrequenzen hängen davon nicht ab, die "
+              "Eigenformen zeigen dort nur den Anteil ohne die freie Bewegung.")
+
+
+def _massenrang(Mff, fi: np.ndarray, nn: int) -> int:
+    """Zahl der unabhaengigen Richtungen der Massenmatrix (freie FHG).
+
+    Die Massenmatrix ist knotenweise blockdiagonal (konzentrierte Massen,
+    Punktmassen, Zusatzmassen m n n^T je Knoten); dann ist der Rang die Summe
+    der Raenge der Knotenbloecke. Hat M Kopplungen zwischen Knoten, gilt die
+    Zahl der FHG mit Masse (obere Schranke, bei positiv definiten
+    Elementmassen genau)."""
+    fi = np.asarray(fi, int)
+    d = np.asarray(Mff.diagonal()).ravel()
+    n_masse = int(np.count_nonzero(d > 0))
+    C = sparse.coo_matrix(Mff)
+    aus = (C.row != C.col) & (C.data != 0)
+    if not np.any(aus):
+        return n_masse
+    # Knoten je freiem FHG; Woelb-FHG (hinter 6 nn) je eigener Block
+    knoten = np.where(fi < NDOF * nn, fi // NDOF, nn + np.arange(len(fi)))
+    r, c = C.row[aus], C.col[aus]
+    if np.any(knoten[r] != knoten[c]):
+        return n_masse
+    gekoppelt = np.unique(knoten[r])
+    in_block = np.isin(knoten, gekoppelt)
+    rang = int(np.count_nonzero((d > 0) & ~in_block))
+    sel = np.where(in_block)[0]
+    Mb = sparse.csr_matrix(Mff)[sel][:, sel].toarray()
+    kb = knoten[sel]
+    for kn in gekoppelt:
+        j = np.where(kb == kn)[0]
+        B = Mb[np.ix_(j, j)]
+        w = np.linalg.eigvalsh(0.5 * (B + B.T))
+        rang += int(np.count_nonzero(w > 1e-12 * max(float(w.max()), 0.0)))
+    return rang
+
+
+def _modal_singulaer_text(model, K, fi, ex, progress=None, grund=None) -> str:
+    """Klartext, wenn K - sigma M singulaer ist und sich auch ohne die freien
+    Richtungen ohne Masse nicht loesen laesst (_MasselosFrei scheiterte mit
+    ``grund``). Die Ursachenzeilen kommen aus der Diagnose der Statik
+    (diagnose.singulaer_text)."""
+    from types import SimpleNamespace
+    try:
+        from .diagnose import singulaer_text
+        text = singulaer_text(model, ex, SimpleNamespace(K=K, fi=fi, _progress=progress))
+        rumpf = text.split("\n", 1)[1] if "\n" in text else ""
+    except Exception as ex2:              # noqa: BLE001 - die Meldung darf nie sperren
+        rumpf = f"Diagnose nicht möglich: {type(ex2).__name__}: {ex2}"
+    return ("Eigenschwingungen nicht berechenbar: Das Gleichungssystem der Schwingung ist singulär, und "
+            "es ließ sich nicht auf frei bewegliche Teile ohne Masse zurückführen, die das Programm halten "
+            "könnte (etwa ein loser Knoten an einem RBE3 oder ein gewichtsloser Körper ohne Halt)"
+            + (f" – {grund}" if grund else "") + ". Lagerung, Kopplungen und freie Bauteile prüfen."
+            + ("\n" + rumpf if rumpf else ""))
+
+
+#: Zweiter Loesungsweg der Modalanalyse (Runde k10e, 16.11.2026): so viele
+#: Stufen mit je tausendfach kleinerer Verschiebung sigma versucht
+#: _modal_zweiter_weg, bevor es dicht rechnet
+MODAL_SHIFT_STUFEN = 4
+#: ... und so viele Freiheitsgrade mit Masse haelt der dichte zweite Weg
+#: hoechstens (kondensierte Matrix 4000 x 4000, 128 MB je Kopie; je
+#: Freiheitsgrad mit Masse eine Loesung)
+MODAL_AUSWEICH_DICHT = 4000
+
+
+#: ARPACK-Fehler im Klartext (scipy: _SAUPD_ERRORS/_SEUPD_ERRORS), fuer die
+#: Meldungen der Eigenloeser (Runde k10e)
+_ARPACK_TEXTE = {
+    -1: "keine Konvergenz in der zulässigen Schrittzahl",
+    -8: "Fehler in der Eigenwertrechnung der Tridiagonalmatrix",
+    -9: "Startvektor null",
+    -9999: "Krylov-Raum ließ sich nicht aufbauen",
+}
+
+
+def eigen_grund(ex) -> str:
+    """Kurzer deutscher Grund zu einem Abbruch des Eigenloesers ``ex``
+    (ArpackError/ArpackNoConvergence, sonst der Text der Ausnahme)."""
+    from scipy.sparse.linalg import ArpackNoConvergence
+    txt = str(ex)
+    if isinstance(ex, ArpackNoConvergence):
+        return "ARPACK: " + _ARPACK_TEXTE[-1]
+    m = re.match(r"ARPACK error (-?\d+)", txt)
+    if m:
+        code = int(m.group(1))
+        return f"ARPACK: {_ARPACK_TEXTE.get(code, 'Abbruch')} (Fehler {code})"
+    return txt[:160]
+
+
+class _ModalSingulaer(Exception):
+    """A = K - sigma M ist singulaer und laesst sich nicht auf frei
+    bewegliche Teile ohne Masse zurueckfuehren (_modal_zerlegen)."""
+
+    def __init__(self, ursache, grund):
+        super().__init__(str(grund))
+        self.ursache, self.grund = ursache, grund
+
+
+class _ModalNichtLoesbar(Exception):
+    """Weder ARPACK noch der zweite Loesungsweg lieferten Eigenformen."""
+
+
+def _modal_zerlegen(A, Mff, fi, M, sigma: float, strafanteil, strafe_zusatz, progress=None) -> tuple:
+    """(Loeser, frei) fuer A = Kff - sigma Mff: die Zerlegung von A, geprueft
+    wie in der Statik (eine Loesung mit Residuumspruefung), oder - ist A
+    singulaer - _MasselosFrei, das frei bewegliche Teile ohne Masse
+    numerisch haelt (``frei``, sonst None). Laesst sich A auch so nicht
+    loesen: _ModalSingulaer mit Ursache und Grund.
+
+    Bis Runde k10e stand das in solve_modal selbst; der zweite Loesungsweg
+    (_modal_zweiter_weg) zerlegt mit anderer Verschiebung neu und braucht
+    dieselbe Pruefung."""
+    strafe = None
+    if strafanteil is not None:
+        strafe = strafanteil.lokal(fi, tuple(strafe_zusatz) + ((-sigma) * M,))
+    try:
+        loeser, ursache = LinearSolver(A), None
+    except (RuntimeError, ValueError) as ex:
+        loeser, ursache = None, ex
+    if loeser is not None:
+        loeser.strafe = strafe
+        # Die Modalanalyse faktorisiert selbst, ohne StaticSystem - das Ausweichen
+        # meldete hier bis zum 22.09.2026 nur warnings.warn (Befund K2).
+        if loeser.ausweichgrund:
+            _melde(progress, f"Gleichungslöser ausgewichen - {loeser.ausweichgrund}")
+        try:
+            loeser.solve(np.random.default_rng(0).standard_normal(A.shape[0]), check=True)
+        except RuntimeError as ex:
+            ursache = ex
+    if ursache is None:
+        return loeser, None
+    # Die Zerlegung von A (falls es eine gibt) geht an _MasselosFrei ueber;
+    # scheitert es, gibt es sie frei
+    eigene = loeser is None
+    try:
+        frei = _MasselosFrei(A, Mff, loeser, progress, strafe=strafe)
+    except (RuntimeError, ValueError) as ex2:
+        raise _ModalSingulaer(ursache, ex2) from None
+    if eigene and frei.ausweichgrund:
+        _melde(progress, f"Gleichungslöser ausgewichen - {frei.ausweichgrund}")
+    return frei, frei
+
+
+def rayleigh_abweichung(K, M, vals, vecs, bezug: float) -> float:
+    """Groesste Abweichung des Rayleigh-Quotienten vᵀ K v / vᵀ M v vom
+    gemeldeten Eigenwert lambda je Paar (Spalten von ``vecs``), bezogen auf
+    max(|lambda|, ``bezug``); 0 ohne Paare, unendlich bei vᵀ M v <= 0 oder
+    nicht endlichen Werten (Runde k10e).
+
+    Zu einem richtigen Eigenvektor ist der Rayleigh-Quotient der Eigenwert,
+    sein Fehler ist quadratisch im Fehler der Form - ein gemeldetes Paar, bei
+    dem beide auseinanderliegen, ist keine Loesung. Der Rest ‖K v - lambda M v‖
+    trennt das an schlecht konditionierten Modellen nicht (gemessen bis
+    0,002 bei richtigen Paaren)."""
+    vecs = np.asarray(vecs, float)
+    if vecs.ndim != 2 or not vecs.shape[1]:
+        return 0.0
+    lam = np.asarray(vals, float).ravel()
+    vkv = np.einsum("ij,ij->j", vecs, K @ vecs)
+    vmv = np.einsum("ij,ij->j", vecs, M @ vecs)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        rq = vkv / vmv
+        q = np.abs(rq - lam) / np.maximum(np.abs(lam), abs(float(bezug)))
+    q = np.where(np.isfinite(q) & (vmv > 0), q, np.inf)
+    return float(q.max())
+
+
+#: Hoechstens so weit darf der Rayleigh-Quotient eines Eigenpaars vom
+#: gemeldeten Eigenwert abweichen (rayleigh_abweichung, bezogen auf
+#: max(|lambda|, |sigma|)), sonst ist das Paar keine Loesung (Runde k10e).
+#: ARPACK meldete am Kragarm aus 4000 masselosen Staeben mit 30 Punktmassen um
+#: sigma = -8 500 000 000 Erfolg mit Frequenzen ab 4 745 078 688 274 Hz
+#: (Abweichung 3,6e20); richtige Paare lagen dort und an den Kreisringen mit
+#: Speichen von 2 bis 10 mm (Befund Nr. 25) bei hoechstens 2,4e-7, an den
+#: Pruefdateien der Modalanalyse bei hoechstens 1e-8 (gemessen 16.11.2026).
+EIGEN_RQ_MAX = 1e-3
+
+
+def _modal_arpack(Kff, Mff, sigma: float, k: int, loeser, ncv_kw: dict) -> tuple:
+    """ARPACK im Shift-Invert-Modus um ``sigma`` mit der Zerlegung ``loeser``
+    von Kff - sigma Mff. Paare, deren Rayleigh-Quotient vom Eigenwert um mehr
+    als EIGEN_RQ_MAX abweicht, sind keine Loesung: ArpackError wie ein Abbruch."""
+    from scipy.sparse.linalg import LinearOperator, ArpackError
+    op = LinearOperator(Kff.shape, dtype=float,
+                        matvec=lambda x: loeser.solve(np.asarray(x, float).ravel(), check=False))
+    vals, vecs = eigsh(Kff, k=k, M=Mff, sigma=sigma, which="LM", OPinv=op, **ncv_kw)
+    abw = rayleigh_abweichung(Kff, Mff, vals, vecs, sigma)
+    if not abw <= EIGEN_RQ_MAX:
+        fehler = ArpackError(0)
+        fehler.args = (f"gemeldete Eigenwerte weichen vom Rayleigh-Quotienten um {_zt(abw, 2)} ab",)
+        raise fehler
+    return vals, vecs
+
+
+def _modal_zweiter_weg(Kff, Mff, fi, M, sigma: float, k: int, rang: int, n_masse: int, mdf,
+                       loeser, frei, ncv_kw: dict, strafanteil, strafe_zusatz, progress, grund: str) -> tuple:
+    """Eigenformen, wenn ARPACK um ``sigma`` keine lieferte (Runde k10e,
+    16.11.2026). Rueckgabe (Eigenwerte, Eigenvektoren, Loeser, frei, sigma,
+    Beschreibung des Wegs); ``loeser`` gibt die Funktion frei, wenn sie einen
+    anderen zurueckgibt. Ohne Ergebnis: _ModalNichtLoesbar.
+
+    Ursache des Abbruchs, belegt am Kragarm aus 1000 masselosen Staeben mit 21
+    Punktmassen (sonst rechenbar, 21,356 Hz): sigma = -0,000001 mal mittlere
+    Hauptdiagonale von K durch mittlere von M richtet sich nach den steifsten
+    Freiheitsgraden (kurze Elemente, Punktmassen neben masselosen Knoten),
+    nicht nach den gesuchten Eigenwerten - dort -47 400 000 000 gegen
+    lambda_1 = 18 000. Die Eigenwerte 1/(lambda - sigma) des Shift-Invert-
+    Operators liegen dann bis auf etwa 0,0000004 beieinander, und ARPACK
+    brach mit „error -9999: Could not build an Arnoldi factorization“ ab (am
+    Kreisring mit 32 Speichen von 5 mm: sigma -1 000 000 000 000 gegen
+    16 000, „error -1: No convergence“). Mit tausendfach kleinerem sigma
+    rechnete ARPACK dieselben Frequenzen wie der dichte Bezug.
+
+    1. sigma stufenweise je tausendfach kleiner (MODAL_SHIFT_STUFEN Stufen),
+       solange sich K - sigma M zerlegen laesst (geprueft wie in der Statik;
+       mit frei beweglichen Teilen ohne Masse ueber _MasselosFrei).
+    2. Dicht, auf die Freiheitsgrade mit Masse kondensiert (_modal_kondensiert
+       mit Zerlegung der Massenmatrix), bis MODAL_AUSWEICH_DICHT Freiheits-
+       grade mit Masse, mit der Zerlegung des kleinsten zerlegbaren sigma.
+
+    Die erste Rechnung um sigma bleibt unveraendert: rechnet ARPACK dort,
+    aendert sich kein Ergebnis.
+
+    Speicher: die Funktion uebernimmt ``loeser``; ohne Ergebnis gibt sie
+    jede gehaltene Zerlegung frei (freigeben() ist wiederholbar)."""
+    from scipy.sparse.linalg import ArpackError
+    _melde(progress, f"Eigenlöser (ARPACK) ohne Ergebnis ({grund}) – zweiter Lösungsweg")
+    bestes = (loeser, frei, sigma)
+    try:
+        for stufe in range(1, MODAL_SHIFT_STUFEN + 1):
+            s = sigma * 10.0 ** (-3 * stufe)
+            A = (Kff - s * Mff).tocsc()
+            try:
+                l2, f2 = _modal_zerlegen(A, Mff, fi, M, s, strafanteil, strafe_zusatz, progress)
+            except _ModalSingulaer:
+                break                       # kleiner geht es nicht
+            bestes[0].freigeben()
+            bestes = (l2, f2, s)
+            try:
+                vals, vecs = _modal_arpack(Kff, Mff, s, k, l2, ncv_kw)
+            except ArpackError:
+                continue
+            return vals, vecs, l2, f2, s, f"ARPACK mit kleinerer Verschiebung (σ = {_zt(s, 2)})"
+        loeser, frei, s = bestes
+        if n_masse <= MODAL_AUSWEICH_DICHT:
+            vals, vecs = _modal_kondensiert(loeser, Mff, mdf, s, k, rang, lform=True)
+            return vals, vecs, loeser, frei, s, "dicht, auf die Freiheitsgrade mit Masse kondensiert"
+    except BaseException:
+        # die gehaltene Zerlegung freigeben (freigeben() ist wiederholbar; der
+        # Aufrufer gibt seine danach noch einmal frei)
+        bestes[0].freigeben()
+        raise
+    bestes[0].freigeben()
+    raise _ModalNichtLoesbar(f"auch nicht mit {MODAL_SHIFT_STUFEN} kleineren Verschiebungen; dicht nur bis "
+                             f"{MODAL_AUSWEICH_DICHT} Freiheitsgrade mit Masse")
+
+
+#: Ab so vielen Zehnerpotenzen zwischen groesster und kleinster Hauptdiagonale
+#: der Steifigkeit nennen die Texte der Eigenloeser die Spreizung als
+#: moegliche Ursache (gemessen 16.11.2026: Kragarm mit Kreisring aus 32
+#: Speichen von 5 mm 13, von 2 mm 15; Kragarm aus 10 Staeben 3, aus 1000
+#: Staeben 7, aus 4000 Staeben 8)
+SPREIZUNG_HINWEIS = 9
+
+
+def _spreizung_satz(Kff) -> str:
+    """Satz zur Spreizung der Steifigkeiten (Hauptdiagonale von ``Kff``),
+    leer unter SPREIZUNG_HINWEIS Zehnerpotenzen."""
+    kd = np.abs(np.asarray(Kff.diagonal(), float).ravel())
+    kd = kd[kd > 0]
+    if not kd.size:
+        return ""
+    z = int(np.floor(np.log10(float(kd.max()) / float(kd.min()))))
+    if z < SPREIZUNG_HINWEIS:
+        return ""
+    return (f" Die Steifigkeiten der Freiheitsgrade liegen um {z} Zehnerpotenzen auseinander (kurze, sehr "
+            f"steife Elemente wie Speichen an einem Kreisring, sehr fein geteilte Stäbe, Kopplungen); das "
+            f"begrenzt die erreichbare Genauigkeit der Eigenwertrechnung.")
+
+
+def _modal_abbruch_text(k: int, n_masse: int, rang: int, Kff, grund: str) -> str:
+    """Klartext, wenn weder ARPACK noch der zweite Loesungsweg Eigenformen
+    lieferten (Runde k10e; vorher nach dem ersten ARPACK-Abbruch)."""
+    return (f"Eigenschwingungen nicht berechenbar: der Eigenlöser (ARPACK) fand keine {k} Eigenformen, "
+            f"{grund}. Das System hat {n_masse} Freiheitsgrade mit Masse in {rang} unabhängigen Richtungen."
+            + _spreizung_satz(Kff)
+            + " Weniger Eigenformen anfordern; bleibt die Meldung, Lagerung, Massen und sehr steife "
+              "Elemente prüfen.")
+
+
+def _modal_weg_hinweis(weg: str, grund: str, Kff) -> str:
+    """Hinweis im Ergebnis, wenn der zweite Loesungsweg gerechnet hat."""
+    return (f"Eigenlöser ARPACK ohne Ergebnis ({grund}); gerechnet mit dem zweiten Lösungsweg: {weg}."
+            + _spreizung_satz(Kff))
+
+
+def _modal_kondensiert(loeser: "LinearSolver", Mff, mdf: np.ndarray, sigma: float, k: int,
+                       rang: int = None, lform: bool = False) -> tuple:
+    """(Eigenwerte, Eigenvektoren) von Kff v = lambda Mff v, wenn nur wenige
+    Freiheitsgrade Masse tragen: exakt statisch kondensiert auf diese.
+
+    ``loeser`` zerlegt A = Kff - sigma Mff (regulaer, von solve_modal
+    geprueft). Mit den Einheitslasten an den Massen-FHG m ist F = (A^-1)[m, m]
+    die Nachgiebigkeit der kondensierten Matrix A_red = K_red - sigma M_mm
+    (A_red = F^-1), weil die masselosen FHG in M weder Diagonale noch
+    Nebenglieder haben (M positiv semidefinit). Dann gilt M_mm phi = nu A_red phi
+    mit lambda = sigma + 1/nu, und die volle Form ist v = A^-1 (E_m M_mm phi).
+
+    Es kommen hoechstens ``k`` Paare, und nur die, die es gibt: hoechstens
+    ``rang`` (Rang von M_mm) und nur nu ueber MODAL_NU_REL · nu_max - darunter
+    ist nu Rundungsrauschen. Speicher: F (n_masse²) und je Form ein Vektor;
+    bis k10b hielt die Funktion die volle Matrix n x n_masse.
+
+    ``lform`` (frei bewegliche Teile ohne Masse, ``loeser`` = _MasselosFrei):
+    F = (A^+)[m, m] kann dann singulaer sein, wenn eine freie Richtung einen
+    Knoten mit Masse in einer anderen Richtung beruehrt. Dann ohne Inverse:
+    M_mm = L L^T (L aus den Eigenvektoren von M_mm ueber MODAL_NU_REL), die
+    Eigenwerte nu von L^T F L (dieselben von Null verschiedenen wie A^+ M) und
+    die Form v = A^+ (E_m L psi)."""
+    import scipy.linalg as sla
+    m = np.where(mdf > 0)[0]
+    n = Mff.shape[0]
+    F = np.empty((len(m), len(m)))
+    e = np.zeros(n)
+    for j, i in enumerate(m):
+        e[i] = 1.0
+        F[:, j] = loeser.solve(e, check=False)[m]
+        e[i] = 0.0
+    F = 0.5 * (F + F.T)
+    if lform:
+        Mmm = sparse.csr_matrix(Mff)[m][:, m].toarray()
+        w, U = np.linalg.eigh(0.5 * (Mmm + Mmm.T))
+        behalten = w > MODAL_NU_REL * max(float(w.max()), 0.0)
+        Lm = U[:, behalten] * np.sqrt(w[behalten])
+        G = Lm.T @ F @ Lm
+        del F
+        nu, psi = np.linalg.eigh(0.5 * (G + G.T))
+        nu_max = float(nu.max()) if nu.size else 0.0
+        if nu_max <= 0:
+            raise RuntimeError("Eigenschwingungen nicht berechenbar: die Massenmatrix hat keine wirksame Richtung.")
+        gut = np.where(nu > MODAL_NU_REL * nu_max)[0]
+        gut = gut[np.argsort(-nu[gut])]
+        if rang is not None:
+            gut = gut[:max(1, int(rang))]
+        gut = gut[:k]
+        lam = sigma + 1.0 / nu[gut]
+        vecs = np.empty((n, len(gut)))
+        rhs = np.zeros(n)
+        for j, g in enumerate(gut):
+            rhs[m] = Lm @ psi[:, g]
+            vecs[:, j] = loeser.solve(rhs, check=False)
+        return lam, vecs
+    A_red = np.linalg.inv(F)
+    del F
+    A_red = 0.5 * (A_red + A_red.T)
+    Mmm = sparse.csr_matrix(Mff)[m][:, m].toarray()
+    Mmm = 0.5 * (Mmm + Mmm.T)
+    nu, phi = sla.eigh(Mmm, A_red)
+    del A_red
+    nu_max = float(nu.max()) if nu.size else 0.0
+    if nu_max <= 0:
+        raise RuntimeError("Eigenschwingungen nicht berechenbar: die Massenmatrix hat keine wirksame Richtung.")
+    gut = np.where(nu > MODAL_NU_REL * nu_max)[0]
+    gut = gut[np.argsort(-nu[gut])]                  # groesstes nu = kleinstes lambda zuerst
+    if rang is not None:
+        gut = gut[:max(1, int(rang))]
+    gut = gut[:k]
+    lam = sigma + 1.0 / nu[gut]
+    vecs = np.empty((n, len(gut)))
+    rhs = np.zeros(n)
+    for j, g in enumerate(gut):
+        rhs[m] = Mmm @ phi[:, g]
+        vecs[:, j] = loeser.solve(rhs, check=False)
+    return lam, vecs
 
 
 # ==========================================================================
@@ -11647,6 +12590,154 @@ def _direkt_zerlegen(system: StaticSystem, iterativ: LinearSolver,
     _melde(progress, f"Verzweigungsproblem: {name} iteriert jede Lösung neu – "
                      f"K wird dafür direkt zerlegt ({wie})")
     return direkt
+
+
+def _k_inverse(system: StaticSystem, progress=None) -> tuple:
+    """(k_inv, freigeben): x -> K^-1 x mit der Zerlegung des Grundzustands
+    (samt Lagrange-Rand der Hilfsfesselung); bei einem iterativen Loeser
+    eigens direkt zerlegt (:func:`_direkt_zerlegen`). ``freigeben`` gibt
+    diese eigene Zerlegung zurueck."""
+    ls = system.solver
+    eigen = _direkt_zerlegen(system, ls, progress) if ls.backend in ITERATIV else None
+    if eigen is not None:
+        ls = eigen
+    n = system.Kff.shape[0]
+    rand = system._rand
+
+    def k_inv(x):
+        x = np.asarray(x, float).ravel()
+        if rand:                    # Lagrange-Rand der Hilfsfesselung (gerandet)
+            y = ls.solve(np.concatenate([x, np.zeros(rand)]), check=False)
+            return np.asarray(y, float).ravel()[:n]
+        return ls.solve(x, check=False)
+
+    def freigeben():
+        if eigen is not None:
+            eigen.freigeben()
+    return k_inv, freigeben
+
+
+#: Grenze der Rayleigh-Abweichung beim Verzweigungsproblem (_mu_pruefen,
+#: bezogen auf das groesste |mu|; Runde k10e). Gemessen am Kragarm mit
+#: Kreisring aus 32 Speichen (Befund Nr. 25, sehr kurze steife Speichen):
+#: brauchbare Paare bis 0,011 (Faktor 45,91 statt 46,06), unbrauchbare ab
+#: 0,16 (Faktoren -1,40 / 0,76 statt 46,06); regelmaessige Modelle unter
+#: 0,00000000001. Weiter als bei der Modalanalyse, weil K als Metrik die
+#: Kondition von K ganz traegt.
+KNICK_RQ_MAX = 0.05
+#: Darueber (und bis KNICK_RQ_MAX) rechnet das Knicken, meldet aber, dass
+#: die Genauigkeit begrenzt ist
+KNICK_RQ_HINWEIS = 1e-3
+
+
+def _mu_pruefen(Kff, Kgff, mu, vecs) -> float:
+    """Paare (mu, v) von -K_g v = mu K v: weicht der Rayleigh-Quotient
+    vᵀ(-K_g)v / vᵀ K v um mehr als KNICK_RQ_MAX (bezogen auf das groesste
+    |mu|) ab, ist es keine Loesung - ArpackError wie ein Abbruch (Runde k10e).
+    Rueckgabe die Abweichung."""
+    from scipy.sparse.linalg import ArpackError
+    mu = np.asarray(mu, float).ravel()
+    bezug = float(np.max(np.abs(mu))) if mu.size else 0.0
+    abw = rayleigh_abweichung(-Kgff, Kff, mu, vecs, bezug) if bezug > 0 else 0.0
+    if not abw <= KNICK_RQ_MAX:
+        fehler = ArpackError(0)
+        fehler.args = (f"gemeldete Eigenwerte weichen vom Rayleigh-Quotienten um {_zt(abw, 2)} ab",)
+        raise fehler
+    return abw
+
+
+def _knick_genauigkeit(abw: float, Kff, progress=None) -> None:
+    """Hinweis im Protokoll, wenn die Paare des Verzweigungsproblems nur
+    begrenzt genau sind (Rayleigh-Abweichung ueber KNICK_RQ_HINWEIS)."""
+    if abw > KNICK_RQ_HINWEIS:
+        _melde(progress, f"Hinweis: Verzweigungslastfaktoren nur begrenzt genau (Abweichung zwischen Eigenwert und "
+                         f"Rayleigh-Quotient {_fest(100.0 * abw, 2)} %)." + _spreizung_satz(Kff))
+
+
+#: Dichter zweiter Weg des Verzweigungsproblems (Runde k10e) bis so viele
+#: Freiheitsgrade mit geometrischer Steifigkeit (Traeger von K_g): je einer
+#: eine Loesung mit der Zerlegung von K, dazu eine dichte Matrix dieser Groesse
+KNICK_DICHT_MAX = 3000
+
+
+def _verzweigung_dicht(k_inv, Kgff, k: int, art: str) -> tuple:
+    """(mu, Eigenvektoren) von -K_g v = mu K v, dicht ueber dem Traeger S von
+    K_g (Runde k10e). Mit G = -K_g[S, S] und F = (K^-1)[S, S] (je Spalte eine
+    Loesung) sind die von null verschiedenen mu die Eigenwerte von F G; mit
+    F = R Rᵀ (aus den Eigenvektoren von F) die der symmetrischen Matrix
+    Rᵀ G R. Zur Loesung y gehoert w = R y auf S und v = K^-1 (Pᵀ G w) / mu.
+    ``art`` "LM": die ``k`` betragsgroessten mu, "LA": die ``k`` groessten."""
+    C = sparse.csr_matrix(Kgff)
+    n = C.shape[0]
+    zeilen = np.unique(C.nonzero()[0])
+    S = zeilen[np.asarray(abs(C[zeilen]).sum(axis=1)).ravel() > 0]
+    if not len(S):
+        return np.zeros(0), np.zeros((n, 0))
+    G = -C[S][:, S].toarray()
+    G = 0.5 * (G + G.T)
+    F = np.empty((len(S), len(S)))
+    e = np.zeros(n)
+    for j, i in enumerate(S):
+        e[i] = 1.0
+        F[:, j] = k_inv(e)[S]
+        e[i] = 0.0
+    if not np.all(np.isfinite(F)):
+        raise RuntimeError("die Zerlegung von K lieferte keine endliche Lösung")
+    w, U = np.linalg.eigh(0.5 * (F + F.T))
+    del F
+    wmax = float(w.max()) if w.size else 0.0
+    if not wmax > 0:
+        raise RuntimeError("die Nachgiebigkeit an den Freiheitsgraden mit Normalkraft ist null")
+    behalten = w > 1e-13 * wmax
+    R = U[:, behalten] * np.sqrt(w[behalten])
+    del U
+    H = R.T @ G @ R
+    mu, Y = np.linalg.eigh(0.5 * (H + H.T))
+    reihe = np.argsort(-np.abs(mu) if art == "LM" else -mu, kind="stable")[:max(1, int(k))]
+    mu = mu[reihe]
+    vecs = np.zeros((n, len(reihe)))
+    rhs = np.zeros(n)
+    for j, r in enumerate(reihe):
+        if mu[j] == 0.0:
+            continue
+        rhs[S] = G @ (R @ Y[:, r])
+        vecs[:, j] = k_inv(rhs) / mu[j]
+    return mu, vecs
+
+
+def _verzweigung_ausweich(Kff, Kgff, k_inv, k: int, art: str, grund: str, progress=None) -> tuple:
+    """Zweiter Loesungsweg fuer -K_g v = mu K v, wenn ARPACK abbrach oder
+    unbrauchbare Paare meldete (Runde k10e, 16.11.2026): bis KNICK_DICHT_MAX
+    Freiheitsgrade mit geometrischer Steifigkeit dicht
+    (:func:`_verzweigung_dicht`), sonst ARPACK mit mehr Lanczos-Vektoren,
+    mehr Schritten und anderem Startvektor. ``art`` "LM" (Knicken: die
+    betragsgroessten mu) oder "LA" (alpha_cr: die groessten). Ohne Ergebnis
+    RuntimeError mit Klartext „Verzweigungslastfaktoren nicht berechenbar"."""
+    from scipy.sparse.linalg import LinearOperator, ArpackError
+    _melde(progress, f"Eigenlöser (ARPACK) ohne Ergebnis beim Verzweigungsproblem ({grund}) – zweiter Lösungsweg")
+    n = Kgff.shape[0]
+    traeger = int(np.count_nonzero(np.asarray(abs(sparse.csr_matrix(Kgff)).sum(axis=1)).ravel() > 0))
+    try:
+        if traeger <= KNICK_DICHT_MAX:
+            mu, vecs = _verzweigung_dicht(k_inv, Kgff, k, art)
+            weg = "dicht"
+        else:
+            op = LinearOperator((n, n), dtype=float, matvec=k_inv)
+            v0 = np.random.default_rng(1).standard_normal(n)
+            kk = max(1, min(k, n - 2))
+            mu, vecs = eigsh(-Kgff, k=kk, M=Kff, Minv=op, which=art, v0=v0,
+                             ncv=min(n - 1, max(4 * kk + 1, 60)), maxiter=50 * n)
+            weg = "ARPACK mit mehr Lanczos-Vektoren"
+        abw = _mu_pruefen(Kff, Kgff, mu, vecs)
+    except (ArpackError, RuntimeError, MemoryError, np.linalg.LinAlgError) as ex:
+        raise RuntimeError(
+            f"Verzweigungslastfaktoren nicht berechenbar: der Eigenlöser (ARPACK) fand keine Lösung ({grund}), "
+            f"auch der zweite Lösungsweg nicht ({eigen_grund(ex)})." + _spreizung_satz(Kff)
+            + " Lagerung, Normalkräfte und sehr steife Elemente prüfen.") from None
+    _melde(progress, f"Verzweigungsproblem mit dem zweiten Lösungsweg gerechnet ({weg})."
+           + _spreizung_satz(Kff))
+    _knick_genauigkeit(abw, Kff, progress)
+    return mu, vecs
 
 
 def _verzweigung(system: StaticSystem, Kgff, k: int, progress=None) -> tuple:
@@ -11687,29 +12778,26 @@ def _verzweigung(system: StaticSystem, Kgff, k: int, progress=None) -> tuple:
     antimetrische Formen senkrecht stehen). Bitgleich wird es damit nicht
     ganz: am Rahmen ist 77,3287 ein siebenfacher Eigenwert, und seine
     zweite und dritte Kopie streuen von Lauf zu Lauf in der 14. Stelle; die
-    erste war in allen Laeufen bitgleich (gemessen 23.09.2026)."""
-    from scipy.sparse.linalg import LinearOperator
-    ls = system.solver
-    eigen = _direkt_zerlegen(system, ls, progress) if ls.backend in ITERATIV else None
-    if eigen is not None:
-        ls = eigen
+    erste war in allen Laeufen bitgleich (gemessen 23.09.2026).
+
+    Zweiter Loesungsweg (Runde k10e, 16.11.2026): bricht ARPACK ab oder
+    weicht der Rayleigh-Quotient eines Paares um mehr als KNICK_RQ_MAX vom
+    gemeldeten mu ab, rechnet :func:`_verzweigung_ausweich` (dicht ueber dem
+    Traeger von K_g, sonst ARPACK mit mehr Lanczos-Vektoren). Bis dahin kam
+    der ARPACK-Fehler roh bei der Oberflaeche an."""
+    from scipy.sparse.linalg import LinearOperator, ArpackError
+    k_inv, freigeben = _k_inverse(system, progress)
     n = Kgff.shape[0]
-    rand = system._rand
-
-    def k_inv(x):
-        x = np.asarray(x, float).ravel()
-        if rand:                    # Lagrange-Rand der Hilfsfesselung (gerandet)
-            y = ls.solve(np.concatenate([x, np.zeros(rand)]), check=False)
-            return np.asarray(y, float).ravel()[:n]
-        return ls.solve(x, check=False)
-
     op = LinearOperator((n, n), dtype=float, matvec=k_inv)
     v0 = np.random.default_rng(0).standard_normal(n)
     try:
-        mu, vecs = eigsh(-Kgff, k=k, M=system.Kff, Minv=op, which="LM", v0=v0)
+        try:
+            mu, vecs = eigsh(-Kgff, k=k, M=system.Kff, Minv=op, which="LM", v0=v0)
+            _knick_genauigkeit(_mu_pruefen(system.Kff, Kgff, mu, vecs), system.Kff, progress)
+        except ArpackError as ex:
+            mu, vecs = _verzweigung_ausweich(system.Kff, Kgff, k_inv, k, "LM", eigen_grund(ex), progress)
     finally:
-        if eigen is not None:
-            eigen.freigeben()
+        freigeben()
     lam = np.full(len(mu), np.inf)
     np.divide(1.0, mu, out=lam, where=mu != 0.0)
     order = np.argsort(np.abs(lam), kind="stable")
@@ -11806,7 +12894,7 @@ def _positiven_nachfordern(system: StaticSystem, Kgff, k: int, vals, vecs, progr
     n = Kgff.shape[0]
     lam_p, vec_p = None, None
     try:
-        mu, v = groesstes_mu(system.Kff, Kgff, k=1)
+        mu, v = groesstes_mu(system.Kff, Kgff, k=1, system=system, progress=progress)
         if mu is None:
             return vals, vecs, (f"Kein positiver Knickfaktor: unter dieser Last knickt das System nicht. "
                                 f"Die {len(vals)} berechneten Faktoren sind negativ, sie gehören zum "
@@ -11903,9 +12991,19 @@ def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = Non
     # (samt interner Teilung, wie Theorie II. Ordnung): Hinweis (Runde k7)
     ll_hinweise = laengslast_hinweise(model, faktoren, system.aktiv, 1, kraefte=kraefte)
     # Stab mit Druck und Biegung, Biegedrillknicken nicht anderweitig erfasst:
-    # K_G hat kein Momentenglied (Runde k8, 15.11.2026) - am Grundzustand des Modells
-    from .bdk_hinweis import hinweis as bdk_hinweis, KNICK_WO
-    bdk_zeile, _bdk_namen = bdk_hinweis(model, system.aktiv, KNICK_WO, res=static)
+    # K_G hat kein Momentenglied (Runde k8, 15.11.2026) - am Grundzustand des Modells.
+    # Die Haken EC3/Biegedrillknicken allein erfassen nichts: hier laeuft kein
+    # Nachweis (Runde k10b, wie Theorie II. Ordnung); erst ein Nachweis, der
+    # diesen Grundzustand mit chi_LT gefuehrt hat, nimmt den Stab heraus
+    # (_bdk_knick_hinweis_bilden, Oberflaeche und Web nach den Nachweisen)
+    from .bdk_hinweis import aufteilen as bdk_aufteilen
+    _bdk_alle, _bdk_ec3 = bdk_aufteilen(model, system.aktiv, res=static)
+    if combination:
+        _bdk_grund = combination
+    else:
+        _bdk_grund = None if case == "all" else _lastfall_faktoren(model, case)[1]
+    _bdk_knick = {"alle": list(_bdk_alle), "ec3": list(_bdk_ec3), "grund": _bdk_grund}
+    bdk_zeile = _bdk_knick_text(_bdk_knick)
     if fein is not None:
         modell_grob = model
         model, system, abb = fein
@@ -11975,6 +13073,9 @@ def solve_buckling(model: Model, nmodes: int = 5, progress=None, case: str = Non
         res.info["laengslast_teilung"] = list(ll_hinweise)
     if bdk_zeile:
         res.info["bdk_hinweis"] = [bdk_zeile]
+    if _bdk_alle:
+        # fuer das Neubilden nach den Nachweisen (_bdk_knick_hinweis_bilden, k10b)
+        res.info["bdk_knick"] = _bdk_knick
     if knick_hinweis:
         res.info["knickfaktor_hinweis"] = knick_hinweis
         _melde(progress, "Hinweis: " + knick_hinweis)

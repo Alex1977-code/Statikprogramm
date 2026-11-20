@@ -37,16 +37,22 @@ zwischen seinen Stabenden (bis dahin fiel der Versatz still weg).
 
 Grenzen: nur Stab- und Fachwerkelemente (keine Schalen, Volumen), kein
 Kontakt, keine Zwangsverformungen; kleine Dehnungen (linear-elastisch).
-Keine Starrkoerper (RBE2/RBE3) und keine starren Knotenkopplungen: seit dem
-15.11.2026 mit Klartext abgewiesen (kopplung_sperre); bis dahin fielen die
-Starrkoerper still weg, und starre Kopplungen wirkten als Feder von 1e4 N/m.
+Starrkoerper (RBE2/RBE3, verteilende Kopplung eines Stabendes) und starre
+Knotenkopplungen (Kopplung „Stabende“, starre Scheibe, Knotenkopplung)
+rechnet es seit Runde k10e (16.11.2026, Stand 77) als Zwangsbedingung mit,
+im mitgedrehten System des Masters - ein starrer Arm mit grossen Drehungen
+wie beim Versatz (:class:`_Zwang`, erweitertes Lagrange-Verfahren). Bis
+Stand 63 fielen die Starrkoerper still weg und starre Kopplungen wirkten als
+Feder von 1e4 N/m; von Stand 64 bis 76 wurden sie mit Klartext abgewiesen.
 Federnde Kopplungen rechnet es mit.
 """
 from __future__ import annotations
 
+import functools
 import math
 import time
 from dataclasses import dataclass, field
+from fractions import Fraction
 
 import numpy as np
 from scipy import sparse
@@ -54,7 +60,7 @@ from scipy.sparse.linalg import splu
 
 from . import assemble as asm
 from .elements import beam3d as bm
-from .model import Model
+from .model import Model, erdbeschleunigung
 
 NDOF = 6
 
@@ -70,6 +76,11 @@ def rot_exp(theta) -> np.ndarray:
     if a < 1e-12:
         return np.eye(3) + K + 0.5 * K @ K
     return np.eye(3) + math.sin(a) / a * K + (1.0 - math.cos(a)) / a ** 2 * K @ K
+
+
+def _kreuz(a, b) -> np.ndarray:
+    """Kreuzprodukt zweier 3-Vektoren (schneller als np.cross)."""
+    return np.array([a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]])
 
 
 def rot_log(R) -> np.ndarray:
@@ -180,6 +191,12 @@ class _Stab:
             self.arm = arme
             punkte = X + np.asarray(arme)
         kl, T3, T, L = asm.beam_local(model, e, punkte)
+        # Sehne der Ausgangslage (zwischen den Stabenden): die Laengung
+        # rechnet :meth:`zustand` aus ihr und dem Zuwachs, nicht als
+        # Differenz zweier Laengen (Runde k10d)
+        X0e = np.asarray(model.nodes[e.nodes], float) if punkte is None else np.asarray(punkte, float)
+        self.d0 = X0e[1] - X0e[0]
+        self.Ld0 = float(np.linalg.norm(self.d0))
         # Gelenke und Federgelenke in der geometrischen Steifigkeit wie in der
         # elastischen (asm.stab_endkinematik, wie Theorie II. Ordnung seit A7).
         # Bis zum 09.11.2026 bekam die Tangente die volle Balkenform: mit einer
@@ -197,6 +214,22 @@ class _Stab:
         # am Stabanfang; Nachstellung vom 11.11.2026). Das Gleichgewicht der
         # Knoten stimmte, nur die Stabendkraefte nicht.
         f0 = np.asarray(feq.get(i, np.zeros(12)), float)
+        # Drehgelenke und Drehfedergelenke als Gelenkdrehung am Stabende
+        # (Runde k10d, :meth:`_gelenk_lage`): nur, wenn alle Gelenke und
+        # Federgelenke des Stabs Drehungen sind; sonst wie bisher kondensiert
+        dreh = (3, 4, 5, 9, 10, 11)
+        federn = [(int(d), float(k)) for d, k in (getattr(e, "hinge_springs", None) or []) if k and k > 0]
+        gelenke = [int(d) for d in (e.hinges or [])]
+        self.gelenk = None
+        if (federn or gelenke) and e.typ != "truss" and all(d in dreh for d, _k in federn)                 and all(d in dreh for d in gelenke) and kl.shape[0] == 12:
+            kt = {d: 0.0 for d in gelenke}
+            for d, k in federn:
+                if d not in kt:
+                    kt[d] = k
+            D = sorted(kt)
+            self.gelenk = {"D": D, "k": np.array([kt[d] for d in D]), "kl_u": kl.copy(),
+                           "f_u": f0.copy() + (np.zeros(12) if fa is None else fa),
+                           "phi": np.zeros(len(D))}
         # die Anfangsdehnung wie in asm.stablasten_einbauen: Federgelenke, dann
         # Gelenke kondensiert
         if getattr(e, "hinge_springs", None):
@@ -211,6 +244,8 @@ class _Stab:
             _k, f0, _c = asm.condense(kl0, f0, e.hinges)
         self.kl = kl
         self.f_anf = fa
+        if self.gelenk is not None:
+            self.gelenk["f_c"] = f0 + (np.zeros(12) if fa is None else fa)
         self.E0T = T3.T                   # Spalten: Ausgangsachsen ex, ey, ez
         self.L0 = L
         self.f0 = f0
@@ -245,38 +280,40 @@ class _Stab:
             aus.append((n, np.cross(a_r - self.arm[k], F), bm._skew(F) @ bm._skew(a_r)))
         return aus
 
-    def zustand(self, X: np.ndarray, R: np.ndarray):
-        """(f_l, T, k_g, N, L) im mitgehenden System der aktuellen Lage; f_l
-        ist der elastische Anteil k_l d_l, N die Normalkraft mit der
-        Anfangsdehnung. T wirkt auf die Stabenden (mit Versatz: hinter dem
-        Arm, :meth:`knoten`)."""
+    def zustand(self, U: np.ndarray, R: np.ndarray, mit_kg: bool = True):
+        """(f_l, T, k_g, N, L) im mitgehenden System der aktuellen Lage
+        (Verschiebungen ``U`` (nn, 3), Drehungen ``R``); f_l ist der
+        elastische Anteil k_l d_l, N die Normalkraft mit der Anfangsdehnung.
+        T wirkt auf die Stabenden (mit Versatz: hinter dem Arm,
+        :meth:`knoten`).
+
+        Die Laengung L - L0 kommt aus der Sehne d0 der Ausgangslage und ihrem
+        Zuwachs du: (2 d0·du + du·du) / (L + |d0|). Bis zur Runde k10d
+        (16.11.2026) war sie die Differenz der Laengen aus den Koordinaten
+        X0 + u; deren Rundung (etwa 2e-16 der Koordinaten) gab eine
+        Normalkraft von etwa 2e-16 E A |X|/L0, die nicht kleiner wird. Am
+        Kragarm L = 10 m, A = 1e-3 m², I = 1e-6 m⁴ mit 0,1 N am Ende lag sie
+        mit etwa 4e-8 N ueber der Konvergenzschranke 1e-6 der Last der ersten
+        Laststufe (0,01 N): „keine Konvergenz“ statt 0,158730 mm. An sehr
+        kurzen Elementen (E A / L0 gross) wirkte dasselbe schon bei
+        gewoehnlichen Lasten."""
         n1, n2 = self.nodes
-        if self.arm is None:
-            d = X[n2] - X[n1]
-        else:
-            d = (X[n2] + R[n2] @ self.arm[1]) - (X[n1] + R[n1] @ self.arm[0])
+        du = U[n2] - U[n1]
+        if self.arm is not None:
+            du = du + (R[n2] @ self.arm[1] - self.arm[1]) - (R[n1] @ self.arm[0] - self.arm[0])
+        d = self.d0 + du
         L = float(np.linalg.norm(d))
+        dL = (2.0 * float(self.d0 @ du) + float(du @ du)) / (L + self.Ld0)
         e1 = d / L
-        Q1 = R[n1] @ self.E0T
-        Q2 = R[n2] @ self.E0T
-        phi = rot_log(R[n1].T @ R[n2])
-        Qm = R[n1] @ rot_exp(0.5 * phi) @ self.E0T
-        q2 = Qm[:, 1]
-        e2 = q2 - float(q2 @ e1) * e1
-        n = float(np.linalg.norm(e2))
-        if n < 1e-9:
-            q3 = Qm[:, 2]
-            e2 = np.cross(q3, e1)
-            n = float(np.linalg.norm(e2))
-        e2 /= n
-        e3 = np.cross(e1, e2)
-        E = np.column_stack([e1, e2, e3])
-        th1 = rot_log(E.T @ Q1)
-        th2 = rot_log(E.T @ Q2)
-        dl = np.concatenate([[0.0, 0.0, 0.0], th1, [L - self.L0, 0.0, 0.0], th2])
-        fl = self.kl @ dl
+        if self.gelenk is None:
+            E, dl = self._rahmen(e1, dL, R[n1], R[n2])
+            fl = self.kl @ dl
+        else:
+            E, dl, fl = self._gelenk_lage(e1, dL, R[n1], R[n2])
         N = float(fl[6]) if self.f_anf is None else float(fl[6] - self.f_anf[6])
-        if self.typ == "truss":
+        if not mit_kg:
+            kg = None
+        elif self.typ == "truss":
             # Saite N/L - dieselbe Form wie asm.geometric_stiffness (14.10.2026)
             kg = bm.kg_local_saite(N, L)
         else:
@@ -285,6 +322,107 @@ class _Stab:
                 kg = self.C.T @ kg @ self.C
         T = bm.transform_matrix(E.T)
         return fl, T, kg, N, L
+
+    def _rahmen(self, e1, dL, R1, R2):
+        """(E, dl): das mitgehende System (Spalten e1, e2, e3) und die lokalen
+        Stabendverformungen zu den Stabend-Drehungen R1, R2."""
+        Q1 = R1 @ self.E0T
+        Q2 = R2 @ self.E0T
+        phi = rot_log(R1.T @ R2)
+        Qm = R1 @ rot_exp(0.5 * phi) @ self.E0T
+        q2 = Qm[:, 1]
+        e2 = q2 - float(q2 @ e1) * e1
+        n = float(np.linalg.norm(e2))
+        if n < 1e-9:
+            q3 = Qm[:, 2]
+            e2 = _kreuz(q3, e1)
+            n = float(np.linalg.norm(e2))
+        e2 /= n
+        e3 = _kreuz(e1, e2)
+        E = np.column_stack([e1, e2, e3])
+        th1 = rot_log(E.T @ Q1)
+        th2 = rot_log(E.T @ Q2)
+        return E, np.concatenate([[0.0, 0.0, 0.0], th1, [dL, 0.0, 0.0], th2])
+
+    def _gelenk_lage(self, e1, dL, R1, R2):
+        """(E, dl, fl) eines Stabs mit Drehgelenken bzw. Drehfedergelenken
+        (Runde k10d, 16.11.2026).
+
+        Hinter dem Gelenk dreht das Stabende um die Gelenkdrehung φ um die
+        mit dem Knoten mitgedrehte Gelenkachse a = R_Knoten a0 weiter:
+        R_Ende = R_Knoten exp(φ a0). Das mitgehende System und die lokalen
+        Verformungen folgen den Stabenden; φ ergibt sich aus dem
+        Gleichgewicht am Gelenk: das Moment des Stabendes um die Gelenkachse
+        a ist -k φ (Federgelenk) bzw. 0 (Gelenk). Mit dem Stabend-Moment
+        s = k_l d - f (ungekondensiert, mit Stablast und Anfangsdehnung)
+        ist fl = s + f_kond (f_kond wie in der Last), linear dasselbe wie die
+        Kondensation (k_l,kond d - f_kond + f_kond).
+
+        Bis dahin war das Gelenk statisch kondensiert und das Gleichgewicht am
+        Gelenk um die Sehne e1 statt um die Gelenkachse gebildet: bei
+        Biegemoment am Gelenk fehlte das Moment M mal Biegedrehung des
+        Stabendes um die Achse. L-Rahmen (Rechteck 20 x 400, je 2 m, 1 kN,
+        Torsionsfeder 2 kNm/rad an der Ecke): Verdrehung der Spitze 6 % unter
+        dem gleichwertigen Stummelmodell."""
+        g = self.gelenk
+        D, kt, kl_u, f_u = g["D"], g["k"], g["kl_u"], g["f_u"]
+        phi = g["phi"].copy()
+        # pinv: ein Stab mit Torsionsgelenk an beiden Enden dreht sich frei
+        # (wie asm.condense)
+        J_inv = np.linalg.pinv(kl_u[np.ix_(D, D)] + np.diag(kt))
+        # Grobe Schranke: bis zu ihr gilt am Gelenk ein Gleichgewicht (sonst
+        # meldet solve_theorie3 „kein Gleichgewicht am Gelenk“) - die Summanden
+        # von k_l d - f (am Pendelstab sind die Momente selbst null) und die
+        # Rundung der Drehungen (etwa 2e-16 rad) mal der Drehsteifigkeit
+        rot = [3, 4, 5, 9, 10, 11]
+        k_dreh = float(np.abs(kl_u[rot]).sum(axis=1).max())
+
+        def groesse(dl, phi):
+            return (float((np.abs(kl_u[rot]) @ np.abs(dl)).max()) + float(np.abs(f_u[rot]).max())
+                    + float(np.abs(kt * phi).max()))
+
+        def schranke(dl, phi):
+            return 1e-12 * groesse(dl, phi) + 1e3 * 2.2e-16 * k_dreh + 1e-300
+        # Iteriert wird aber bis auf Rundungsniveau: bis das Moment unter der
+        # Rundung seiner Summanden liegt oder der Newton-Schritt es nicht mehr
+        # verkleinert (die Iteration konvergiert quadratisch). Bis zur ersten
+        # Gegenpruefung zu k10d (16.11.2026) hoerte sie an der groben Schranke
+        # auf: φ blieb um bis zu 4e-7 rad offen, je nach Startwert, und das
+        # Moment k φ der Feder rauschte um etwa 0,001 Nm - ueber der
+        # Konvergenzschranke 1e-6 der Last der Stufe. Der U-Rahmen mit
+        # Torsionsfedern 2 kNm/rad (Rechteck 20 x 400 mm, je 2 m, P = 1 kN,
+        # Stoerlast 20 N) meldete „keine Konvergenz“, obwohl er ein
+        # Gleichgewicht hat (54,561 mm).
+        offen = True
+        best = None
+        h_vor = math.inf
+        for _it in range(50):
+            ph = np.zeros(12)
+            ph[D] = phi
+            R1i = R1 @ rot_exp(self.E0T @ ph[3:6]) if np.any(ph[3:6]) else R1
+            R2i = R2 @ rot_exp(self.E0T @ ph[9:12]) if np.any(ph[9:12]) else R2
+            E, dl = self._rahmen(e1, dL, R1i, R2i)
+            s = kl_u @ dl - f_u
+            h = np.empty(len(D))
+            for k, dd in enumerate(D):
+                ende, j = divmod(dd, 6)
+                Rk = R1 if ende == 0 else R2
+                m = E @ s[6 * ende + 3:6 * ende + 6]
+                h[k] = float(m @ (Rk @ self.E0T[:, j - 3])) + kt[k] * phi[k]
+            hn = float(np.abs(h).max())
+            if best is None or hn < best[0]:
+                best = (hn, phi, E, dl, s)
+            if hn <= 2.2e-16 * groesse(dl, phi):
+                break
+            if hn <= schranke(dl, phi) and hn > 0.5 * h_vor:
+                break
+            h_vor = hn
+            phi = phi - J_inv @ h
+        hn, phi, E, dl, s = best
+        offen = hn > schranke(dl, phi)
+        g["phi"] = phi
+        g["offen"] = offen
+        return E, dl, s + g["f_c"]
 
     def knoten(self, R: np.ndarray, f_e: np.ndarray, K_e: np.ndarray):
         """Innere Kraefte und Tangente der Stabenden (global, 12) auf die
@@ -303,6 +441,53 @@ class _Stab:
             B[6 * k:6 * k + 3, 6 * k + 3:6 * k + 6] = -Sa
             Ka[6 * k + 3:6 * k + 6, 6 * k + 3:6 * k + 6] = bm._skew(f_e[6 * k:6 * k + 3]) @ Sa
         return B.T @ f_e, B.T @ K_e @ B + Ka
+
+    def kraft(self, U: np.ndarray, R: np.ndarray) -> np.ndarray:
+        """Innere Kraefte (global, 12) auf die Knoten in der Lage ``U``, ``R``
+        - dieselben wie in solve_theorie3.aufbau."""
+        fl, T, _kg, _N, _L = self.zustand(U, R, mit_kg=False)
+        f_e = T.T @ (fl if self.f_anf is None else fl - self.f_anf)
+        if self.arm is None:
+            return f_e
+        return self.knoten(R, f_e, np.zeros((12, 12)))[0]
+
+    def tangente_voll(self, U: np.ndarray, R: np.ndarray) -> np.ndarray:
+        """Die volle Tangente (12, 12) der inneren Knotenkraefte als zentrale
+        Differenz von :meth:`kraft` - nach denselben Zuwaechsen, mit denen
+        solve_theorie3 die Lage fortschreibt (Verschiebung u + δu, Drehung
+        R <- exp(δθ) R). Sie enthaelt alles, was die genaeherte Tangente
+        T^T (k_l + k_g(N)) T weglaesst (Endmomente und Querkraefte in der
+        Drehung des mitgehenden Systems, Kopplung Biegung-Torsion bei grosser
+        Verdrehung). Die Kraefte haengen von den Verschiebungen nur ueber
+        u2 - u1 ab: die Spalten der Verschiebungen am Stabanfang sind die
+        negativen derer am Stabende. Runde k10d (16.11.2026)."""
+        n1, n2 = self.nodes
+        U2 = np.array([U[n1], U[n2]], float)
+        R2 = np.array([R[n1], R[n2]], float)
+        h_u = 1e-6 * max(self.Ld0, 1e-6)
+        h_r = 1e-6
+        K = np.empty((12, 12))
+        knoten = self.nodes
+        self.nodes = [0, 1]
+        try:
+            for j in (6, 7, 8, 3, 4, 5, 9, 10, 11):
+                k, c = divmod(j, 6)
+                Up, Um, Rp, Rm = U2.copy(), U2.copy(), R2.copy(), R2.copy()
+                if c < 3:
+                    Up[k, c] += h_u
+                    Um[k, c] -= h_u
+                    h = h_u
+                else:
+                    th = np.zeros(3)
+                    th[c - 3] = h_r
+                    Rp[k] = rot_exp(th) @ R2[k]
+                    Rm[k] = rot_exp(-th) @ R2[k]
+                    h = h_r
+                K[:, j] = (self.kraft(Up, Rp) - self.kraft(Um, Rm)) / (2.0 * h)
+            K[:, 0:3] = -K[:, 6:9]
+        finally:
+            self.nodes = knoten
+        return K
 
 
 class _Seil:
@@ -490,11 +675,242 @@ def _nur_staebe(model: Model, aktiv) -> bool:
                    for i, e in enumerate(model.elements))
 
 
-def _wirksame_knoten_th3(model: Model, aktiv) -> np.ndarray:
-    """Maske (nn,): Knoten, die in der Rechnung mit ``aktiv`` mittragen: an
-    ihnen haengt ein wirksames Element (ohne Maske: irgendein Element), oder
-    sie haengen ueber Starrkoerper und Kopplungen - auch ueber Knoten ohne
-    Element hinweg - an einem solchen Knoten (Huelle bis zum Fixpunkt).
+# Rest, bis zu dem sich die Lastbeitraege an einem Knoten als aufgehoben
+# gelten (Rundung der Faktoren, z. B. 0,1 und 0,3). Die Summe der Produkte
+# Faktor mal Last (bzw. Masse mal Faktor mal g) wird exakt gebildet
+# (fractions.Fraction); unsicher ist dann nur noch die Darstellung der
+# Eingaben, die nicht genau ihr Dezimalwert sind (0,1, 1,35, 9,81, 0,0009 -
+# nicht 1,0, 0,5 oder 3e12): eine eingetippte Zahl (bis 15 Stellen) weicht
+# hoechstens _LAST_EPS (halbe Stelle, 2^-53) relativ von ihrem Dezimalwert
+# ab, eine errechnete (16 oder 17 Stellen, z. B. 0,30000000000000004) mit
+# _LAST_GEWICHT_LANG gewichtet, weil sie mehrfach gerundet sein kann. Die
+# Schranke ist das Doppelte dieser Unsicherheit, summiert ueber die
+# Beitraege, hoechstens _LAST_REST_MAX (N bzw. Nm). Ein groesserer Rest ist
+# eine echte Last, die auch der Lastvektor von Theorie I. Ordnung aufloest.
+# Ab einer Betragssumme von etwa 1e12 N erreicht die Schranke die Kappung;
+# dort sind Rest und Rundung nicht mehr zu trennen, und ein Rest ueber
+# 0,001 N zaehlt (Abweisung statt stiller Rechnung).
+#
+# Bis zur Runde k10d (16.11.2026) war die Schranke 1e-9 der Betragssumme: an
+# einem weichen Kragarm (L = 10 m, I = 1e-6 m^4, 1 N am Ende) mit
+# -1e7 N / +1e7 N und einem Rest von 0,0009 N am Slave eines RBE3 „Stabende“
+# lag sie bei 0,001 N, und Theorie III. Ordnung rechnete still 1,587302 statt
+# 1,588730 mm. Mit 1e-13 der Betragssumme (erster Stand der Runde k10d)
+# blieb dasselbe ab einer Betragssumme von 1e10 N (±5e9 N, Gegenpruefung 1
+# zu k10d), mit 4 * n * 2,2e-16 der Betragssumme bei n Beitraegen
+# (Nachbesserung 1) ab ±2e11 N einzeln bzw. ±5e10 N auf 10 + 10 Beitraege
+# verteilt (Gegenpruefung 2 zu k10d).
+_LAST_EPS = 2.0 ** -53
+_LAST_GEWICHT_LANG = 4.0
+_LAST_REST_MAX = 1e-3
+
+# Abschluss auf Rundungsniveau (solve_theorie3): die Newton-Korrektur unter
+# _KONV_RUNDUNG (Verschiebung bezogen auf die Modellgroesse, Drehung in rad)
+# bei einem Residuum unter _KONV_RUNDUNG_RESIDUUM der Last
+_KONV_RUNDUNG = 1e-12
+_KONV_RUNDUNG_RESIDUUM = 1e-3
+
+
+def _lastknoten(model: Model, nn: int, factors: dict = None) -> np.ndarray:
+    """Maske (nn,) der Knoten, an die assemble.load_vector in der Rechnung mit
+    ``factors`` ({Lastfall: Faktor}) eine Last legt, ohne dass dort ein
+    Element sie verteilt: Knotenlasten (auch die aus Linienlasten und
+    Generatoren, die Model.lasten_verteilen als Knotenlasten ablegt) und
+    Punktmassen unter Eigengewicht (m g mit der Erdbeschleunigung des
+    Lastfalls). Gezaehlt wird die Summe mit den Faktoren; ohne ``factors``
+    jeder Lastfall fuer sich (irgendein Lastfall belastet den Knoten).
+    Elementlasten (Stab-, Flaechen-, Temperaturlasten, Eigengewicht der
+    Elemente) wirken nur an wirksamen Elementen, deren Knoten ohnehin
+    mittragen; Zwangsverformungen nur an Lagerknoten.
+
+    Bis zur zweiten Gegenpruefung vom 15.11.2026 zaehlten nur Knotenlasten,
+    und die aus jedem Lastfall: Punktmasse 101,94 kg an Q (Kopplung
+    „Stabende“ b-Q starr, Q ohne Element, g = 9,81 m/s²) - Theorie I.
+    Ordnung w(Q) = 0,5357 mm, Theorie III. Ordnung still 100,5357 mm; und LF1
+    ohne Last an Q wurde abgewiesen, weil LF2 nach Theorie I. Ordnung dort
+    Last hat (richtig 0,5357 mm wie Theorie I. Ordnung und Hand).
+
+    Ein Knoten zaehlt nur, wenn die exakte Summe der Produkte in einer
+    Komponente groesser ist als die Rundung der Eingaben (:func:`_rest_zaehlt`).
+    Bis zur Gegenpruefung zu k10b wurde exakt mit null verglichen: LK1 = LF1
+    + 0,1 LF2 + 0,3 LF3 mit -3 N an Q in LF2 und +1 N in LF3 (Rest
+    -5,55e-17 N) wurde abgewiesen, obwohl Theorie I. Ordnung w(b) =
+    0,535714 mm = Hand ergibt.
+
+    Die Schranke ist zudem auf _LAST_REST_MAX = 0,001 N bzw. Nm begrenzt.
+    Bis zur zweiten Gegenpruefung zu k10b galt nur die relative Schranke:
+    -1e8 N in LF2, +1e8 N in LF3 und -0,05 N in LF4 an Q (Schranke 0,2 N)
+    wurde still gerechnet, Theorie III. Ordnung w(Q) = 0,540741 mm gegen
+    Theorie I. Ordnung 0,535741 mm (0,05 N / 1e4 N/m = 0,005 mm). Ebenso
+    bis dahin: eine Erdbeschleunigung als numpy-Feld (Model.set_gravity,
+    Model.gravity) liess ``Feld or Liste`` mit ValueError abbrechen, die
+    Modellpruefung stuerzte ab und Theorie III. Ordnung wies ein rechenbares
+    Modell mit dem Text der Ausnahme ab."""
+    lcs = getattr(model, "load_cases", None) or {}
+    pm = [p for p in (getattr(model, "punktmassen", None) or [])
+          if 0 <= int(p.node) < nn and float(p.masse) != 0.0]
+    if factors is None:
+        gruppen = [[(lc, 1.0)] for lc in lcs.values()]
+    else:
+        gruppen = [[(lcs[n], float(f)) for n, f in factors.items() if f and n in lcs]]
+    out = np.zeros(nn, dtype=bool)
+    for gruppe in gruppen:
+        # je Knoten die Beitraege als Eingaben (Faktor, Last) bzw. (Faktor,
+        # Masse, g) - das Produkt ist der Beitrag
+        eingaben = []
+        for lc, f in gruppe:
+            for ld in (getattr(lc, "nodal_loads", None) or []):
+                n = int(ld.node)
+                if 0 <= n < nn:
+                    F = np.zeros(6)
+                    w = np.asarray(ld.F, float).ravel()[:6]
+                    F[:len(w)] = w
+                    eingaben.append((n, (f,), F))
+            # gravity ist eine Liste oder ein numpy-Feld (Model.set_gravity,
+            # Model.gravity); ``Feld or Liste`` waere mehrdeutig (ValueError) -
+            # gelesen ueber model.erdbeschleunigung wie an den uebrigen Stellen
+            g = np.zeros(6)
+            g[:3] = erdbeschleunigung(lc)
+            if np.any(g):
+                for p in pm:
+                    eingaben.append((int(p.node), (f, float(p.masse)), g))
+        # Vorauswahl in Gleitkomma: S weicht von der exakten Summe hoechstens
+        # um (Z + 2) halbe Stellen der Betragssumme A ab
+        S = np.zeros((nn, 6))
+        A = np.zeros((nn, 6))
+        Z = np.zeros((nn, 6))
+        with np.errstate(over="ignore", invalid="ignore"):
+            for n, vor, w in eingaben:
+                beitrag = math.prod(vor) * w
+                S[n] += beitrag
+                A[n] += np.abs(beitrag)
+                Z[n] += beitrag != 0.0
+            sicher = (Z == 1) | (np.abs(S) > _LAST_REST_MAX + 2.0 * (Z + 2.0) * _LAST_EPS * A) | ~np.isfinite(S)
+        out |= np.any(sicher & (Z > 0), axis=1)
+        # Knoten nahe der Aufhebung: exakt (:func:`_rest_zaehlt`)
+        offen = np.any((Z > 1) & ~sicher, axis=1) & ~out
+        if not offen.any():
+            continue
+        beitraege = {}
+        for n, vor, w in eingaben:
+            if offen[n]:
+                beitraege.setdefault(n, []).append([vor + (float(x),) for x in w])
+        for n, liste in beitraege.items():
+            for c in range(6):
+                if _rest_zaehlt([b[c] for b in liste]):
+                    out[n] = True
+                    break
+    return out
+
+
+@functools.lru_cache(maxsize=4096)
+def _darstellung(x: float) -> float:
+    """Gewicht der Darstellungsunsicherheit einer Eingabe ``x`` in Vielfachen
+    von :data:`_LAST_EPS`: 0, wenn ``x`` genau der Dezimalwert ist, den es
+    zeigt (1,0, 0,5, 3e12); 1 fuer eine eingetippte Zahl bis 15 Stellen
+    (0,1, 1,35, 9,81, 0,0009); :data:`_LAST_GEWICHT_LANG` fuer eine
+    errechnete mit 16 oder 17 Stellen (0,30000000000000004)."""
+    r = repr(float(x))
+    if Fraction(float(x)) == Fraction(r):
+        return 0.0
+    stellen = r.lstrip("-").split("e")[0].replace(".", "").strip("0")
+    return 1.0 if len(stellen) <= 15 else _LAST_GEWICHT_LANG
+
+
+def _rest_zaehlt(beitraege: list) -> bool:
+    """Ob die Beitraege einer Komponente an einem Knoten - je ein Tupel von
+    Eingaben, deren Produkt der Beitrag ist - eine Last ergeben, die nicht
+    nur Rundung ist (:data:`_LAST_EPS`, :data:`_LAST_REST_MAX`).
+
+    Die Summe der Produkte wird exakt gebildet. Unsicher ist nur die
+    Darstellung der Eingaben, die nicht genau ihr Dezimalwert sind
+    (:func:`_darstellung`, relativ zum Produkt). Die Schranke ist das
+    Doppelte dieser Unsicherheit, hoechstens 0,001 N bzw. Nm. Dezimal genau
+    aufgehobene Lasten (0,1 * (-3 N) + 0,3 * 1 N) bleiben so aufgehoben; ein
+    Rest von 0,0009 N neben ±1e12 N (Faktor 1,0 oder 1,35) bleibt eine
+    Last."""
+    # ein Beitrag mit einer Eingabe null ist genau null
+    produkte = [(e, math.prod(e)) for e in beitraege if all(x != 0.0 for x in e)]
+    if not produkte:
+        return False
+    if any(not math.isfinite(x) for e, _p in produkte for x in e):
+        return True
+    if len(produkte) == 1:
+        return True
+    rest = Fraction(0)
+    unsicher = 0.0
+    for e, p in produkte:
+        q = Fraction(1)
+        for x in e:
+            q *= Fraction(x)
+        rest += q
+        unsicher += abs(p) * sum(_darstellung(x) for x in e)
+    return abs(rest) > min(2.0 * _LAST_EPS * unsicher, _LAST_REST_MAX)
+
+
+def _ankerknoten(model: Model, nn: int, factors: dict = None, aktiv=None) -> np.ndarray:
+    """Maske (nn,) der Knoten, an denen ein Anschluss eines Stabendes etwas
+    halten oder tragen muss, auch wenn dort kein Element wirkt: Lagerknoten
+    (Knoten-, Linien- und Flaechenlager, starr oder federnd, wie
+    supports.expand sie an die Knoten verteilt) und die Lastknoten der
+    Rechnung mit ``factors`` (:func:`_lastknoten`: Knotenlast oder Punktmasse
+    unter Eigengewicht; ohne ``factors`` aus irgendeinem Lastfall). Runde
+    k10, Nachbesserungen 1 und 2.
+
+    ``aktiv``: die Elementmaske der Rechnung. Ein Lastknoten zaehlt nur, wenn
+    assemble.load_vector die Last dort unter dieser Maske anlegt
+    (situationen.wirksame_knoten); sonst haelt und traegt er nichts.
+    Bis zur Zusammenfuehrung k10 (16.11.2026, Nachbesserung 1) zaehlte jede
+    Knotenlast: RBE3 „Stabende“ mit Master am Kragarmende b und Slave d am
+    abgeschalteten Arm (Situation oder Stab „aus“), 2 kN an d - die Last
+    entfaellt unter der Maske, Theorie I. Ordnung und Hand w(b) =
+    0,535714 mm, Summe Rz 1 000 N; Theorie III. Ordnung wies das Modell mit
+    „rechnet keine Starrkoerper“ ab (Stand 65 und fix/k10-maske2 rechneten
+    0,535714 mm)."""
+    out = np.zeros(nn, dtype=bool)
+    for sp in (getattr(model, "supports", None) or []):
+        n = int(getattr(sp, "node", -1))
+        if 0 <= n < nn:
+            out[n] = True
+    try:
+        from . import supports as _sup
+        for e in _sup.expand(model):
+            if 0 <= int(e.node) < nn:
+                out[int(e.node)] = True
+    except Exception:                       # noqa: BLE001 - nicht verteilbar: grob ueber die Knotenlisten
+        for ls in (getattr(model, "line_supports", None) or []):
+            knoten = list(getattr(ls, "nodes", None) or [])
+            if not knoten and getattr(ls, "line", None) in (getattr(model, "lines", None) or {}):
+                knoten = list(model.lines[ls.line].nodes)
+            for n in knoten:
+                if 0 <= int(n) < nn:
+                    out[int(n)] = True
+        for ss in (getattr(model, "surface_supports", None) or []):
+            for i in (getattr(ss, "elements", None) or []):
+                if 0 <= int(i) < len(model.elements):
+                    for n in model.elements[int(i)].nodes:
+                        if 0 <= int(n) < nn:
+                            out[int(n)] = True
+    last = _lastknoten(model, nn, factors)
+    if aktiv is not None and last.any():
+        from .situationen import wirksame_knoten
+        last &= np.asarray(wirksame_knoten(model, aktiv), dtype=bool)[:nn]
+    out |= last
+    return out
+
+
+def _th3_wirkung(model: Model, aktiv, alt: bool = False, factors: dict = None) -> tuple:
+    """(kn, sk_zaehlt, kp_zaehlt): Knotenmaske (nn,) der Knoten, die in der
+    Rechnung mit ``aktiv`` mittragen, und je Starrkoerper bzw. Knotenkopplung
+    des Modells, ob er bzw. sie in dieser Rechnung wirkt (Listen in der
+    Reihenfolge von Model.starrkoerper und Model.kopplungen).
+
+    Mittragend ist ein Knoten mit wirksamem Element (ohne Maske: irgendein
+    Element) und ein Lagerknoten ohne wirksames Element - auch einer, an dem
+    nur abgeschaltete Elemente haengen (seit Runde k10, Stand 67, wie
+    situationen.wirksame_knoten); von dort die Huelle ueber die wirkenden
+    Starrkoerper und Kopplungen - auch ueber Knoten ohne Element hinweg - bis
+    zum Fixpunkt.
 
     Bis zur Gegenpruefung vom 15.11.2026 zaehlten nur Knoten mit Element.
     Ein Starrkoerper oder eine starre Kopplung zwischen zwei Knoten ohne
@@ -505,48 +921,170 @@ def _wirksame_knoten_th3(model: Model, aktiv) -> np.ndarray:
     deren ganze Kette an keinem wirksamen Element haengt, traegt nichts und
     bleibt weiter ungezaehlt (Situation mit abgeschaltetem Nebenarm).
 
-    Ausloeser wie bisher: beim Starrkoerper Master oder ein Slave, bei der
-    verteilenden Kopplung eines Stabendes nur ein Slave
-    (stabeinleitung.ist_verteilkopplung); bei Kopplungen
-    situationen.kopplung_bleibt."""
-    from .situationen import aktive_knoten, kopplung_bleibt
+    Ein Starrkoerper und eine Kopplung wirken, sobald einer ihrer Knoten
+    mittraegt. Ausnahme sind die Anschluesse eines Stabendes an einen Koerper
+    (verteilende Kopplung, stabeinleitung.ist_verteilkopplung, und die
+    Kopplungen der Gruppe fugen.STABENDE_GRUPPE): Ist der Koerper
+    abgeschaltet, lebt er ueber den Stab nicht wieder auf - sie wirken, wenn
+    ein Koerperknoten mittraegt, oder wenn das Stabende mittraegt und die
+    Koerperseite etwas haelt oder belastet: Von den Koerperknoten aus wird
+    ueber alle anderen Starrkoerper und Kopplungen (Theorie I. Ordnung baut
+    die Starrkoerper immer ein) ein Ankerknoten erreicht - ein mittragender
+    Knoten, ein Lagerknoten (Knoten-, Linien- oder Flaechenlager, starr oder
+    federnd, wie supports.expand sie verteilt) oder ein Knoten, an den die
+    Rechnung mit ``factors`` eine Last legt - Knotenlast oder Punktmasse
+    unter Eigengewicht, mit den Lastfaellen und Faktoren des Lastfalls bzw.
+    der Kombination; ohne ``factors`` aus irgendeinem Lastfall
+    (:func:`_ankerknoten`). Die Stabknoten selbst zaehlen dabei nicht, dort
+    endet der Weg.
+
+    Nachbesserung derselben Runde (Gegenpruefung 15.11.2026): Der erste
+    Entwurf kannte als gelagert nur Knotenlager direkt am Koerperknoten und
+    liess jeden Knoten ohne Element binden. RBE3 „Stabende“ an einer
+    abgeschalteten Schale mit Flaechenlager, an abgeschalteten Staeben mit
+    Linienlager oder ueber einen RBE2 an einem gelagerten Knoten: Theorie I.
+    Ordnung (und, wo loesbar, die Gegenrechnung mit geloeschten Elementen)
+    w(b) = 0,0000 mm, Theorie III. Ordnung still 0,5357 mm. Eine starre
+    Kopplung „Stabende“ an einem Knoten Q ohne Element, ohne Last und ohne
+    Lager traegt nichts (Theorie I. und III. Ordnung 0,5357 mm) und wurde
+    trotzdem abgewiesen.
+
+    Bis Runde k10 (15.11.2026) brauchte der Anschluss in jedem Fall einen
+    mittragenden Koerperknoten (``alt=True``, wie situationen.kopplung_bleibt).
+    ``alt=True`` ist die Regel des Programms bis Stand 65 im Ganzen: dazu
+    zaehlt ein Lagerknoten nur, wenn im ganzen Modell kein Element an ihm
+    haengt (vor Stand 67, fix/k10-maske). Sonst verglichen die Merkmale
+    theorie3_stabende_anschluss und maske_stabende_kopplung mit einem Stand,
+    den es nie gab, und eine Ergebnisdatei vom Stand 65 mit still falschem
+    Wert galt als gueltig (Zusammenfuehrung k10, 16.11.2026: RBE3 „Stabende“
+    an einem gelagerten, abgeschalteten Stab und die Kette ueber einen RBE2
+    an einen gelagerten Knoten eines abgeschalteten Stabs).
+    Zwei Luecken: (a) Kopplung „Stabende“ Kragarmende b - Knoten Q ohne
+    Element, daran per RBE2 der Lastknoten P, ohne Situation: Theorie I.
+    Ordnung (alle Kopplungen wirken) w(b) = 0,5357 mm, Theorie III. Ordnung
+    still 0,0000 mm und Summe Rz 0 statt 1000 N; Last 1 kN direkt an Q:
+    w(Q) = 100,5357 statt 0,5357 mm. (b) RBE3 „Stabende“ an einer gelagerten
+    Platte, die Platte in der Situation abgeschaltet: Theorie I. Ordnung und
+    die Gegenrechnung mit geloeschter Platte w(b) = 0,0000 mm (die
+    Starrkoerper baut assemble.starrkoerper immer ein), Theorie III. Ordnung
+    0,5357 mm (bis Runde k10 brach sie dort mit KeyError ab, mit einem
+    abgeschalteten Stab statt der Platte rechnete sie still)."""
+    from .situationen import aktive_knoten
     from . import stabeinleitung as _se
-    maske = np.ones(len(model.elements), dtype=bool) if aktiv is None else np.asarray(aktiv, bool)
+    from .fugen import STABENDE_GRUPPE
+    ne = len(model.elements)
+    maske = np.ones(ne, dtype=bool) if aktiv is None else np.asarray(aktiv, bool)
     kn = np.array(aktive_knoten(model, maske), dtype=bool, copy=True)
     nn = len(kn)
-    # Ein Lagerknoten, an dem ueberhaupt kein Element haengt, traegt selbst:
-    # P (Last) per RBE2 an den eingespannten Knoten Q, beide ohne Element -
-    # Theorie III. Ordnung verlor die Last an P still (Summe Rz 1000 statt
-    # 2000 N, Restluecke R1 der Gegenpruefung vom 15.11.2026). Ein Knoten mit
-    # abgeschalteten Elementen zaehlt dagegen nicht (Situation).
-    ueberhaupt = np.asarray(aktive_knoten(model, np.ones(len(model.elements), dtype=bool)), bool)
+    # Ein Lagerknoten ohne wirksames Element traegt selbst: P (Last) per RBE2
+    # an den eingespannten Knoten Q, beide ohne Element - Theorie III. Ordnung
+    # verlor die Last an P still (Summe Rz 1000 statt 2000 N, Restluecke R1 der
+    # Gegenpruefung vom 15.11.2026). Seit Runde k10 (15.11.2026, Stand 67) auch
+    # ein Lagerknoten, an dem nur abgeschaltete Elemente haengen - in der
+    # Gegenrechnung mit geloeschten Elementen ist er einer ohne Element (wie
+    # situationen._lagerknoten_ohne_element); bis dahin zaehlte er nicht, und
+    # eine starre Kopplung an ihm entging der Sperre.
+    gelagert = np.zeros(nn, dtype=bool)
     for sp in (getattr(model, "supports", None) or []):
         n = int(sp.node)
-        if 0 <= n < nn and not ueberhaupt[n]:
-            kn[n] = True
-    gruppen = []                         # (Ausloeser, alle Knoten) je Starrkoerper
-    for sk in (getattr(model, "starrkoerper", None) or []):
+        if 0 <= n < nn:
+            gelagert[n] = True
+    if alt:
+        gelagert &= ~np.asarray(aktive_knoten(model, np.ones(ne, dtype=bool)), bool)
+    kn |= gelagert
+    sk_liste = list(getattr(model, "starrkoerper", None) or [])
+    kopp = list(getattr(model, "kopplungen", None) or [])
+    # je Starrkoerper/Kopplung: (Stabende-Seite, Koerperseite, alle Knoten) -
+    # beim Anschluss eines Stabendes getrennt, sonst alle Knoten auf beiden Seiten
+    teile = []
+    for sk in sk_liste:
         master = int(sk.master)
         slaves = [int(x) for x in (sk.slaves or []) if 0 <= int(x) < nn and int(x) != master]
         if not slaves:
+            teile.append(None)
             continue
         alle = slaves + ([master] if 0 <= master < nn else [])
-        gruppen.append((slaves if _se.ist_verteilkopplung(sk) else alle, alle))
-    kopp = [kp for kp in (getattr(model, "kopplungen", None) or [])
-            if 0 <= int(kp.node_a) < nn and 0 <= int(kp.node_b) < nn]
+        if _se.ist_verteilkopplung(sk):
+            teile.append(([master] if 0 <= master < nn else [], slaves, alle))
+        else:
+            teile.append((alle, alle, alle))
+    for kp in kopp:
+        a, b = int(kp.node_a), int(kp.node_b)
+        if not (0 <= a < nn and 0 <= b < nn):
+            teile.append(None)
+        elif str(getattr(kp, "gruppe", "") or "").startswith(STABENDE_GRUPPE):
+            teile.append(([a], [b], [a, b]))
+        else:
+            ab = [a, b]
+            teile.append((ab, ab, ab))
+
+    anker_cache: list = []               # Lager- und Lastknoten, einmal je Aufruf
+    erreicht_cache: dict = {}            # je Anschluss: von der Koerperseite erreichte Knoten
+    glieder_je_knoten: dict = {}
+
+    def anker() -> np.ndarray:
+        if not anker_cache:
+            anker_cache.append(_ankerknoten(model, nn, factors, aktiv))
+        return anker_cache[0]
+
+    def erreicht(j: int) -> np.ndarray:
+        """Knoten, die von der Koerperseite des Anschlusses ``j`` aus ueber
+        alle anderen Starrkoerper und Kopplungen erreicht werden; an den
+        Stabknoten endet der Weg."""
+        if j in erreicht_cache:
+            return erreicht_cache[j]
+        if not glieder_je_knoten:
+            for g, tg in enumerate(teile):
+                if tg is not None:
+                    for x in tg[2]:
+                        glieder_je_knoten.setdefault(x, []).append(g)
+        stab, koerper, _alle = teile[j]
+        sperre = set(stab)
+        gesehen = set(koerper) - sperre
+        offen = list(gesehen)
+        benutzt = {j}
+        while offen:
+            x = offen.pop()
+            for g in glieder_je_knoten.get(x, ()):
+                if g in benutzt:
+                    continue
+                benutzt.add(g)
+                for y in teile[g][2]:
+                    if y not in gesehen and y not in sperre:
+                        gesehen.add(y)
+                        offen.append(y)
+        r = np.fromiter(gesehen, dtype=np.int64, count=len(gesehen))
+        erreicht_cache[j] = r
+        return r
+
+    def wirkt(j: int) -> bool:
+        t = teile[j]
+        if t is None:
+            return False
+        stab, koerper, _alle = t
+        if any(kn[x] for x in koerper):
+            return True
+        if stab is koerper or alt:
+            return stab is koerper and any(kn[x] for x in stab)
+        if not any(kn[x] for x in stab):
+            return False
+        r = erreicht(j)
+        return bool(len(r)) and bool(kn[r].any() or anker()[r].any())
+
     geaendert = True
     while geaendert:
         geaendert = False
-        for ausloeser, alle in gruppen:
-            if not all(kn[x] for x in alle) and any(kn[x] for x in ausloeser):
-                kn[alle] = True
+        for j, t in enumerate(teile):
+            if t is not None and not all(kn[x] for x in t[2]) and wirkt(j):
+                kn[t[2]] = True
                 geaendert = True
-        for kp in kopp:
-            a, b = int(kp.node_a), int(kp.node_b)
-            if not (kn[a] and kn[b]) and kopplung_bleibt(model, kp, kn):
-                kn[a] = kn[b] = True
-                geaendert = True
-    return kn
+    zaehlt = [wirkt(j) for j in range(len(teile))]
+    return kn, zaehlt[:len(sk_liste)], zaehlt[len(sk_liste):]
+
+
+def _wirksame_knoten_th3(model: Model, aktiv) -> np.ndarray:
+    """Maske (nn,) der mittragenden Knoten (:func:`_th3_wirkung`)."""
+    return _th3_wirkung(model, aktiv)[0]
 
 
 def _namen_liste(namen: list, n_max: int = 4) -> str:
@@ -554,67 +1092,47 @@ def _namen_liste(namen: list, n_max: int = 4) -> str:
     return teil + (f" und {len(namen) - n_max} weitere" if len(namen) > n_max else "")
 
 
-def starrkoerper_sperre(model: Model, aktiv=None) -> str:
-    """Leer - oder der Grund, warum Theorie III. Ordnung nicht rechnet: ein
-    wirksamer Starrkoerper (Model.starrkoerper, RBE2 oder RBE3).
+def starrkoerper_wirkung(model: Model, aktiv=None, alt: bool = False, factors: dict = None) -> str:
+    """Leer - oder die Starrkoerper (Model.starrkoerper, RBE2 oder RBE3), die
+    in der Rechnung nach Theorie III. Ordnung wirken (:func:`_th3_wirkung`;
+    ``alt``: die Regel bis Runde k10).
 
-    Das mitgehende System kennt nur Staebe, Seile, Federlager und die
-    Knotenkopplungen; die Starrkoerper (assemble.starrkoerper) las es nie.
-    Bis zum 15.11.2026 rechnete es sie still nicht mit: Kragstuetze 4 m mit
-    Arm 0,3 m quer als RBE2, Theorie I. Ordnung 7,032 mm, Theorie III. Ordnung
-    0,000 mm (der Kopfknoten hing an nichts); derselbe Arm als Balken STARR
-    oder als Versatz 8,23 mm. Entscheidung des Anwenders (Runde k8): mit
-    Klartext abweisen wie die Woelbkrafttorsion (:func:`woelb_sperre`).
-
-    Es zaehlen nur Starrkoerper, an deren Knoten ein in der Rechnung
-    wirksames Element haengt (Master oder ein Slave; bei der verteilenden
-    Kopplung eines Stabendes ein Slave, wie situationen.kopplung_bleibt)."""
+    Bis Stand 63 las das mitgehende System die Starrkoerper nie (Kragstuetze
+    4 m mit Arm 0,3 m quer als RBE2: Theorie I. Ordnung 7,032 mm, Theorie
+    III. Ordnung still 0,000 mm); von Stand 64 bis 76 wies es sie mit
+    Klartext ab (starrkoerper_sperre, Runde k8). Seit Runde k10e (16.11.2026)
+    rechnet es sie mit (:class:`_Zwang`). Die Wirkung bleibt fuer die
+    Merkmale der Staende 64 und 66 (rechenverfahren): Ergebnisse von davor
+    sind dort weiter gekennzeichnet."""
     sk_liste = getattr(model, "starrkoerper", None) or []
     if not sk_liste:
         return ""
-    from . import stabeinleitung as _se
-    kn = _wirksame_knoten_th3(model, aktiv)
-    nn = len(kn)
-    namen = []
-    for sk in sk_liste:
-        slaves = [int(x) for x in (sk.slaves or []) if 0 <= int(x) < nn and int(x) != int(sk.master)]
-        if not slaves:
-            continue
-        master = int(sk.master)
-        wirksam = any(kn[s] for s in slaves)
-        if not _se.ist_verteilkopplung(sk) and 0 <= master < nn:
-            wirksam = wirksam or bool(kn[master])
-        if wirksam:
-            namen.append(str(sk.name or "ohne Namen"))
+    _kn, sk_zaehlt, _kp = _th3_wirkung(model, aktiv, alt, factors)
+    namen = [str(sk.name or "ohne Namen") for sk, z in zip(sk_liste, sk_zaehlt) if z]
     if not namen:
         return ""
-    return (f"Theorie III. Ordnung rechnet keine Starrkörper (RBE2/RBE3: {_namen_liste(namen)}). "
-            "Starrkörper durch Balken mit Querschnitt STARR oder Versatz der Stabenden ersetzen "
-            "oder Theorie II. Ordnung wählen.")
+    return f"Starrkörper (RBE2/RBE3: {_namen_liste(namen)}) nach Theorie III. Ordnung"
 
 
-def starre_kopplung_sperre(model: Model, aktiv=None) -> str:
-    """Leer - oder der Grund, warum Theorie III. Ordnung nicht rechnet: eine
-    wirksame starre Knotenkopplung (Model.kopplungen mit Steifigkeit ``inf``).
+def starre_kopplung_wirkung(model: Model, aktiv=None, alt: bool = False,
+                            factors: dict = None) -> str:
+    """Leer - oder die starren Knotenkopplungen (Model.kopplungen mit
+    Steifigkeit ``inf``), die in der Rechnung nach Theorie III. Ordnung
+    wirken (:func:`_th3_wirkung`; ``alt``: die Regel bis Runde k10).
 
-    asm.kopplungen setzt starre Richtungen als Straffeder mit 1e4-mal der
-    groessten Hauptdiagonale der uebergebenen Matrix; Theorie III. Ordnung
-    uebergibt eine leere Matrix, die Straffeder hat dort 1e4 N/m. Zwei
-    Kragarme 3 m, im Feldpunkt starr gekoppelt, 1 kN: Theorie I. Ordnung und
-    Hand 0,2679 mm, Theorie III. Ordnung bis zum 15.11.2026 0,5329 mm (nur
-    ein Kragarm traegt). Kopplungen mit endlicher Federsteifigkeit rechnet sie
-    richtig (wie Theorie I. Ordnung und Hand); sie bleiben. Es zaehlen nur
-    Kopplungen, die in der Rechnung wirken (situationen.kopplung_bleibt)."""
+    Bis Stand 63 setzte Theorie III. Ordnung sie als Straffeder mit 1e4-mal
+    der groessten Hauptdiagonale einer leeren Matrix an - 1e4 N/m (zwei
+    Kragarme 3 m, im Feldpunkt starr gekoppelt, 1 kN: 0,5329 statt 0,2679 mm);
+    von Stand 64 bis 76 wies sie sie ab (starre_kopplung_sperre). Seit Runde
+    k10e (16.11.2026) rechnet sie sie als Zwangsbedingung mit (:class:`_Zwang`).
+    Kopplungen mit endlicher Federsteifigkeit rechnete sie immer richtig."""
     kopp = getattr(model, "kopplungen", None) or []
     if not kopp:
         return ""
-    from .situationen import kopplung_bleibt
-    kn = _wirksame_knoten_th3(model, aktiv)
+    _kn, _sk, kp_zaehlt = _th3_wirkung(model, aktiv, alt, factors)
     starr, gruppen = 0, []
-    for kp in kopp:
-        if not any(not np.isfinite(w) for _r, w in kp.paare()):
-            continue
-        if not kopplung_bleibt(model, kp, kn):
+    for kp, z in zip(kopp, kp_zaehlt):
+        if not z or not any(not np.isfinite(w) for _r, w in kp.paare()):
             continue
         starr += 1
         g = str(getattr(kp, "gruppe", "") or "").strip()
@@ -625,30 +1143,46 @@ def starre_kopplung_sperre(model: Model, aktiv=None) -> str:
     wo = f"{starr} Kopplung" if starr == 1 else f"{starr} Kopplungen"
     if gruppen:
         wo += (", Gruppe " if len(gruppen) == 1 else ", Gruppen ") + _namen_liste(gruppen)
-    return (f"Theorie III. Ordnung rechnet keine starren Knotenkopplungen ({wo}). Die Kopplung mit "
-            "endlicher Federsteifigkeit ansetzen, durch Balken mit Querschnitt STARR ersetzen oder "
-            "Theorie II. Ordnung wählen.")
+    return f"starre Knotenkopplungen ({wo}) nach Theorie III. Ordnung"
 
 
-def kopplung_sperre(model: Model, aktiv=None) -> str:
-    """Starrkoerper und starre Knotenkopplungen (Runde k8, 15.11.2026):
-    leer, oder der Text der Abweisung."""
-    return " ".join(t for t in (starrkoerper_sperre(model, aktiv), starre_kopplung_sperre(model, aktiv)) if t)
+def kopplung_wirkung(model: Model, aktiv=None, alt: bool = False, factors: dict = None) -> str:
+    """Starrkoerper und starre Knotenkopplungen, die nach Theorie III. Ordnung
+    wirken (leer: keine). Bis Stand 76 war genau das die Abweisung
+    (kopplung_sperre); ``alt``: die Regel bis Runde k10 (fuer die
+    Verfahrenstabelle). ``factors``: die Lastfaelle und Faktoren der Rechnung -
+    beim Anschluss eines Stabendes zaehlen nur deren Lasten; ohne ``factors``
+    die Lasten aller Lastfaelle."""
+    return " ".join(t for t in (starrkoerper_wirkung(model, aktiv, alt, factors),
+                                starre_kopplung_wirkung(model, aktiv, alt, factors)) if t)
 
 
-def kopplung_sperre_modell(model: Model) -> dict:
-    """{Text der Abweisung: [Lastfaelle und Kombinationen]} fuer alles, was
-    nach Theorie III. Ordnung gestellt ist - je in seiner Situation (nur dort
-    wirksame Starrkoerper und Kopplungen zaehlen). Fuer die Modellpruefung
-    (Model.check) und die Verfahrenstabelle; leer, wenn nichts abgewiesen wird."""
-    if not (getattr(model, "starrkoerper", None) or getattr(model, "kopplungen", None)):
-        return {}
-    objekte = [o for o in list(model.load_cases.values()) + list(model.combinations.values())
-               if model.theorie_von(o) == "III"]
+def _je_auftrag(model: Model, fn) -> dict:
+    """{Text: [Lastfaelle und Kombinationen]} mit ``fn(aktiv, factors)`` fuer
+    alles, was nach Theorie III. Ordnung gestellt ist - je in seiner
+    Situation und mit seinen Lastfaellen und Faktoren, so wie solve_all und
+    check_theorie3 rechnen: ein Lastfall allein, eine Kombination mit ihren
+    Faktoren, eine Ergebniskombination je Alternative (genannt wird sie,
+    sobald eine Alternative einen Text gibt). Situationen mit Flaechen-,
+    Volumen- oder Federelementen zaehlen nicht (dort weist die Rechnung mit
+    „nur für Stabtragwerke“ ab)."""
+    from .solver import alternativen_der_kombination
+    auftraege = []                       # (Name, Situation, [Faktoren je Rechnung])
+    for lc in model.load_cases.values():
+        if model.theorie_von(lc) == "III":
+            auftraege.append((str(lc.name), str(getattr(lc, "situation", "") or ""), [{lc.name: 1.0}]))
+    for c in model.combinations.values():
+        if model.theorie_von(c) != "III":
+            continue
+        if c.ist_umhuellende:
+            teile = [dict(t) for _n, t in alternativen_der_kombination(c)]
+        else:
+            teile = [dict(c.factors)]
+        auftraege.append((str(c.name), str(getattr(c, "situation", "") or ""), teile))
     out: dict = {}
     je_situation: dict = {}
-    for o in objekte:
-        sit = str(getattr(o, "situation", "") or "")
+    je_rechnung: dict = {}
+    for name, sit, teile in auftraege:
         if sit not in je_situation:
             try:
                 aktiv = model.aktive_elemente(sit)
@@ -658,11 +1192,610 @@ def kopplung_sperre_modell(model: Model) -> dict:
             # zuerst „nur für Stabtragwerke“ ab (dieselbe Bedingung wie in
             # solve_theorie3): hier kein irrefuehrender FEHLER (Gegenpruefung
             # 15.11.2026, Schale mit RBE2-Lastknoten)
-            je_situation[sit] = kopplung_sperre(model, aktiv) if _nur_staebe(model, aktiv) else ""
-        text = je_situation[sit]
-        if text:
-            out.setdefault(text, []).append(str(o.name))
+            je_situation[sit] = (aktiv, _nur_staebe(model, aktiv))
+        aktiv, nur_staebe = je_situation[sit]
+        if not nur_staebe:
+            continue
+        texte = []
+        for fak in teile:
+            fak = {str(n): float(f) for n, f in fak.items() if f}
+            if not fak:                      # nichts belastet: check_theorie3 rechnet nicht
+                continue
+            schluessel = (sit, tuple(sorted(fak.items())))
+            if schluessel not in je_rechnung:
+                je_rechnung[schluessel] = fn(aktiv, fak)
+            t = je_rechnung[schluessel]
+            if t and t not in texte:
+                texte.append(t)
+        for t in texte:
+            out.setdefault(t, []).append(name)
     return out
+
+
+def kopplung_wirkung_modell(model: Model, alt: bool = False) -> dict:
+    """{Text: [Lastfaelle und Kombinationen]} nach Theorie III. Ordnung, in
+    deren Rechnung ein Starrkoerper oder eine starre Knotenkopplung wirkt
+    (:func:`kopplung_wirkung`, je Rechnung wie :func:`_je_auftrag`). Bis Stand
+    76 war das die Abweisung (kopplung_sperre_modell); die Merkmale der
+    Staende 64 und 66 (rechenverfahren) fragen seither hier.
+
+    Bis zur zweiten Gegenpruefung vom 15.11.2026 zaehlten die Lasten aller
+    Lastfaelle: LF1 nach Theorie III. Ordnung ohne Last an Q wurde gemeldet
+    und abgewiesen, weil LF2 nach Theorie I. Ordnung dort Last hat."""
+    if not (getattr(model, "starrkoerper", None) or getattr(model, "kopplungen", None)):
+        return {}
+    return _je_auftrag(model, lambda aktiv, fak: kopplung_wirkung(model, aktiv, alt, fak))
+
+
+# --------------------------------------------------------------------------
+# Starre und verteilende Kopplungen als Zwangsbedingung (Runde k10e)
+# --------------------------------------------------------------------------
+#: Strafbeiwert der Zwangsbedingungen, bezogen auf die groesste
+#: Hauptdiagonale der Stabsteifigkeit. Er bestimmt nur den Weg der Iteration
+#: (erweitertes Lagrange-Verfahren: die Kraft der Kopplung ist eine eigene
+#: Unbekannte, die je Iteration nachgefuehrt wird), nicht das Ergebnis: am
+#: Ende ist die Zwangsbedingung auf Rundungsniveau erfuellt. 1e2 statt der
+#: 1e4 von Theorie I. Ordnung, weil das Rundungsrauschen der Lage (etwa 1e-16
+#: m) mit dem Strafbeiwert als Kraft ins Residuum geht.
+_ZWANG_STRAFE = 1e2
+
+
+def _schief(v) -> np.ndarray:
+    """[v]x: die Matrix mit [v]x a = v x a."""
+    return np.array([[0.0, -v[2], v[1]], [v[2], 0.0, -v[0]], [-v[1], v[0], 0.0]])
+
+
+class _Zwang:
+    """Eine starre oder verteilende Kopplung nach Theorie III. Ordnung als
+    Zwangsbedingung g(u, R) = 0, die mit grossen Drehungen richtig bleibt.
+
+    Grundlage sind die linearen Zeilen G derselben Kopplung, wie Theorie I.
+    Ordnung sie baut (verbindung.starrkoerper_matrix fuer RBE2 und RBE3,
+    stabeinleitung.zwangsmatrix fuer die verteilende Kopplung eines Stabendes,
+    assemble.stabende_zwang fuer die Kopplung „Stabende“, die Zeilen
+    c = [-n, -(r x n), n] der starren Scheibe, c = [-n, n] der
+    Knotenkopplung). Jede Zeile wird auf die Laenge 1 gebracht.
+
+    * Ohne Drehung des Masters in G (Knotenkopplung, Kopplung „Stabende“ an
+      einem Fachwerkstab, Scheibe ohne bestimmte Drehung): g = G u ist schon
+      fuer grosse Verschiebungen genau - die Kopplung ist so definiert.
+    * Mit Drehung des Masters m: Die Zeilen sind eine Starrkoerperbedingung
+      (G verschwindet fuer jede kleine Starrkoerperbewegung; geprueft, sonst
+      ``rechenbar`` = False). Sie werden im mitgedrehten System des Masters
+      angesetzt, wie der starre Arm des Versatzes (_Stab):
+      g = sum_i G_i^u (R_m^T (x_i - x_m) - r_i0) + sum_i G_i^th log(R_m^T R_i)
+      mit r_i0 = X_i - X_m. Fuer kleine Bewegungen ist das genau G u; jede
+      endliche Starrkoerperbewegung erfuellt es genau.
+
+    :meth:`auswerten` gibt g, die Ableitung J nach (du, dtheta) der
+    beteiligten FHG (Drehzuwachs raeumlich, R <- exp(dtheta) R, wie in
+    solve_theorie3) und mit der Kraft ``mu`` der Kopplung die geometrische
+    Steifigkeit des mitgedrehten Arms (d(J^T mu)/d(u, theta) aus dem
+    Verschiebungsteil; der Drehteil ist auf Rundungsniveau erfuellt)."""
+
+    def __init__(self, name: str, art: str, G, fhg, master: int, X0, mitdrehen: bool = False):
+        """``mitdrehen``: im mitgedrehten System des Masters ansetzen, auch
+        wenn seine Drehung in G nicht vorkommt (Hilfsfesselung eines Zwangs
+        mit Drehung; die sechs FHG des Masters muessen in ``fhg`` stehen)."""
+        self.name, self.art = str(name), str(art)
+        G = np.asarray(G, float)
+        fhg = np.asarray(fhg, np.int64)
+        # Zeilen auf die Laenge 1; eine Zeile, die nur aus Rundungsresten
+        # besteht (RBE3 mit Gewicht 5e-17 an einem Slave neben der Stabachse,
+        # stabeinleitung.wirksame_gewichte), faellt weg - auf 1 gebracht waere
+        # sie eine Bedingung, die es nicht gibt (in Theorie I. Ordnung traegt
+        # sie mit k mal 1e-34 nichts)
+        norm = np.linalg.norm(G, axis=1)
+        da = norm > 1e-10 * (float(norm.max()) if norm.size else 0.0)
+        G = G[da] / norm[da, None]
+        self.r = int(G.shape[0])
+        self.master = int(master)
+        knoten = fhg // NDOF
+        lok = fhg % NDOF
+        belegt = np.any(G != 0.0, axis=0)
+        dreh = (lok >= 3) & belegt
+        self.mit = bool(np.any(dreh & (knoten == self.master)))
+        if mitdrehen and np.count_nonzero(knoten == self.master) == 6:
+            self.mit = True
+        self.rechenbar = True
+        if not self.mit:
+            # Drehungen anderer Knoten ohne die des Masters: keine Bedingung,
+            # die sich als Starrkoerperbewegung mitdrehen liesse
+            if np.any(dreh):
+                self.rechenbar = False
+            nimm = (lok < 3) & belegt
+            self.J = G[:, nimm]
+            self.dofs = fhg[nimm]
+            self._kn = knoten[nimm]
+            self._lok = lok[nimm]
+            return
+        X0 = np.asarray(X0, float)
+        teile: dict = {}
+        Gm = np.zeros((self.r, 6))
+        for c in range(len(fhg)):
+            n, l = int(knoten[c]), int(lok[c])
+            if n == self.master:
+                Gm[:, l] += G[:, c]
+                continue
+            t = teile.setdefault(n, [np.zeros((self.r, 3)), np.zeros((self.r, 3))])
+            t[0 if l < 3 else 1][:, l % 3] += G[:, c]
+        self.knoten = sorted(teile)
+        self.Gu = [teile[n][0] for n in self.knoten]
+        self.Gth = [teile[n][1] if np.any(teile[n][1]) else None for n in self.knoten]
+        self.r0 = [X0[n] - X0[self.master] for n in self.knoten]
+        # Starrkoerperbedingung: G_m^u = -sum G_i^u, G_m^th = sum G_i^u [r_i]x - sum G_i^th
+        soll_u = -sum(self.Gu) if self.Gu else np.zeros((self.r, 3))
+        soll_th = np.zeros((self.r, 3))
+        for Gu, Gt, r0 in zip(self.Gu, self.Gth, self.r0):
+            soll_th += Gu @ _schief(r0)
+            if Gt is not None:
+                soll_th -= Gt
+        skala = max(1.0, max((float(np.linalg.norm(r)) for r in self.r0), default=0.0))
+        if not (np.allclose(Gm[:, :3], soll_u, rtol=0.0, atol=1e-9 * skala)
+                and np.allclose(Gm[:, 3:], soll_th, rtol=0.0, atol=1e-9 * skala)):
+            self.rechenbar = False
+        dofs = list(range(NDOF * self.master, NDOF * self.master + 6))
+        self.spalten = []
+        for n, Gt in zip(self.knoten, self.Gth):
+            s = len(dofs)
+            dofs += [NDOF * n + j for j in range(3)]
+            sr = None
+            if Gt is not None:
+                sr = len(dofs)
+                dofs += [NDOF * n + 3 + j for j in range(3)]
+            self.spalten.append((s, sr))
+        self.dofs = np.asarray(dofs, np.int64)
+
+    def auswerten(self, u: np.ndarray, R: np.ndarray, mu=None) -> tuple:
+        """(g, J, FHG, H): Zwang, Ableitung, FHG und - mit ``mu`` - die
+        geometrische Steifigkeit (oder None)."""
+        if not self.mit:
+            g = self.J @ u[self._kn, self._lok]
+            return g, self.J, self.dofs, None
+        m = self.master
+        Rm = R[m]
+        RmT = Rm.T
+        A = RmT - np.eye(3)
+        nd = len(self.dofs)
+        g = np.zeros(self.r)
+        J = np.zeros((self.r, nd))
+        H = np.zeros((nd, nd)) if mu is not None else None
+        for i, n in enumerate(self.knoten):
+            Gu, Gt, r0 = self.Gu[i], self.Gth[i], self.r0[i]
+            s, sr = self.spalten[i]
+            du = u[n] - u[m]
+            d = r0 + du
+            g += Gu @ (A @ r0 + RmT @ du)
+            Jx = Gu @ RmT
+            J[:, s:s + 3] += Jx
+            J[:, 0:3] -= Jx
+            J[:, 3:6] += Jx @ _schief(d)
+            if Gt is not None:
+                g += Gt @ rot_log(RmT @ R[n])
+                Jt = Gt @ RmT
+                J[:, sr:sr + 3] += Jt
+                J[:, 3:6] -= Jt
+            if H is not None:
+                w = Rm @ (Gu.T @ mu)
+                W = _schief(w)
+                H[3:6, s:s + 3] += W
+                H[3:6, 0:3] -= W
+                H[s:s + 3, 3:6] -= W
+                H[0:3, 3:6] += W
+                H[3:6, 3:6] += np.outer(w, d) - float(d @ w) * np.eye(3)
+        return g, J, self.dofs, H
+
+
+def _auswahl_th3(model: Model, aktiv, factors: dict = None) -> dict:
+    """Welche Starrkoerper und starren Knotenkopplungen Theorie III. Ordnung
+    als Zwang einbaut (:func:`_zwaenge_th3`): {"sk": [bool je Starrkoerper],
+    "kp": [bool je Kopplung, starre Richtungen], "bleibt": [bool je Kopplung,
+    endliche Richtungen wie assemble.kopplungen], "sk_zaehlt", "kp_zaehlt":
+    die Wirkung nach :func:`_th3_wirkung`, "starr": [bool je Kopplung],
+    "gueltig": [bool je Kopplung]} - oder None ohne Starrkoerper und ohne
+    starre Kopplung."""
+    sk_liste = list(getattr(model, "starrkoerper", None) or [])
+    kopp = list(getattr(model, "kopplungen", None) or [])
+    starr = [any(not np.isfinite(w) for _r, w in kp.paare()) for kp in kopp]
+    if not sk_liste and not any(starr):
+        return None
+    from .situationen import wirksame_knoten, kopplung_bleibt, abgeschaltete_knoten
+    from . import stabeinleitung as _se
+    nn = len(model.nodes)
+    kn, sk_z, kp_z = _th3_wirkung(model, aktiv, factors=factors)
+    if aktiv is None:
+        bleibt = [True] * len(kopp)
+    else:
+        kn_a = wirksame_knoten(model, aktiv)
+        tot = abgeschaltete_knoten(model, aktiv, len(kn_a))
+        bleibt = [bool(kopplung_bleibt(model, kp, kn_a, tot)) for kp in kopp]
+    gueltig = [0 <= int(kp.node_a) < nn and 0 <= int(kp.node_b) < nn for kp in kopp]
+    nimm_kp = [bool(starr[j] and kp_z[j] and gueltig[j]) for j in range(len(kopp))]
+    nimm_sk = [bool(z) for z in sk_z]
+
+    def sk_knoten(sk) -> list:
+        m = int(sk.master)
+        out = [int(x) for x in (sk.slaves or []) if 0 <= int(x) < nn and int(x) != m]
+        return out + ([m] if 0 <= m < nn else [])
+
+    att = np.array(kn, dtype=bool, copy=True)[:nn]
+    for j, kp in enumerate(kopp):
+        if nimm_kp[j]:
+            att[[int(kp.node_a), int(kp.node_b)]] = True
+    for s, sk in enumerate(sk_liste):
+        if nimm_sk[s]:
+            att[sk_knoten(sk)] = True
+    geaendert = True
+    while geaendert:
+        geaendert = False
+        for j, kp in enumerate(kopp):
+            a, b = int(kp.node_a), int(kp.node_b)
+            if starr[j] and not nimm_kp[j] and bleibt[j] and gueltig[j] and (att[a] or att[b]):
+                nimm_kp[j] = True
+                att[a] = att[b] = True
+                geaendert = True
+        for s, sk in enumerate(sk_liste):
+            if nimm_sk[s] or str(sk.art).upper() != "RBE2" or _se.ist_verteilkopplung(sk):
+                continue
+            kk = sk_knoten(sk)
+            if len(kk) > 1 and any(att[x] for x in kk):
+                nimm_sk[s] = True
+                att[kk] = True
+                geaendert = True
+    return {"sk": nimm_sk, "kp": nimm_kp, "bleibt": bleibt, "sk_zaehlt": [bool(z) for z in sk_z],
+            "kp_zaehlt": [bool(z) for z in kp_z], "starr": starr, "gueltig": gueltig}
+
+
+def rbe2_angehaengt_modell(model: Model) -> dict:
+    """{Text: [Lastfaelle und Kombinationen]} nach Theorie III. Ordnung, in
+    deren Rechnung ein RBE2 mitgefuehrt wird, der nicht zur Wirkung zaehlt
+    (:func:`_auswahl_th3`): er haengt nur an einem Knoten ohne Element, der
+    selbst ueber eine starre Kopplung am Stab haengt (Kopplung „Stabende“ an
+    einem Knoten Q ohne Element, daran per RBE2 der unbelastete Knoten P).
+    Bis Stand 76 las Theorie III. Ordnung diesen RBE2 nicht: P blieb
+    automatisch festgehalten (Verschiebung 0), Theorie I. Ordnung fuehrt ihn
+    mit dem Stab. Fuer das Merkmal des Stands 77 (rechenverfahren)."""
+    if not getattr(model, "starrkoerper", None):
+        return {}
+
+    def fn(aktiv, fak):
+        aw = _auswahl_th3(model, aktiv, fak)
+        if aw is None:
+            return ""
+        namen = [str(sk.name or "ohne Namen") for sk, n, z in zip(model.starrkoerper, aw["sk"], aw["sk_zaehlt"])
+                 if n and not z]
+        return f"RBE2 an angehängtem Knoten: {_namen_liste(namen)}" if namen else ""
+
+    return _je_auftrag(model, fn)
+
+
+def _zwaenge_th3(model: Model, aktiv, factors: dict = None) -> tuple:
+    """(Zwaenge, nicht rechenbar, Federn) der starren und verteilenden
+    Kopplungen fuer Theorie III. Ordnung (Runde k10e, 16.11.2026).
+
+    Zwaenge: Liste :class:`_Zwang` - die Starrkoerper (RBE2, RBE3, verteilende
+    Kopplung eines Stabendes) und die starren Richtungen der Knotenkopplungen
+    (Kopplung „Stabende“, starre Scheibe, Knotenkopplung), die in der Rechnung
+    wirken. Auswahl: was :func:`_th3_wirkung` zaehlt (die Regel, die bis Stand
+    76 zur Abweisung fuehrte), dazu eine starre Kopplung, die Theorie I.
+    Ordnung einbaut (situationen.kopplung_bleibt), und ein RBE2, sobald sie
+    einen mittragenden oder so angehaengten Knoten erreichen (ein Knoten ohne
+    Element folgt dann dem Stab, wie in Theorie I. Ordnung; bis Stand 76 tat
+    er das ueber die weiche Feder). Verteilende Kopplungen, die nicht zaehlen,
+    bleiben weg: ihre Slaves waeren unbestimmt.
+
+    Nicht rechenbar: Zwaenge, deren Zeilen keine Starrkoerperbedingung sind
+    (kommt mit den Kopplungen des Programms nicht vor).
+
+    Federn: None, wenn keine Knotenkopplung eine starre Richtung hat (dann
+    baut assemble.kopplungen die Federn wie bisher); sonst die endlichen
+    Richtungen der Knotenkopplungen als Liste (FHG, c, k) - assemble.kopplungen
+    saehe die starren Richtungen sonst als Straffeder von 1e4 N/m."""
+    aw = _auswahl_th3(model, aktiv, factors)
+    if aw is None:
+        return [], [], None
+    from . import stabeinleitung as _se
+    from .elements import verbindung as vb
+    from .fugen import STABENDE_GRUPPE, STARR_GRUPPE
+    from . import elemente as EL
+    sk_liste = list(getattr(model, "starrkoerper", None) or [])
+    kopp = list(getattr(model, "kopplungen", None) or [])
+    X = np.asarray(model.nodes, float)
+    nn = len(X)
+    nimm_sk, nimm_kp, bleibt = aw["sk"], aw["kp"], aw["bleibt"]
+    starr, gueltig = aw["starr"], aw["gueltig"]
+
+    zw, nicht = [], []
+
+    def dazu(z: "_Zwang"):
+        if z.r:
+            (zw if z.rechenbar else nicht).append(z)
+
+    bindung = None
+    for s, sk in enumerate(sk_liste):
+        if not nimm_sk[s]:
+            continue
+        name = str(sk.name or "ohne Namen")
+        m = int(sk.master)
+        if _se.ist_verteilkopplung(sk):
+            if bindung is None:
+                bindung = {int(t[0]) for t in asm.mittelknoten_bindungen(model)}
+            G, d, _wk = _se.zwangsmatrix(model, sk, bindung)
+            if G is None:
+                continue
+            dazu(_Zwang(name, "Starrkörper", G, d, m, X))
+            continue
+        slaves = [int(x) for x in (sk.slaves or []) if 0 <= int(x) < nn and int(x) != m]
+        if not slaves or not 0 <= m < nn:
+            continue
+        gew = list(sk.gewichte or [])
+        gew = gew if len(gew) == len(slaves) else None
+        G = vb.starrkoerper_matrix(X[m], X[slaves], sk.art, gew)
+        d = list(range(NDOF * m, NDOF * m + NDOF)) + [x for q in slaves for x in range(NDOF * q, NDOF * q + NDOF)]
+        dazu(_Zwang(name, "Starrkörper", G, d, m, X))
+
+    if not any(starr):
+        return zw, nicht, None
+
+    def trans(n: int) -> list:
+        return [NDOF * n, NDOF * n + 1, NDOF * n + 2]
+
+    federn: list = []
+    scheiben: dict = {}
+    enden: dict = {}
+    for j, kp in enumerate(kopp):
+        if not gueltig[j] or not (nimm_kp[j] or bleibt[j]):
+            continue
+        a, b = int(kp.node_a), int(kp.node_b)
+        g = str(getattr(kp, "gruppe", "") or "")
+        if asm.DREHANTEIL and g.startswith(STARR_GRUPPE):
+            scheiben.setdefault(g, []).append((kp, nimm_kp[j], bleibt[j]))
+            continue
+        if asm.DREHANTEIL and g.startswith(STABENDE_GRUPPE) and all(not np.isfinite(w) for _r, w in kp.paare()):
+            if nimm_kp[j]:
+                enden.setdefault(a, []).append(kp)
+            continue
+        d = trans(a) + trans(b)
+        zeilen = []
+        for richtung, wert in kp.paare():
+            c = np.concatenate([-richtung, richtung])
+            if np.isfinite(wert):
+                if bleibt[j] and wert > 0:
+                    federn.append((d, c, float(wert)))
+            elif nimm_kp[j]:
+                zeilen.append(c)
+        if zeilen:
+            dazu(_Zwang(f"Kopplung K{a}–K{b}", "Kopplung", np.array(zeilen), d, a, X))
+    if scheiben:
+        bindung_s: set = set()
+        if any(EL.ist_quadratisch(e.typ) for e in model.elements if e.typ in asm.SOLID_TYPES):
+            bindung_s = {int(t[0]) for t in asm.mittelknoten_bindungen(model)}
+        for gname, liste in scheiben.items():
+            liste = [t for t in liste if int(t[0].node_b) not in bindung_s]
+            if not liste:
+                continue
+            a0 = int(liste[0][0].node_a)
+            dreh = asm._drehung_bestimmt(X[[int(t[0].node_b) for t in liste]] - X[a0])
+            for kp, rt, ft in liste:
+                a, b = int(kp.node_a), int(kp.node_b)
+                r = X[b] - X[a]
+                mit = dreh and a == a0
+                d = (list(range(NDOF * a, NDOF * a + 6)) + trans(b)) if mit else trans(a) + trans(b)
+                zeilen = []
+                for richtung, wert in kp.paare():
+                    if mit:
+                        c = np.concatenate([-richtung, -np.cross(r, richtung), richtung])
+                    else:
+                        c = np.concatenate([-richtung, richtung])
+                    if np.isfinite(wert):
+                        if ft and wert > 0:
+                            federn.append((d, c, float(wert)))
+                    elif rt:
+                        zeilen.append(c)
+                if zeilen:
+                    dazu(_Zwang(f"{gname.strip()}: K{a}–K{b}", "Kopplung", np.array(zeilen), d, a, X))
+    if enden:
+        biege = asm.biegeknoten(model)
+        for m, liste in enden.items():
+            partner = list(dict.fromkeys(int(kp.node_b) for kp in liste))
+            G, d = asm.stabende_zwang(X, m, partner, m in biege)
+            dazu(_Zwang(f"{STABENDE_GRUPPE.strip()} K{m}", "Kopplung", G, d, m, X))
+    return zw, nicht, federn
+
+
+def _federn_matrix(federn: list, ndof: int):
+    """Die endlichen Federn der Knotenkopplungen (Liste (FHG, c, k)) als
+    Matrix k c c^T - wie assemble.kopplungen, ohne die starren Richtungen."""
+    if not federn:
+        return None
+    rows, cols, vals = [], [], []
+    for d, c, k in federn:
+        d = np.asarray(d, int)
+        r_, c_ = np.meshgrid(d, d, indexing="ij")
+        rows.append(r_.ravel())
+        cols.append(c_.ravel())
+        vals.append((k * np.outer(c, c)).ravel())
+    return sparse.coo_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))),
+                             shape=(ndof, ndof)).tocsr()
+
+
+def _hilfsfesselung_th3(zwaenge: list, stand: list, lose, X0) -> list:
+    """Zeilen fuer die Bewegungen loser Knoten, die ihr Zwang nicht bestimmt.
+
+    Lose ist ein Verschiebungs-FHG ohne Steifigkeit aus Staeben oder Federn,
+    der nur in einem einzigen Zwang steht und nicht gehalten ist - etwa die
+    Slaves eines RBE3 an Knoten ohne Element. Der RBE3 bestimmt aus ihnen nur
+    die Bewegung des Masters (sechs Zeilen); was die Slaves untereinander
+    tun, bleibt frei, und das System waere singulaer. Theorie I. Ordnung
+    haelt solche Bewegungen automatisch bzw. mit der Hilfsfesselung fest.
+    Hier: je Zwang der Nullraum seiner Zeilen J (Ausgangslage, ``stand``) auf
+    diesen FHG, ohne die des Masters; jeder Nullvektor h wird eine Zeile
+    h · u~ mit u~ = R_m^T (x_i - x_m) - r_i0 (:class:`_Zwang`, Masterspalten
+    aus der Starrkoerperbedingung) - sie haelt nur die Bewegung der Slaves
+    gegeneinander, nicht die mit dem Master mitgehende. Bei einem Zwang ohne
+    Drehung des Masters ist die Zeile h · u.
+
+    Was danach noch frei ist (eine Bewegung ueber mehrere Zwaenge oder mit
+    Drehungen loser Knoten: Lastknoten P per RBE2 ueber Q, Q nur mit
+    Verschiebungsfedern am Stab - P und Q drehen frei um Q), haelt je eine
+    feste Zeile v · (u, log R) (:class:`_Fessel`) aus dem gemeinsamen
+    Nullraum aller Zwaenge auf allen losen FHG, Drehungen eingeschlossen."""
+    alle_lose = sorted({int(x) for x in np.asarray(lose).ravel()})
+    lose = {x for x in alle_lose if x % NDOF < 3}
+    if not alle_lose:
+        return []
+    zaehl: dict = {}
+    for z in zwaenge:
+        for x in {int(v) for v in z.dofs}:
+            if x in lose:
+                zaehl[x] = zaehl.get(x, 0) + 1
+    out = []
+    for z, (_g, J, d) in zip(zwaenge, stand):
+        d = np.asarray(d, np.int64)
+        spalten = [c for c, x in enumerate(d) if int(x) in lose and zaehl.get(int(x)) == 1
+                   and not (z.mit and int(x) // NDOF == z.master)]
+        if not spalten:
+            continue
+        _U, S, Vt = np.linalg.svd(J[:, spalten], full_matrices=True)
+        rang = int(np.sum(S > 1e-10 * (float(S.max()) if S.size else 1.0)))
+        N = Vt[rang:]
+        if not len(N):
+            continue
+        ldofs = d[spalten]
+        if z.mit:
+            m = z.master
+            zeilen = []
+            for h in N:
+                G = np.zeros(6 + len(spalten))
+                G[6:] = h
+                for c, x in enumerate(ldofs):
+                    n, l = divmod(int(x), NDOF)
+                    e = np.zeros(3)
+                    e[l] = h[c]
+                    G[0:3] -= e
+                    G[3:6] += e @ _schief(np.asarray(X0[n], float) - np.asarray(X0[m], float))
+                zeilen.append(G)
+            fhg = list(range(NDOF * m, NDOF * m + 6)) + [int(x) for x in ldofs]
+            hz = _Zwang(f"Hilfsfesselung {z.name}", "Hilfsfesselung", np.array(zeilen), fhg, m, X0,
+                        mitdrehen=True)
+        else:
+            hz = _Zwang(f"Hilfsfesselung {z.name}", "Hilfsfesselung", N, ldofs, int(ldofs[0]) // NDOF, X0)
+        if hz.r and hz.rechenbar:
+            out.append(hz)
+    # gemeinsamer Nullraum auf allen losen FHG (die uebrigen festgehalten)
+    spalte = {x: i for i, x in enumerate(alle_lose)}
+    nullen_u = np.zeros((len(X0), 3))
+    eins_R = np.tile(np.eye(3), (len(X0), 1, 1))
+    bloecke = []
+    for J, d in [(J, d) for _g, J, d in stand] + [z.auswerten(nullen_u, eins_R)[1:3] for z in out]:
+        B = np.zeros((J.shape[0], len(alle_lose)))
+        for c, x in enumerate(np.asarray(d, np.int64)):
+            i = spalte.get(int(x))
+            if i is not None:
+                B[:, i] += J[:, c]
+        if np.any(B):
+            bloecke.append(B)
+    if not bloecke:
+        return out
+    A = np.vstack(bloecke)
+    _U, S, Vt = np.linalg.svd(A, full_matrices=True)
+    rang = int(np.sum(S > 1e-10 * (float(S.max()) if S.size else 1.0)))
+    for k, v in enumerate(Vt[rang:]):
+        out.append(_Fessel(f"Hilfsfesselung {k + 1}", v, np.asarray(alle_lose, np.int64)))
+    return out
+
+
+class _Fessel:
+    """Hilfsfesselung einer freien Bewegung loser Knoten
+    (:func:`_hilfsfesselung_th3`): eine feste Zeile g = v · (u, log R) auf den
+    Verschiebungen und Drehungen; J = v (genau fuer die Verschiebungen, fuer
+    die Drehungen nahe der festgehaltenen Lage)."""
+    mit = False
+    rechenbar = True
+    art = "Hilfsfesselung"
+
+    def __init__(self, name: str, v, dofs):
+        v = np.asarray(v, float)
+        nimm = np.abs(v) > 1e-12 * float(np.abs(v).max())
+        v = v[nimm]
+        self.name = str(name)
+        self.dofs = np.asarray(dofs, np.int64)[nimm]
+        self.J = (v / float(np.linalg.norm(v)))[None, :]
+        self.r = 1
+        self._kn = self.dofs // NDOF
+        self._lok = self.dofs % NDOF
+
+    def auswerten(self, u: np.ndarray, R: np.ndarray, mu=None) -> tuple:
+        werte = np.empty(len(self.dofs))
+        logs: dict = {}
+        for i, (n, l) in enumerate(zip(self._kn, self._lok)):
+            if l < 3:
+                werte[i] = u[n, l]
+            else:
+                if n not in logs:
+                    logs[n] = rot_log(R[n])
+                werte[i] = logs[n][l - 3]
+        return self.J @ werte, self.J, self.dofs, None
+
+
+def _nicht_rechenbar_text(nicht: list) -> str:
+    namen = [z.name for z in nicht]
+    return (f"Theorie III. Ordnung: die Zwangsbedingung von {_namen_liste(namen)} ist keine "
+            "Starrkörperbedingung und lässt sich nicht mit großen Drehungen mitführen. Die Kopplung "
+            "durch Balken mit Querschnitt STARR ersetzen oder Theorie II. Ordnung wählen.")
+
+
+def starrkoerper_sperre(model: Model, aktiv=None, alt: bool = False, factors: dict = None) -> str:
+    """Leer - oder der Grund, warum Theorie III. Ordnung einen wirkenden
+    Starrkoerper nicht rechnet. Seit Runde k10e (16.11.2026) rechnet sie RBE2,
+    RBE3 und die verteilende Kopplung eines Stabendes mit (:class:`_Zwang`);
+    abgewiesen wird nur eine Zwangsbedingung, die keine
+    Starrkoerperbedingung ist. Von Stand 64 bis 76 wies sie jeden wirkenden
+    Starrkoerper ab (heute :func:`starrkoerper_wirkung`). ``alt`` ist ohne
+    Bedeutung (die Merkmale fragen :func:`kopplung_wirkung_modell`)."""
+    if not (getattr(model, "starrkoerper", None)):
+        return ""
+    _zw, nicht, _f = _zwaenge_th3(model, aktiv, factors)
+    nicht = [z for z in nicht if z.art == "Starrkörper"]
+    return _nicht_rechenbar_text(nicht) if nicht else ""
+
+
+def starre_kopplung_sperre(model: Model, aktiv=None, alt: bool = False,
+                           factors: dict = None) -> str:
+    """Leer - oder der Grund, warum Theorie III. Ordnung eine wirkende starre
+    Knotenkopplung nicht rechnet. Seit Runde k10e (16.11.2026) rechnet sie
+    die Kopplung „Stabende“, die starre Scheibe und die Knotenkopplung als
+    Zwangsbedingung mit (:class:`_Zwang`; bis Stand 63 als Feder 1e4 N/m, von
+    Stand 64 bis 76 abgewiesen - Fehler Nr. 27 der Liste vom 16.11.2026).
+    Abgewiesen wird nur eine Zwangsbedingung, die keine Starrkoerperbedingung
+    ist."""
+    if not getattr(model, "kopplungen", None):
+        return ""
+    _zw, nicht, _f = _zwaenge_th3(model, aktiv, factors)
+    nicht = [z for z in nicht if z.art == "Kopplung"]
+    return _nicht_rechenbar_text(nicht) if nicht else ""
+
+
+def kopplung_sperre(model: Model, aktiv=None, alt: bool = False, factors: dict = None) -> str:
+    """Leer, oder der Text der Abweisung: eine wirkende starre oder
+    verteilende Kopplung, die sich nicht mit grossen Drehungen mitfuehren
+    laesst (:func:`_zwaenge_th3`). ``alt`` ist ohne Bedeutung."""
+    if not (getattr(model, "starrkoerper", None) or getattr(model, "kopplungen", None)):
+        return ""
+    _zw, nicht, _f = _zwaenge_th3(model, aktiv, factors)
+    return _nicht_rechenbar_text(nicht) if nicht else ""
+
+
+def kopplung_sperre_modell(model: Model, alt: bool = False) -> dict:
+    """{Text der Abweisung: [Lastfaelle und Kombinationen]} fuer alles, was
+    nach Theorie III. Ordnung gestellt ist (:func:`_je_auftrag` mit
+    :func:`kopplung_sperre`) - fuer die Modellpruefung (Model.check); leer,
+    wenn nichts abgewiesen wird. Seit Runde k10e (16.11.2026) nur noch
+    Zwangsbedingungen, die keine Starrkoerperbedingung sind; was bis Stand 76
+    hier stand, liefert :func:`kopplung_wirkung_modell`."""
+    if not (getattr(model, "starrkoerper", None) or getattr(model, "kopplungen", None)):
+        return {}
+    return _je_auftrag(model, lambda aktiv, fak: kopplung_sperre(model, aktiv, alt, fak))
 
 
 def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
@@ -686,13 +1819,13 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
     # Volumen- oder Federelementen sagt die Pruefung „nur Stabtragwerke“ unten
     # den eigentlichen Grund (die Einleitungen dort sind auch Starrkoerper)
     if _nur_staebe(model, aktiv):
-        sperre_k = kopplung_sperre(model, aktiv)
+        sperre_k = kopplung_sperre(model, aktiv, factors=factors)
         if sperre_k:
             raise ValueError(sperre_k)
     ll_hinweise = []
     if stabteilung:
         from .stabteilung import (teilen, zurueck, teilzahlen, kraefte_theorie1, FAKTOR_THEORIE3,
-                                  laengslast_hinweise)
+                                  laengslast_hinweise, vorkruemmung_mindest, vorkruemmung_hinweise)
         gemerkt: dict = {}
 
         def _kraefte():
@@ -708,10 +1841,21 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
         # Elementen: Hinweis, kein geaenderter Wert (Runde k7, 14.11.2026)
         ll_hinweise = laengslast_hinweise(model, factors, aktiv, FAKTOR_THEORIE3, kraefte=_kraefte)
         fein = None
-        if teilzahlen(model, aktiv):
+        # mit Ersatzimperfektionen: gedrueckte Staebe mindestens in
+        # TEILUNG_VORKRUEMMUNG mal FAKTOR_THEORIE3 Teilen, auch bei
+        # Stabteilung 1 - die Vorkruemmung wirkt hier als Knotenkraft an den
+        # Teilen und fehlte in einem Element still (Runde k10d, Stand 74)
+        imp = (bool(getattr(model.design, "imperfektionen", True)) if imperfektionen is None
+               else bool(imperfektionen))
+        if teilzahlen(model, aktiv) or (imp and getattr(model, "members", None)):
             kraefte = _kraefte()
             if kraefte is not None:
-                fein = teilen(model, aktiv, teilzahlen(model, aktiv, FAKTOR_THEORIE3, kraefte))
+                mindest = vorkruemmung_mindest(model, kraefte, aktiv, FAKTOR_THEORIE3) if imp else None
+                zahlen = teilzahlen(model, aktiv, FAKTOR_THEORIE3, kraefte, mindest=mindest)
+                # nicht teilbar (Versatz): Hinweis statt still ohne Vorkruemmung
+                ll_hinweise = ll_hinweise + vorkruemmung_hinweise(model, mindest, zahlen)
+                if zahlen:
+                    fein = teilen(model, aktiv, zahlen)
         if fein is not None:
             m2, abb, aktiv2 = fein
             res2, info = solve_theorie3(m2, factors, name, schritte=schritte, max_iter=max_iter,
@@ -828,8 +1972,24 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
             feder_k.append(float(e.stiffness))
     feder_idx = np.array(feder_idx, int)
     feder_k = np.array(feder_k, float)
-    Kk = asm.kopplungen(model, sparse.csr_matrix((ndof, ndof)), aktiv=aktiv)
+    # Starre und verteilende Kopplungen als Zwangsbedingung (Runde k10e,
+    # 16.11.2026); die endlichen Federn der Knotenkopplungen wie bisher. Bis
+    # dahin setzte assemble.kopplungen die starren Richtungen als Straffeder
+    # mit 1e4-mal der Hauptdiagonale der hier leeren Matrix an (1e4 N/m) -
+    # seit Stand 64 kam es dazu nicht mehr, die Rechnung wies vorher ab.
+    zwaenge, _nicht, federn = _zwaenge_th3(model, aktiv, factors)
+    if federn is None:
+        Kk = asm.kopplungen(model, sparse.csr_matrix((ndof, ndof)), aktiv=aktiv)
+    else:
+        Kk = _federn_matrix(federn, ndof)
     Kk = Kk.tocsr() if Kk is not None else None
+    # erweitertes Lagrange-Verfahren: je Zwang die Kraft mu (eigene
+    # Unbekannte), der Strafbeiwert k_zw nur fuer den Weg der Iteration
+    mu_zw = [np.zeros(z.r) for z in zwaenge]
+    k_zw = [0.0]
+    zw_stand: list = []                  # je Zwang (g, J, FHG) der letzten Lage
+    diag_ohne_zw = [None]
+    n_hilfe = 0                          # die letzten n_hilfe Zwaenge sind Hilfsfesselungen
 
     X0 = np.asarray(model.nodes, float).copy()
     u = np.zeros((nn, 3))
@@ -842,8 +2002,9 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
             d[n, 3:] = rot_log(R[n])
         return d.ravel()
 
-    def aufbau():
-        """Innere Kraefte und Tangente in der aktuellen Lage."""
+    def aufbau(voll: bool = False):
+        """Innere Kraefte und Tangente in der aktuellen Lage; ``voll``: die
+        Tangente der Staebe als volle Ableitung (_Stab.tangente_voll)."""
         X = X0 + u
         f_int = np.zeros(ndof)
         rows, cols, vals = [], [], []
@@ -861,10 +2022,12 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
             fl12[6] = float(info.get("Tmax", 0.0))
             zust[sl_.i] = (fl12, float(info.get("Tmax", 0.0)))
         for st in staebe:
-            fl, T, kg, N, L = st.zustand(X, R)
+            fl, T, kg, N, L = st.zustand(u, R)
             zust[st.i] = (fl, N)
             f_e, Ke = st.knoten(R, T.T @ (fl if st.f_anf is None else fl - st.f_anf),
                                 T.T @ (st.kl + kg) @ T)
+            if voll:
+                Ke = st.tangente_voll(u, R)
             d = st.dofs
             f_int[d] += f_e
             r, c = np.meshgrid(d, d, indexing="ij")
@@ -880,16 +2043,84 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
         if Kk is not None:
             f_int += Kk @ dges
             K = K + Kk
+        if zwaenge:
+            if diag_ohne_zw[0] is None:
+                dg = np.abs(K.diagonal())
+                diag_ohne_zw[0] = dg
+                k_zw[0] = _ZWANG_STRAFE * (float(dg.max()) if dg.size and dg.max() > 0 else 1.0)
+            kz = k_zw[0]
+            zw_stand.clear()
+            rz, cz, vz = [], [], []
+            for z, mu in zip(zwaenge, mu_zw):
+                g, J, d, H = z.auswerten(u, R, mu)
+                f_int[d] += J.T @ mu
+                Ke = kz * (J.T @ J)
+                if H is not None:
+                    Ke = Ke + H
+                r_, c_ = np.meshgrid(d, d, indexing="ij")
+                rz.append(r_.ravel())
+                cz.append(c_.ravel())
+                vz.append(Ke.ravel())
+                zw_stand.append((g, J, d))
+            K = K + sparse.coo_matrix((np.concatenate(vz), (np.concatenate(rz), np.concatenate(cz))),
+                                      shape=(ndof, ndof)).tocsr()
         return f_int, K, zust
+
+    def zw_kraft() -> np.ndarray:
+        """k J^T g aller Zwaenge: die Kraft, um die die naechste Nachfuehrung
+        von mu das Gleichgewicht verschiebt (null, wenn alle erfuellt sind)."""
+        v = np.zeros(ndof)
+        for g, J, d in zw_stand:
+            v[d] += k_zw[0] * (J.T @ g)
+        return v
+
+    def zw_nachfuehren(delta_voll: np.ndarray) -> None:
+        """mu += k (J delta + g): die Kraft der Kopplung zum linearisierten
+        Zwang nach dem Schritt (erweitertes Lagrange-Verfahren je Iteration)."""
+        for (g, J, d), mu in zip(zw_stand, mu_zw):
+            mu += k_zw[0] * (J @ delta_voll[d] + g)
 
     # Freiheitsgrade ohne Steifigkeit (Fachwerkknoten, lose Knoten) festhalten
     _f0, K0, _z = aufbau()
     diag = np.abs(K0.diagonal())
-    ref = diag.max() if diag.size and diag.max() > 0 else 1.0
+    # Bezug ohne die Strafanteile der Zwaenge (wie bisher: Staebe, Federn)
+    diag_ref = diag_ohne_zw[0] if zwaenge else diag
+    ref = diag_ref.max() if diag_ref.size and diag_ref.max() > 0 else 1.0
     # automatisch gehalten: ohne Steifigkeit und kein Lager - was dort
     # ankommt, traegt kein Bauteil (solver.auto_gehalten_abtrennen, 14.10.2026)
     auto = (diag < ref * 1e-12) & ~fixed
     fixed |= diag < ref * 1e-12
+    if zwaenge:
+        # Knoten ohne eigene Steifigkeit, die nur ueber einen Zwang haengen:
+        # die Bewegungen, die der Zwang nicht bestimmt (Slaves eines RBE3
+        # ohne Element), haelt Theorie I. Ordnung automatisch fest
+        # (asm.gesperrte_und_automatische); hier dieselben FHG, sonst waere
+        # das System singulaer, wo Theorie I. Ordnung rechnet
+        zdofs = np.unique(np.concatenate([z.dofs for z in zwaenge]))
+        lose = zdofs[(diag_ref[zdofs] < ref * 1e-12) & ~fixed[zdofs]]
+        if len(lose):
+            try:
+                K_I = asm.stiffness(model, 1, aktiv)
+                _fx, _vx, auto_I = asm.gesperrte_und_automatische(model, K_I)
+                halt = lose[np.asarray(auto_I, bool)[lose]]
+                auto[halt] = True
+                fixed[halt] = True
+            except Exception:                  # noqa: BLE001 - dann wie ohne
+                pass
+            # was dann noch unbestimmt ist (Theorie I. Ordnung: Hilfsfesselung):
+            # je Zwang die Bewegungen seiner losen Knoten, die er nicht
+            # bestimmt, als eigene Zeile im mitgedrehten System des Masters
+            hilfe = _hilfsfesselung_th3(zwaenge, zw_stand, lose[~fixed[lose]], X0)
+            if hilfe:
+                zwaenge = zwaenge + hilfe
+                n_hilfe = len(hilfe)
+                mu_zw.extend(np.zeros(z.r) for z in hilfe)
+                zahl = sum(z.r for z in hilfe)
+                info.hinweise.append(
+                    "Theorie III. Ordnung: " + ("eine Bewegung" if zahl == 1 else f"{zahl} Bewegungen")
+                    + " von Knoten ohne Element, die ihre Kopplung nicht bestimmt, festgehalten (wie die "
+                      "Hilfsfesselung nach Theorie I. Ordnung)")
+                _f0, K0, _z = aufbau()
     fi = np.where(~fixed)[0]
     if not len(fi):
         raise ValueError("Kein freier Freiheitsgrad")
@@ -909,9 +2140,13 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
             fl, _N = zust.get(sl_.i, (np.zeros(12), 0.0))
             res.beam_end[sl_.i] = fl
         if aktiv is not None:
+            # Nullen je Elementart wie solver.postprocess: eine abgeschaltete
+            # Schale bekam bis zum 15.11.2026 Stabendkraefte, und
+            # beam_end_forces brach beim Abschluss mit KeyError (Querschnitt
+            # = Name der Schalendicke) ab (Runde k10, Punkt 1)
+            from .solver import inaktive_nullen
             res.info["inaktiv"] = [i for i in range(ne) if not aktiv[i]]
-            for i in res.info["inaktiv"]:
-                res.beam_end[i] = np.zeros(12)
+            inaktive_nullen(model, res, res.info["inaktiv"])
         return res
 
     # Theorie I. Ordnung als Bezug (u_max_I)
@@ -919,26 +2154,118 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
         lu0 = splu(K0[fi][:, fi].tocsc())
         u1 = np.zeros(ndof)
         u1[fi] = lu0.solve(F_ref_voll[fi])
+        if zwaenge:
+            # die Zwaenge genau (in der Ausgangslage linear): mu nachfuehren,
+            # bis die Nachfuehrung das Gleichgewicht nicht mehr verschiebt
+            mu_I = [np.zeros(z.r) for z in zwaenge]
+            schranke = 1e-12 * (float(np.linalg.norm(F_ref_voll[fi])) or 1.0)
+            for _ in range(100):
+                fz = np.zeros(ndof)
+                vz = np.zeros(ndof)
+                for (_g, J, d), mu in zip(zw_stand, mu_I):
+                    gl = J @ u1[d]
+                    vz[d] += k_zw[0] * (J.T @ gl)
+                    mu += k_zw[0] * gl
+                    fz[d] += J.T @ mu
+                if float(np.linalg.norm(vz[fi])) <= schranke:
+                    break
+                u1[fi] = lu0.solve((F_ref_voll - fz)[fi])
         info.u_max_I = float(np.abs(u1[:, ].reshape(-1, NDOF)[:, :3]).max())
     except Exception as ex:                    # noqa: BLE001
         raise ValueError(f"Gleichungssystem singulär: {ex}") from ex
 
     lastnorm = float(np.linalg.norm(F_ref[fi])) or 1.0
+    # Modellgroesse fuer die Korrektur auf Rundungsniveau
+    l_ref = max(float(np.ptp(X0, axis=0).max()) if len(X0) else 0.0, 1.0)
     F_imp = np.zeros(ndof)
     zust = _z
     f_int = _f0
     F_ges = np.zeros(ndof)
     gesamt_it = 0
-    for schritt in range(1, schritte + 1):
-        lam = schritt / schritte
+    # Stockt eine Laststufe (nach max_iter Iterationen nicht konvergiert),
+    # rechnet sie von ihrem Anfang neu, und zwar fuer den Rest der Rechnung
+    # „voll“, mit eigenen max_iter Iterationen:
+    # * mit der vollen Tangente der Staebe (_Stab.tangente_voll) statt der
+    #   genaeherten T^T (k_l + k_g(N)) T;
+    # * mit Imperfektionen: welche Staebe eine Vorkruemmung bekommen
+    #   (5.3.2(6)), entscheidet die Normalkraft der vollen Last nach Theorie
+    #   I. Ordnung, einmal statt in jeder Iteration mit der Normalkraft der
+    #   Zwischenlage; die Groesse der Ersatzlast folgt weiter der aktuellen
+    #   Normalkraft. Am Ende prueft die Rechnung die Entscheidung mit der
+    #   Normalkraft nach Theorie III. Ordnung und rechnet mit ihr nach, wenn
+    #   sie anders ausfaellt (beim zweiten Mal mit beiden Saetzen zusammen, auf
+    #   der sicheren Seite).
+    # Was ohne das konvergiert, rechnet wie bisher. Bis zur Runde k10d
+    # (16.11.2026) endete eine solche Stufe mit „keine Konvergenz“: bei
+    # grosser Verdrehung (IPE 300, 6 m, 100 kN und 15 kN/m mit Vorkruemmung,
+    # nahe am Biegedrillknicken) konvergierte die genaeherte Tangente nur
+    # linear (Faktor etwa 0,85 je Schritt), und die Vorkruemmung schaltete
+    # sich von Iteration zu Iteration ein und aus (Grenze 5.3.2(6) bei
+    # 86,9 kN, die Normalkraft der Zwischenlagen schwankte zwischen 50 und
+    # 90 kN); ebenso LK1 einer Hallenreihe (Schiefstellung quer).
+    voll = False
+    entscheid = None
+    res_t = None
+
+    def entscheid_theorie1():
+        """{Stab: Kriterium 5.3.2(6)} mit der Normalkraft der vollen Last
+        nach Theorie I. Ordnung (oder None: wie bisher je Iteration)."""
+        if not imperfektionen or alle_vorkruemmungen:
+            return None
+        try:
+            from .theorie2 import vorkruemmung_entscheid
+            from .solver import postprocess
+            res_I = Results(name=name, kind="combination", model=model)
+            res_I.u = u1.reshape(-1, NDOF).copy()
+            postprocess(model, u1, res_I, feq, q, temp, aktiv=aktiv)
+            return vorkruemmung_entscheid(model, res_I)
+        except Exception:                      # noqa: BLE001 - dann wie bisher je Iteration
+            return None
+    schritt = 0
+    nachrechnen = 0
+    while True:
+        schritt += 1
+        if schritt > schritte:
+            # die Entscheidung mit der Normalkraft nach Theorie III. Ordnung
+            if entscheid is None or res_t is None or nachrechnen >= 2:
+                break
+            from .theorie2 import vorkruemmung_entscheid, vorkruemmung_staebe
+            neu = vorkruemmung_entscheid(model, res_t)
+            if vorkruemmung_staebe(neu) == vorkruemmung_staebe(entscheid):
+                break
+            nachrechnen += 1
+            if nachrechnen == 2:
+                neu = {n: (entscheid[n] if entscheid.get(n, {}).get("noetig") else k)
+                       for n, k in neu.items()}
+            entscheid = neu
+        lam = min(schritt / schritte, 1.0)
         konv = math.inf
-        for it in range(1, max_iter + 1):
-            f_int, K, zust = aufbau()
+        u_anf, R_anf = u.copy(), R.copy()
+        mu_anf = [mu.copy() for mu in mu_zw]
+        grenze_it = max_iter
+        it = 0
+        while True:
+            it += 1
+            if it > grenze_it:
+                if voll:
+                    it -= 1
+                    konvergiert = False
+                    break
+                # die Stufe von ihrem Anfang an „voll“ neu rechnen
+                voll = True
+                entscheid = entscheid_theorie1()
+                u[:] = u_anf
+                R[:] = R_anf
+                for mu, m0 in zip(mu_zw, mu_anf):
+                    mu[:] = m0
+                grenze_it = it - 1 + max_iter
+            f_int, K, zust = aufbau(voll)
             if imperfektionen:
                 from .theorie2 import ersatzlasten_schiefstellung, ersatzlasten_vorkruemmung
                 res_t = ergebnis(zust, np.zeros(ndof), f_int)
                 Fs, s_info = ersatzlasten_schiefstellung(model, res_t, richtung)
-                Fv, v_info = ersatzlasten_vorkruemmung(model, res_t, elastisch, alle=alle_vorkruemmungen)
+                Fv, v_info = ersatzlasten_vorkruemmung(model, res_t, elastisch, alle=alle_vorkruemmungen,
+                                                       entscheid=entscheid)
                 F_imp = Fs + Fv
                 info.schiefstellung, info.vorkruemmung = s_info, v_info
             F_stufe = stufenlast(F_ref, F_S, lam)
@@ -967,36 +2294,89 @@ def solve_theorie3(model: Model, factors: dict, name: str, schritte: int = 10,
             else:
                 bezug = (lam * lastnorm) if F_S is None else (float(np.linalg.norm(F_stufe[fi])) or 1.0)
             konv = float(np.linalg.norm(r[fi])) / bezug
+            # Zwaenge (Runde k10e): erfuellt, wenn die Nachfuehrung ihrer
+            # Kraft das Gleichgewicht nicht mehr verschiebt
+            v_zw = zw_kraft() if zwaenge else None
+            konv_zw = float(np.linalg.norm(v_zw[fi])) / bezug if zwaenge else 0.0
             gesamt_it += 1
-            if konv < tol:
+            if konv < tol and konv_zw < tol:
+                konvergiert = True
                 break
             try:
-                dd = splu(K[fi][:, fi].tocsc()).solve(r[fi])
+                dd = splu(K[fi][:, fi].tocsc()).solve(r[fi] if v_zw is None else (r - v_zw)[fi])
             except Exception as ex:            # noqa: BLE001
                 info.fehler = f"Laststufe {schritt}: Gleichungssystem singulär ({ex})"
+                konvergiert = True             # der Fehler steht schon da
                 break
             delta = np.zeros(ndof)
             delta[fi] = dd
+            if zwaenge:
+                zw_nachfuehren(delta)
             delta = delta.reshape(-1, NDOF)
             u += delta[:, :3]
             for n in range(nn):
                 dth = delta[n, 3:]
                 if np.any(dth):
                     R[n] = rot_exp(dth) @ R[n]
-        else:
+            # Residuum auf Rundungsniveau: die Korrektur aendert die Lage
+            # nicht mehr (Verschiebung unter 1e-12 der Modellgroesse, Drehung
+            # unter 1e-12), das Residuum ist unter 0,1 % der Last - dann ist
+            # die Lage so genau, wie die Rechnung sie darstellen kann. Das
+            # Rauschen der Stabendkraefte aus der Rundung der Drehungen (etwa
+            # 2e-16 rad) ist etwa 6 E I / L² · 2e-16 und waechst an kurzen
+            # Staeben: am Stummel 0,005 m eines Rahmens (Rechteck 20 x 400 mm)
+            # etwa 0,001 N, ueber der Schranke 1e-6 der Last der ersten Stufe
+            # (100 N). Bis zur Runde k10d (16.11.2026) blieb die Rechnung dort
+            # bei Korrekturen um 1e-16 m stehen und meldete „keine
+            # Konvergenz“.
+            if (konv < _KONV_RUNDUNG_RESIDUUM and konv_zw < _KONV_RUNDUNG_RESIDUUM
+                    and float(np.abs(delta[:, :3]).max(initial=0.0)) <= _KONV_RUNDUNG * l_ref
+                    and float(np.abs(delta[:, 3:]).max(initial=0.0)) <= _KONV_RUNDUNG):
+                konvergiert = True
+                break
+        if not konvergiert:
             info.hinweise.append(
-                f"Laststufe {schritt}: nach {max_iter} Iterationen nicht konvergiert "
+                f"Laststufe {schritt}: nach {it} Iterationen nicht konvergiert "
                 f"(Residuum {konv * 100:.3g} % der Last) - mehr Laststufen wählen")
             info.fehler = info.fehler or "keine Konvergenz"
         info.konvergenz = konv
         if info.fehler:
             break
         if progress:
-            progress(f"{name}: Laststufe {schritt}/{schritte} ({it} Iterationen)")
+            progress(f"{name}: Laststufe {min(schritt, schritte)}/{schritte} ({it} Iterationen)")
     info.schritte = schritte
     info.iterationen = gesamt_it
-    info.gerechnet = not info.fehler
     f_int, K, zust = aufbau()
+    # das Gleichgewicht an den Gelenken (_Stab._gelenk_lage) gehoert dazu
+    offen = [st.i for st in staebe if st.gelenk is not None and st.gelenk.get("offen")]
+    if offen and not info.fehler:
+        from .solver import stab_name
+        info.fehler = ("Theorie III. Ordnung: kein Gleichgewicht am Gelenk von Stab "
+                       + ", ".join(stab_name(model, i) for i in offen[:4]) + (" …" if len(offen) > 4 else ""))
+    if n_hilfe and not info.fehler:
+        # Traegt die Hilfsfesselung Last, haelt das Modell sie nicht: eine
+        # Last an einem Knoten ohne Element in einer Richtung, die keine
+        # Kopplung bestimmt - kein Gleichgewicht (wie Theorie I. Ordnung mit
+        # Hilfsfesselung), statt die Last still in die Fesselung zu geben.
+        # Massstab ist der Fehlerbegriff (0,001 mm): die Kraft der Fesselung
+        # mal der Nachgiebigkeit des Modells (groesste Verschiebung durch
+        # Last). Darunter bleibt ein Hinweis - eine Last an einem Slave kann
+        # mit der Drehung des Masters einen kleinen Anteil in die freie
+        # Richtung bekommen (RBE3 mit Slaves ohne Element, 0,5 N quer am
+        # verdrillten Ende: 0,00004 N, Wirkung 0,0000001 mm)
+        kraft = 0.0
+        for (_g, J, d), mu in zip(zw_stand[-n_hilfe:], mu_zw[-n_hilfe:]):
+            kraft = max(kraft, float(np.linalg.norm(J.T @ mu)))
+        u_ist = float(np.abs(gesamtvektor().reshape(-1, NDOF)[:, :3]).max())
+        nachgiebig = u_ist / max(float(np.linalg.norm(F_ges[fi])), 1e-30)
+        if kraft > 0.0 and kraft * nachgiebig <= 1e-6:
+            info.hinweise.append(f"Theorie III. Ordnung: die Hilfsfesselung trägt {kraft:.6f} N (Wirkung unter "
+                                 "0,001 mm)")
+        elif kraft > 0.0:
+            info.fehler = ("Theorie III. Ordnung: kein Gleichgewicht - eine Last an einem Knoten ohne Element "
+                           "wirkt in einer Richtung, die keine Kopplung und kein Bauteil hält (die Hilfsfesselung "
+                           f"trägt {kraft:.3f} N). Modell prüfen")
+    info.gerechnet = not info.fehler
     res = ergebnis(zust, F_ges, f_int)
     from .solver import auto_gehalten_abtrennen
     auto_gehalten_abtrennen(model, auto, res, F_ges, aktiv, progress)

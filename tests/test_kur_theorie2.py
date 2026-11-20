@@ -343,10 +343,16 @@ def test_13_35_nummern():
     from statik3d.model import Model
     m = _modell(A=1.0)
     # ohne interne Stabteilung (seit 12.11.2026 Vorgabe 10): nur so ist das
-    # einzige Element fuer die Knickfigur zu lang und der Hinweis kommt
+    # einzige Element fuer die Knickfigur zu lang und der Hinweis kommt.
+    # Seit Stand 76 (Runde k10e, Nr. 29) teilt Theorie II. Ordnung einen Stab
+    # mit wirksamer Normalkraft auch bei Stabteilung 1 mindestens in 10
+    # Teile; ungeteilt bleibt nur ein Balken, den die interne Stabteilung
+    # nicht teilt - hier mit Woelbkrafttorsion
     m.netz.stabteilung = 1
+    m.sections["Q"].Iw = 1e-7
     a, b = m.add_node(0, 0, 0), m.add_node(6, 0, 0)
     el = m.add_element("beam", [a, b], "ST", "Q")
+    m.elements[el].woelb = True
     m.fix(a, [0, 1, 2, 3])
     m.fix(b, [1, 2])
     m.load_node(b, Fx=-100e3)

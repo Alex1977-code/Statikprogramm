@@ -258,11 +258,32 @@ def test_rechenverfahren():
         lc.vorspannungen = []                  # nur die Querkraft, eine Stufe
     m3, _u3 = klotz(20e3)
     m3.contact_pairs[0].mu = 0.0               # ohne Reibung
-    check("Merkmal „gleitweg“ als Fehlerkorrektur, Stand 4 = VERFAHRENSSTAND; betrifft Reibung + Spannschritt, "
-          "nicht einstufig, nicht ohne Reibung",
+    # Bis zur Zusammenfuehrung k10 (16.11.2026) stand hier VERFAHRENSSTAND == 4:
+    # am 17.10.2026 war der Gleitweg der hoechste Stand der Tabelle. Gemeint
+    # war, dass das Programm mit dem Gleitweg rechnet - sein Stand reicht den
+    # Wechsel ein, und VERFAHRENSSTAND ist der hoechste Stand der Tabelle. Mit
+    # jedem spaeteren Stand schlug die Gleichheit fehl; darum stand die Datei
+    # nicht in tests/run_all.py. Geprueft wird die gemeinte Aussage, dazu ihre
+    # Wirkung: eine Ergebnisdatei vom Stand 3 gilt bei Reibung und
+    # Spannschritt als betroffen, eine vom heutigen Stand nicht.
+    staende = [w.stand for x in rv.MERKMALE for w in x.wechsel]
+    check("Merkmal „gleitweg“ als Fehlerkorrektur mit Stand 4; das Programm rechnet damit (VERFAHRENSSTAND "
+          ">= 4 und der hoechste Stand der Tabelle); betrifft Reibung + Spannschritt, nicht einstufig, "
+          "nicht ohne Reibung",
           mk is not None and mk.wechsel[-1].art == rv.FEHLERKORREKTUR and mk.wechsel[-1].stand == 4
-          and rv.VERFAHRENSSTAND == 4 and mk.betrifft(m) and not mk.betrifft(m2) and not mk.betrifft(m3),
-          f"{mk.modellmerkmal if mk else 'fehlt'}")
+          and rv.VERFAHRENSSTAND >= 4 and rv.VERFAHRENSSTAND == max(staende)
+          and mk.betrifft(m) and not mk.betrifft(m2) and not mk.betrifft(m3),
+          f"{mk.modellmerkmal if mk else 'fehlt'}; VERFAHRENSSTAND {rv.VERFAHRENSSTAND}, Tabelle bis "
+          f"{max(staende)}")
+    alt3 = rv.merkmale_der_datei({"verfahren": {"stand": 3, "merkmale": {}}}, m)
+    heute = rv.merkmale_der_datei({"verfahren": rv.angabe(m)}, m)
+    alt_namen = [x.name for x, *_r in rv.aeltere(m, alt3)]
+    heute_namen = [x.name for x, *_r in rv.aeltere(m, heute)]
+    check("Datei vom Stand 3: „gleitweg“ mit dem alten Verfahren und betroffen; Datei vom heutigen Stand: "
+          "nicht betroffen",
+          mk is not None and alt3.get("gleitweg") == mk.wechsel[-1].alt and "gleitweg" in alt_namen
+          and heute.get("gleitweg") == mk.wechsel[-1].neu and "gleitweg" not in heute_namen,
+          f"Stand 3: {alt3.get('gleitweg')} {alt_namen}; heute: {heute.get('gleitweg')} {heute_namen}")
 
 
 def main():

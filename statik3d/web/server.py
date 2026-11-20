@@ -277,6 +277,16 @@ class State:
                 # (Joint.ermuedung; leer = alle Ermuedungslasten): eine neue oder
                 # geloeschte Last aendert D. Bis zum 07.10.2026 blieb er stehen (N22).
                 self.analysis.joints = None
+            # Die Hinweise Biegedrillknicken der Analyse (Theorie II. Ordnung,
+            # alpha_cr) und eines stehenden Knickergebnisses beruhten auf den
+            # eben verworfenen Nachweisen: neu bilden, sonst zaehlt ein Nachweis,
+            # den es nicht mehr gibt, und der Hinweis fehlt still (Runde k10b,
+            # Nachbesserung 2, 15.11.2026). Die Oberflaeche verwirft dabei
+            # Analyse und Ergebnis gemeinsam, dort entsteht die Luecke nicht.
+            try:
+                solver._bdk_nach_nachweisen(self.analysis, self.results)
+            except Exception:                  # noqa: BLE001 - ein Hinweis sperrt nie
+                pass
 
 
 def _desktop_frei(st: State) -> None:
@@ -2294,6 +2304,15 @@ def start_solve(st: State, opts: dict) -> dict:
                     st.results = r
             else:
                 r = solver.solve_buckling(m, nmodes, progress, case=case)
+                # Knicken nach den Nachweisen: ein Haken-Stab gilt als erfasst,
+                # wenn sein chi_LT-Nachweis den Grundzustand gefuehrt hat (Runde
+                # k10b); jede Modellaenderung verwirft die Analyse (invalidate)
+                an_ = st.analysis
+                if an_ is not None and getattr(an_, "design", None) is not None:
+                    try:
+                        solver._bdk_knick_hinweis_bilden(r, an_.design)
+                    except Exception:          # noqa: BLE001 - ein Hinweis sperrt nie
+                        pass
                 text = r.summary()
                 with st.lock:
                     st.results = r
@@ -2331,10 +2350,11 @@ def start_design(st: State, fatigue: bool = False) -> dict:
                 res = check_members(m, an, progress=progress)
                 with st.lock:
                     an.design = res
-                    # Hinweis Biegedrillknicken nach den Nachweisen neu bilden (Runde k8)
+                    # Hinweis Biegedrillknicken nach den Nachweisen neu bilden (Runde k8),
+                    # auch den eines daneben stehenden Knickergebnisses (Runde k10b)
                     try:
                         from .. import solver as _slv
-                        _slv._bdk_hinweise_sammeln(an)
+                        _slv._bdk_nach_nachweisen(an, st.results if st.analysis is an else None)
                     except Exception:          # noqa: BLE001 - ein Hinweis sperrt nie
                         pass
             st.touch()

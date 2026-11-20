@@ -2661,6 +2661,33 @@ LASTARTEN_NAMEN = (("eigengewicht", "Eigengewicht"), ("knoten", "Knotenlasten"),
                    ("zwang", "Zwangsverformungen (Lagerverschiebung)"))
 
 
+def erdbeschleunigung(lc) -> np.ndarray:
+    """Die Erdbeschleunigung (gx, gy, gz) [m/s²] eines Lastfalls als Feld aus
+    drei Zahlen - gleich, ob ``lc.gravity`` eine Liste, ein Tupel, ein
+    numpy-Feld (Model.set_gravity, Setter und Lesen von Model.gravity) oder
+    None ist; ohne Angabe der Nullvektor.
+
+    Bis zum 16.11.2026 (Runde k10d) pruefte der Code an sechs Stellen mit
+    ``lc.gravity or [...]`` auf den Wahrheitswert. Mit einem Feld ist der
+    mehrdeutig (ValueError): die Statusbewertung liess die Merkmale
+    „Fachwerkstab mit Querlast“ und „Knotenlast über Starrkörper“ still weg,
+    „Je Anker zuordnen“ brach ab. Abfragen auf die Erdbeschleunigung gehen
+    seither hierueber oder ueber :func:`hat_erdbeschleunigung`."""
+    g = getattr(lc, "gravity", None)
+    out = np.zeros(3)
+    if g is None:
+        return out
+    a = np.asarray(g, dtype=float).ravel()[:3]
+    out[:a.size] = a
+    return out
+
+
+def hat_erdbeschleunigung(lc) -> bool:
+    """Wirkt im Lastfall eine Erdbeschleunigung (eine Komponente ungleich 0)?
+    Siehe :func:`erdbeschleunigung`."""
+    return bool(np.any(erdbeschleunigung(lc) != 0.0))
+
+
 @dataclass
 class LoadCase:
     """Ein Lastfall mit eigener Lastzusammenstellung.
@@ -11348,8 +11375,9 @@ class Model:
             if text:
                 msgs.append(f"FEHLER: {text} (nach Theorie III. Ordnung gestellt: "
                             + ", ".join(th3[:6]) + (" …" if len(th3) > 6 else "") + ")")
-        # ... und keine Starrkoerper und starren Knotenkopplungen (Runde k8,
-        # 15.11.2026, vom Anwender freigegeben): je Situation nur wirksame
+        # ... und Starrkoerper und starre Knotenkopplungen: von Runde k8 bis
+        # Stand 76 abgewiesen, seit Runde k10e (16.11.2026) gerechnet; gemeldet
+        # wird nur noch eine Zwangsbedingung, die keine Starrkoerperbedingung ist
         if th3 and (getattr(self, "starrkoerper", None) or getattr(self, "kopplungen", None)):
             from .theorie3 import kopplung_sperre_modell
             for text, namen in kopplung_sperre_modell(self).items():

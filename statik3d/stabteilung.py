@@ -97,7 +97,19 @@ def versatz_teile(model, i: int, n: int):
     Versatz in den Achsen seiner Knotenlinie. Geprueft wird das Ergebnis auf
     dem Weg der Rechnung (bm.versatz_arme, bm.stab_achsen_versetzt): weichen
     Achsen, Arme oder Laenge ab (Arm laenger als ein Teil gegen die
-    Stabrichtung), bleibt das Element ungeteilt."""
+    Stabrichtung), wird verteilt geteilt (unten).
+
+    Verteilt (Runde k10d, 16.11.2026, Verfahrensstand 74): die Zwischenknoten
+    liegen gleichmaessig auf der Knotenlinie x_0 -> x_1, und jedes Teil hat
+    einen Arm, der linear von a_0 nach a_1 laeuft - Teil k zwischen den
+    Stabpunkten Q_k und Q_k+1 der versetzten Achse wie oben, nur haengen die
+    Zwischenknoten mit dem Arm a_0 + k/n (a_1 - a_0) daran. Mechanisch ist
+    das derselbe Stab (die Zwischenknoten haben sonst nichts angeschlossen).
+    So teilt sich auch ein Stab, dessen Arm laenger als ein Teil ist - bis
+    dahin blieb er ganz, und nach Theorie III. Ordnung fehlte die
+    Vorkruemmung in einem Element still (Stab 6,5 m, Arm 0,5 m in
+    Stabrichtung am Ende: Mz 0 statt 12,67 kNm). None erst, wenn auch das
+    nicht geht."""
     from .assemble import stab_achsen
     from .elements import beam3d as bm
     e = model.elements[i]
@@ -110,15 +122,51 @@ def versatz_teile(model, i: int, n: int):
     arm = (T3n.T @ rr[0], T3n.T @ rr[1])
     P0, P1 = X[0] + arm[0], X[1] + arm[1]
     T3s, Ls = stab_achsen(model, e)
+    aus = _versatz_teile_versuch(X, arm, P0, P1, T3s, Ls, n, verteilt=False)
+    if aus is None:
+        aus = _versatz_teile_versuch(X, arm, P0, P1, T3s, Ls, n, verteilt=True)
+    return aus
+
+
+def versatz_nur_verteilt(model, i: int, n: int) -> bool:
+    """Teilt sich Element ``i`` in ``n`` Teile nur verteilt
+    (:func:`versatz_teile`, seit Verfahrensstand 74) - bis dahin blieb es
+    ungeteilt? Fuer das Merkmal versatz_verteilt."""
+    from .assemble import stab_achsen
+    from .elements import beam3d as bm
+    e = model.elements[i]
+    rr = bm.versatz_vektoren(getattr(e, "exzentrizitaet", None))
+    if rr is None or int(n) < 2:
+        return False
+    X = np.asarray(model.nodes[e.nodes[:2]], float)
+    T3n, _Ln = bm.local_axes(X[0], X[1], e.roll)
+    arm = (T3n.T @ rr[0], T3n.T @ rr[1])
+    T3s, Ls = stab_achsen(model, e)
+    args = (X, arm, X[0] + arm[0], X[1] + arm[1], T3s, Ls, int(n))
+    return (_versatz_teile_versuch(*args, verteilt=False) is None
+            and _versatz_teile_versuch(*args, verteilt=True) is not None)
+
+
+def _versatz_teile_versuch(X, arm, P0, P1, T3s, Ls, n: int, verteilt: bool):
+    """Die Teile wie :func:`versatz_teile` - ``verteilt`` False: Arm nur am
+    ersten und letzten Teil; True: Arm linear verteilt auf alle Teile,
+    Zwischenknoten auf der Knotenlinie. None, wenn die Gegenprobe scheitert."""
+    from .elements import beam3d as bm
     t, ys = T3s[0], T3s[1]
     Q = [P0 + (P1 - P0) * (k / n) for k in range(n + 1)]
     null = np.zeros(3)
     aus = []
     for k in range(n):
-        ra = arm[0] if k == 0 else null
-        rb = arm[1] if k == n - 1 else null
-        A = X[0] if k == 0 else Q[k]
-        B = X[1] if k == n - 1 else Q[k + 1]
+        if verteilt:
+            ra = arm[0] + (arm[1] - arm[0]) * (k / n)
+            rb = arm[0] + (arm[1] - arm[0]) * ((k + 1) / n)
+            A = X[0] if k == 0 else Q[k] - ra
+            B = X[1] if k == n - 1 else Q[k + 1] - rb
+        else:
+            ra = arm[0] if k == 0 else null
+            rb = arm[1] if k == n - 1 else null
+            A = X[0] if k == 0 else Q[k]
+            B = X[1] if k == n - 1 else Q[k + 1]
         d = B - A
         lang = float(np.linalg.norm(d))
         if lang <= VERSATZ_TOL * Ls:
@@ -267,13 +315,148 @@ def kraefte_theorie1(model, system, factors: dict) -> dict:
     return normalkraefte_kg(model, u, aktiv, anfangsnormalkraefte(model, factors, aktiv), feq)
 
 
-def teilzahlen(model, aktiv=None, faktor: int = 1, kraefte: dict = None) -> dict:
+#: Theorie III. Ordnung setzt die Vorkruemmung als Knotenkraefte an den
+#: Teilen an (theorie2.ersatzlasten_vorkruemmung ohne ``stablasten``): ein
+#: gedrueckter Stab bekommt darum mindestens TEILUNG_VORGABE mal
+#: FAKTOR_THEORIE3 Teile, auch bei kleinerer Stabteilung der
+#: Netzeinstellungen (:func:`vorkruemmung_mindest`, Verfahrensstand 74).
+#: Theorie II. Ordnung (Streckenlast im Element) teilt ihn mindestens in
+#: TEILUNG_VORGABE Teile (:func:`fein_system` mit ``vorkruemmung``,
+#: Nachbesserung 2): in einem Element war die Streckenlast bei Versatz in
+#: Stabrichtung und bei Federgelenken falsch (bis 42,5 N/mm²).
+#: Gemessen am IPE 300, 6 m, 200 kN, e_0 = L/250 (Runde k10d, 16.11.2026;
+#: Bezug 11,517 kNm, Streckenlast von Hand in 80 Elementen): 1 Teil 0,
+#: 4 Teile 10,77, 10 Teile 11,39, 20 Teile 11,48 kNm.
+TEILUNG_VORKRUEMMUNG = TEILUNG_VORGABE
+
+
+def vorkruemmung_mindest(model, kraefte: dict, aktiv=None, faktor: int = 1) -> dict:
+    """{Element: Mindestzahl der Abschnitte seines Stabs} fuer die Balken der
+    gedrueckten Staebe (Member), die eine Vorkruemmung bekommen koennen:
+    mittlere Normalkraft nach Theorie I. Ordnung (``kraefte``) Druck und an
+    einem Element :func:`relevant`. In einem einzigen Element hob sich die
+    Vorkruemmung als Knotenkraft mit den Endquerkraeften auf und fehlte still
+    (Runde k10d, 16.11.2026); in wenigen Teilen fehlte das Feldmoment
+    zwischen den Knoten. Ob 5.3.2(6) sie verlangt, entscheidet erst die
+    Rechnung - hier zaehlt jeder gedrueckte Stab."""
+    if not kraefte:
+        return {}
+    ne = len(model.elements)
+    soll = TEILUNG_VORKRUEMMUNG * max(1, int(faktor))
+    out = {}
+    for mem in (getattr(model, "members", None) or {}).values():
+        idx = [int(i) for i in (mem.elements or []) if 0 <= int(i) < ne]
+        idx = [i for i in idx if (aktiv is None or aktiv[i]) and teilbar(model, i)]
+        if not idx:
+            continue
+        L = [model.element_length(i) for i in idx]
+        N = sum(float(kraefte.get(i, 0.0)) * l for i, l in zip(idx, L)) / max(sum(L), 1e-300)
+        if N >= 0.0 or not any(relevant(model, i, kraefte.get(i, 0.0)) for i in idx):
+            continue
+        for i in idx:
+            out[i] = soll
+    return out
+
+
+#: Theorie II. Ordnung, alpha_cr und Knicken teilen jeden Stab, an dem die
+#: Normalkraft zaehlt (:func:`relevant`, Druck wie Zug), mindestens in so
+#: viele Teile - auch bei kleinerer Stabteilung der Netzeinstellungen und
+#: ohne Ersatzimperfektionen (:func:`th2_mindest`, Runde k10e, Nr. 29 der
+#: Fehlerliste, Verfahrensstand 76). Bis dahin rechnete ein Stab aus einem
+#: Element bei Stabteilung 1 in diesem Element: IPE 300, 6 m, 300 kN Druck,
+#: Endmomente 6 kNm 54,2074 statt 54,2940 kNm (1,08 N/mm²), beidseits
+#: eingespannt mit q 5 kN/m 15,00 statt 16,66 kNm, in zwei Elementen
+#: 52,33 kNm; alpha_cr und Knicken 21,7 % zu hoch, beidseits eingespannt
+#: „keine Normalkräfte“; unter Zug ueber der Euler-Last des Elements ein
+#: unsinnig grosses Feldmoment.
+TEILUNG_TH2_MINDEST = TEILUNG_VORGABE
+
+
+def th2_mindest(model, kraefte: dict, aktiv=None) -> dict:
+    """{Element: Mindestzahl der Abschnitte seines Stabs} fuer Theorie II.
+    Ordnung, alpha_cr und Knicken: die teilbaren Balken jedes Stabs (Member;
+    Balken ohne Stab als gerade Kette, :func:`_stabgruppen`), an dem die
+    Normalkraft nach Theorie I. Ordnung (``kraefte``) an einem Element
+    :func:`relevant` ist - gedrueckt oder gezogen. {} bei einer Stabteilung
+    der Netzeinstellungen von :data:`TEILUNG_TH2_MINDEST` an (dann teilt
+    :func:`teilzahlen` ohnehin so fein) und ohne ``kraefte``."""
+    if not kraefte or soll_teilung(model) >= TEILUNG_TH2_MINDEST:
+        return {}
+    out = {}
+    for _name, els in _stabgruppen(model, aktiv):
+        idx = [i for i in els if teilbar(model, i)]
+        if idx and any(relevant(model, i, kraefte.get(i, 0.0)) for i in idx):
+            for i in idx:
+                out[i] = TEILUNG_TH2_MINDEST
+    return out
+
+
+def _th2_mindest_moeglich(model) -> bool:
+    """Kann :func:`th2_mindest` etwas teilen? Stabteilung unter
+    :data:`TEILUNG_TH2_MINDEST` und ein teilbarer Balken - ohne
+    Normalkraefte, damit :func:`fein_system` ohne Teilung keine Rechnung nach
+    Theorie I. Ordnung braucht."""
+    return (soll_teilung(model) < TEILUNG_TH2_MINDEST
+            and any(teilbar(model, i) for i, e in enumerate(model.elements) if e.typ == "beam"))
+
+
+#: Woran der Hinweis zu erkennen ist
+VORKRUEMMUNG_KENNUNG = "Vorkrümmung nach Theorie III. Ordnung unvollständig"
+#: dasselbe nach Theorie II. Ordnung (Runde k10d, Nachbesserung 2)
+VORKRUEMMUNG_KENNUNG_II = "Vorkrümmung nach Theorie II. Ordnung ungenau"
+
+
+def vorkruemmung_hinweise(model, mindest: dict, zahlen: dict, theorie: str = "III") -> list:
+    """Hinweise zu den gedrueckten Staeben (``mindest``,
+    :func:`vorkruemmung_mindest`), die Theorie III. Ordnung nicht in so viele
+    Abschnitte teilen kann (``zahlen`` aus :func:`teilzahlen`): ein Element
+    mit Versatz, das auch verteilt nicht zu teilen ist
+    (:func:`versatz_teile`). Dort wirkt die Vorkruemmung als Knotenkraft nur
+    an den Knoten des Modells - in einem Element gar nicht (Runde k10d,
+    16.11.2026). Kein Wert wird geaendert; ein Hinweis sperrt nie eine
+    Rechnung."""
+    try:
+        if not mindest:
+            return []
+        ne = len(model.elements)
+        out = []
+        for name, mem in (getattr(model, "members", None) or {}).items():
+            idx = [int(i) for i in (mem.elements or []) if 0 <= int(i) < ne]
+            soll = max((int(mindest.get(i, 0)) for i in idx), default=0)
+            if soll <= 1:
+                continue
+            k = sum(int(zahlen.get(i, 1)) for i in idx)
+            ganz = [i for i in idx if i in mindest and i not in zahlen and _hat_versatz(model.elements[i])]
+            if k < soll and ganz:
+                if theorie == "II":
+                    # Theorie II. Ordnung (Nachbesserung 2): die Streckenlast
+                    # wirkt, ist aber in zu wenigen Elementen ungenau
+                    out.append(f"Stab {name} (Element {ganz[0]}): {VORKRUEMMUNG_KENNUNG_II} – der Stab "
+                               f"lässt sich wegen seines Versatzes nicht intern teilen und rechnet in {k} "
+                               f"{'Element' if k == 1 else 'Elementen'}; die Vorkrümmung ist dort ungenau. "
+                               f"Den Stab im Modell in mindestens {soll} Elemente teilen.")
+                    continue
+                out.append(f"Stab {name} (Element {ganz[0]}): {VORKRUEMMUNG_KENNUNG} – der Stab lässt sich "
+                           f"wegen seines Versatzes nicht intern teilen und rechnet in {k} "
+                           f"{'Element' if k == 1 else 'Elementen'}; die Vorkrümmung wirkt nur an den Knoten "
+                           "des Modells (in einem Element gar nicht). Den Stab im Modell in mindestens "
+                           f"{soll} Elemente teilen oder nach Theorie II. Ordnung rechnen.")
+        return out
+    except Exception:                       # noqa: BLE001 - ein Hinweis sperrt keine Rechnung
+        return []
+
+
+def teilzahlen(model, aktiv=None, faktor: int = 1, kraefte: dict = None,
+               mindest: dict = None) -> dict:
     """{Element: Zahl der Teile > 1} - nach der Laenge des Stabs (Member;
     ohne Stab nach der Laenge der geraden Kette, :func:`_ketten_laengen`).
     ``kraefte`` {Element: Normalkraft nach Theorie I. Ordnung}: dann nur die
-    Balken, an denen sie zaehlt (:func:`relevant`); ohne sie alle."""
+    Balken, an denen sie zaehlt (:func:`relevant`); ohne sie alle.
+    ``mindest`` {Element: Abschnitte seines Stabs}: so viele mindestens
+    (:func:`vorkruemmung_mindest`)."""
+    mindest = mindest or {}
     soll = soll_teilung(model, faktor)
-    if soll <= 1:
+    if soll <= 1 and not mindest:
         return {}
     ne = len(model.elements)
     stab_L: dict = {}
@@ -291,11 +474,13 @@ def teilzahlen(model, aktiv=None, faktor: int = 1, kraefte: dict = None) -> dict
     for i in balken:
         if aktiv is not None and not aktiv[i]:
             continue
-        if kraefte is not None and not relevant(model, i, kraefte.get(i, 0.0)):
+        soll_i = max(soll, int(mindest.get(i, 0)))
+        if (i not in mindest and kraefte is not None
+                and not relevant(model, i, kraefte.get(i, 0.0))):
             continue
         L = model.element_length(i)
         Lm = stab_L.get(i, 0.0) or L
-        n = min(soll, max(1, math.ceil(L * soll / Lm - 1e-9)))
+        n = min(soll_i, max(1, math.ceil(L * soll_i / Lm - 1e-9)))
         # Stab mit Versatz: nur, wenn die Teile seine Achsen treffen
         if n > 1 and _hat_versatz(model.elements[i]) and versatz_teile(model, i, n) is None:
             continue
@@ -408,7 +593,12 @@ def laengslast_hinweise(model, factors: dict, aktiv=None, faktor: int = 1, kraef
             return []
         if callable(kraefte):
             kraefte = kraefte()
-        zahlen = teilzahlen(model, aktiv, faktor, kraefte) if (teilen and kraefte is not None) else geo
+        # Theorie II. Ordnung, alpha_cr und Knicken (faktor 1) teilen jeden
+        # Stab mit wirksamer Normalkraft mindestens in TEILUNG_TH2_MINDEST
+        # Teile (th2_mindest, Runde k10e) - gezaehlt wird, was gerechnet wird
+        mindest = th2_mindest(model, kraefte, aktiv) if (teilen and faktor == 1) else None
+        zahlen = (teilzahlen(model, aktiv, faktor, kraefte, mindest=mindest or None)
+                  if (teilen and kraefte is not None) else geo)
         out = []
         for name, els, lb in kandidaten:
             if kraefte is not None and not any(relevant(model, i, kraefte.get(i, 0.0)) for i in lb):
@@ -431,6 +621,32 @@ def _vorwaerts(model, elems: list, k: int) -> bool:
         vor = {int(x) for x in model.elements[elems[k - 1]].nodes[:2]}
         return a in vor or b not in vor
     return True
+
+
+#: Biegegelenk -> Querverschiebung seiner Biegeebene (phi_z: u_y, phi_y: u_z),
+#: je am Stabanfang gezaehlt (am Ende +6)
+BIEGEGELENKE = {5: 1, 4: 2}
+
+
+def _endgelenk_bleibt(d: int, anfang: list, gelenke) -> bool:
+    """Bleibt das Gelenk ``d`` (>= 6) am Ende des letzten Teils? Ja, wenn der
+    Freiheitsgrad am Anfang nicht frei ist; an beiden Enden frei nur ein
+    Biegegelenk, dessen Querverschiebung an keinem Ende frei ist.
+
+    Behebung Runde k10d (16.11.2026, Verfahrensstand 74): bis dahin fiel jedes
+    Endgelenk weg, das auch am Anfang stand - auch das Biegegelenk. Der
+    Gelenkstab zwischen biegesteifen Knoten war damit am Ende eingespannt:
+    IPE 300, 6 m, q 5 kN/m, Theorie II. Ordnung mit Stabteilung 10, 28,33
+    statt 54,00 kNm im Feld und 28,33 statt 0 am Gelenk; mit 200 kN Druck und
+    Vorkruemmung nach Theorie III. Ordnung 6,03 statt 11,48 kNm."""
+    b = int(d) - 6
+    if b not in anfang:
+        return True
+    quer = BIEGEGELENKE.get(b)
+    if quer is None:
+        return False
+    frei = {int(x) for x in (gelenke or [])}
+    return quer not in frei and quer + 6 not in frei
 
 
 class Abbildung:
@@ -497,10 +713,15 @@ def teilen(model, aktiv=None, zahlen: dict = None):
         for k in range(1, n):
             neue_knoten.append(vt[k][0] if vt is not None else X0 + (X1 - X0) * (k / n))
         anfang = [int(d) for d in (e.hinges or []) if int(d) < 6]
-        # an beiden Enden frei (etwa die Torsion): das ungeteilte Element
-        # uebertraegt dort nichts; die Kette bleibt am Ende angeschlossen,
-        # sonst haetten ihre Zwischenknoten keine Steifigkeit in diesem FHG
-        ende = [int(d) for d in (e.hinges or []) if int(d) >= 6 and int(d) - 6 not in anfang]
+        # Verschiebung oder Torsion an beiden Enden frei: das ungeteilte
+        # Element uebertraegt dort nichts; die Kette bleibt am Ende
+        # angeschlossen, sonst haetten ihre Zwischenknoten keine Steifigkeit in
+        # diesem FHG. Ein Biegegelenk (phi_y, phi_z) bleibt an beiden Enden,
+        # solange die Querverschiebung seiner Biegeebene an beiden Enden
+        # gehalten ist - dann haelt die Kette die Biegung ueber ihre
+        # Verschiebungen (:func:`_endgelenk_bleibt`)
+        ende = [int(d) for d in (e.hinges or [])
+                if int(d) >= 6 and _endgelenk_bleibt(int(d), anfang, e.hinges)]
         f_anfang = [(int(d), k) for d, k in (e.hinge_springs or []) if int(d) < 6]
         f_ende = [(int(d), k) for d, k in (e.hinge_springs or []) if int(d) >= 6]
         teile = []
@@ -583,7 +804,8 @@ def teilen(model, aktiv=None, zahlen: dict = None):
     return m2, abb, aktiv2
 
 
-def fein_system(model, system, factors: dict, kraefte=None):
+def fein_system(model, system, factors: dict, kraefte=None, vorkruemmung: bool = False,
+                hinweise: list = None):
     """(feines Modell, sein StaticSystem, Abbildung) zu ``model``, ``system``
     und den Lastfaktoren ``factors`` (sie bestimmen ueber die Normalkraefte
     nach Theorie I. Ordnung, welche Balken geteilt werden) - je System und
@@ -591,15 +813,38 @@ def fein_system(model, system, factors: dict, kraefte=None):
     {Element: N} oder eine Funktion, die sie liefert (nur gerufen, wenn ein
     Balken in Frage kommt): die Normalkraefte liegen schon vor (das Knicken
     nimmt die seines Grundzustands - keine zweite Loesung, mit PyAMG waere es
-    eine volle Iteration); ohne sie :func:`kraefte_theorie1`."""
+    eine volle Iteration); ohne sie :func:`kraefte_theorie1`.
+
+    ``vorkruemmung`` (Theorie II. Ordnung mit Ersatzimperfektionen): gedrueckte
+    Staebe mindestens in TEILUNG_VORKRUEMMUNG Teilen, auch bei Stabteilung 1
+    (:func:`vorkruemmung_mindest`, Runde k10d Nachbesserung 2, Stand 74). In
+    einem Element war die Vorkruemmung als Streckenlast bei Versatz in
+    Stabrichtung und bei Federgelenken falsch (IPE 300, 6 m, 200 kN, Arm
+    1,0 m: 17,29 statt 13,87 kNm; Federgelenke 2000 kNm/rad: 4,38 statt
+    3,23 kNm im Feld). ``hinweise``: dorthin die Hinweise zu gedrueckten
+    Staeben, die sich nicht teilen lassen (:func:`vorkruemmung_hinweise`).
+
+    Jeder Stab, an dem die Normalkraft zaehlt, mindestens in
+    TEILUNG_TH2_MINDEST Teilen, auch ohne Ersatzimperfektionen und bei
+    Stabteilung 1 (:func:`th2_mindest`, Runde k10e, Nr. 29, Stand 76) - fuer
+    Theorie II. Ordnung, alpha_cr und Knicken."""
     aktiv = getattr(system, "aktiv", None)
-    if not teilzahlen(model, aktiv):
+    vork = bool(vorkruemmung) and bool(getattr(model, "members", None))
+    th2 = _th2_mindest_moeglich(model)
+    if not teilzahlen(model, aktiv) and not vork and not th2:
         return None
     if callable(kraefte):
         kraefte = kraefte()
     if kraefte is None:
         kraefte = kraefte_theorie1(model, system, factors)
-    zahlen = teilzahlen(model, aktiv, kraefte=kraefte)
+    vk = vorkruemmung_mindest(model, kraefte, aktiv, 1) if vork else None
+    mindest = dict(vk or {})
+    for i, n in (th2_mindest(model, kraefte, aktiv) if th2 else {}).items():
+        mindest[i] = max(int(mindest.get(i, 0)), int(n))
+    zahlen = teilzahlen(model, aktiv, kraefte=kraefte, mindest=mindest or None)
+    if vk and hinweise is not None:
+        hinweise.extend(h for h in vorkruemmung_hinweise(model, vk, zahlen, theorie="II")
+                        if h not in hinweise)
     if not zahlen:
         return None
     schluessel = (len(model.nodes), len(model.elements), tuple(sorted(zahlen.items())),
